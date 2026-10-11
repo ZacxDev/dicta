@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="dicta_bg">#121212</color>
+    <color name="dicta_card">#1E1E1E</color>
+    <color name="dicta_input">#2A2A2A</color>
+    <color name="dicta_text">#F2F2F2</color>
+    <color name="dicta_text_dim">#9E9E9E</color>
+    <color name="dicta_accent">#4DD0E1</color>
+    <color name="dicta_bubble">#263238</color>
+</resources>

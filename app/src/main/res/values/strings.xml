@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Dicta</string>
+    <string name="tile_label">Dicta</string>
+    <string name="tile_description">Open voice dictation</string>
+
+    <string name="intro">Trigger voice dictation from anywhere on your device, then copy the text to your clipboard or send it somewhere.</string>
+
+    <string name="section_permissions">Permissions</string>
+    <string name="mic_row">Microphone (for dictation)</string>
+    <string name="overlay_row">Display over other apps (for the floating bubble)</string>
+    <string name="grant">Grant</string>
+    <string name="status_granted">Granted ✓</string>
+    <string name="status_not_granted">Not granted</string>
+
+    <string name="section_triggers">Triggers (pick any)</string>
+    <string name="tile_row">Quick Settings tile — swipe down from any app and tap Dicta.</string>
+    <string name="add_tile">Add tile</string>
+    <string name="tile_added">Tile added — find it in your Quick Settings panel.</string>
+    <string name="tile_add_declined">Tile not added.</string>
+    <string name="tile_add_manual">On this Android version, add the tile manually: swipe down twice, tap edit, drag Dicta in.</string>
+    <string name="bubble_row">Floating bubble — an always-on-top mic button, draggable anywhere.</string>
+    <string name="notif_row">Notification — a persistent notification with a Dictate action.</string>
+    <string name="need_overlay_first">Allow “Display over other apps” first.</string>
+
+    <string name="try_now">Try dictation now</string>
+
+    <string name="dictate_title">Dicta</string>
+    <string name="dictate_hint">Tap the mic and speak…</string>
+    <string name="dictate_text_hint">Your dictated text appears here — edit it freely.</string>
+    <string name="listening">Listening… speak now</string>
+    <string name="start_dictation">🎙 Start dictation</string>
+    <string name="stop_dictation">⏹ Stop</string>
+    <string name="copy">Copy</string>
+    <string name="share">Send</string>
+    <string name="close">Close</string>
+    <string name="dictate">Dictate</string>
+    <string name="copied">Copied to clipboard</string>
+    <string name="nothing_to_copy">Nothing to copy yet — dictate something first.</string>
+    <string name="nothing_to_share">Nothing to send yet — dictate something first.</string>
+    <string name="share_via">Send dictated text via…</string>
+    <string name="speak_now">Speak now</string>
+    <string name="mic_denied_fallback">Mic permission denied — you can still dictate with the system voice typing.</string>
+    <string name="use_system_voice_typing">Use system voice typing</string>
+    <string name="no_recognizer">No speech recognizer available on this device.</string>
+    <string name="no_voice_input">No voice input available.</string>
+
+    <string name="bubble_channel">Dicta bubble</string>
+    <string name="bubble_active">Floating mic bubble is active</string>
+    <string name="hide_bubble">Hide bubble</string>
+    <string name="trigger_channel">Dicta quick trigger</string>
+    <string name="notif_text">Tap Dictate to capture a voice note from anywhere.</string>
+</resources>

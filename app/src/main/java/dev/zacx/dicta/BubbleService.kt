@@ -1,0 +1,164 @@
+package dev.zacx.dicta
+
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.app.Service
+import android.content.Intent
+import android.graphics.PixelFormat
+import android.os.IBinder
+import android.provider.Settings
+import android.view.Gravity
+import android.view.MotionEvent
+import android.view.View
+import android.view.WindowManager
+import android.widget.ImageButton
+import kotlin.math.abs
+
+/**
+ * Hosts the floating mic bubble: an always-on-top overlay view
+ * (TYPE_APPLICATION_OVERLAY) that opens [DictateActivity] from anywhere.
+ * The bubble is draggable; a tap opens dictation.
+ */
+class BubbleService : Service() {
+
+    private lateinit var wm: WindowManager
+    private lateinit var params: WindowManager.LayoutParams
+    private var bubble: View? = null
+
+    override fun onBind(intent: Intent?): IBinder? = null
+
+    override fun onCreate() {
+        super.onCreate()
+        if (!Settings.canDrawOverlays(this)) {
+            stopSelf()
+            return
+        }
+        startForeground(NOTIF_ID, buildNotification())
+        wm = getSystemService(WindowManager::class.java)
+
+        val size = (60 * resources.displayMetrics.density).toInt()
+        params = WindowManager.LayoutParams(
+            size,
+            size,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.TOP or Gravity.END
+            x = 0
+            y = (220 * resources.displayMetrics.density).toInt()
+        }
+
+        val button = ImageButton(this).apply {
+            setImageResource(R.drawable.ic_mic)
+            background = getDrawable(R.drawable.bubble_bg)
+            contentDescription = getString(R.string.dictate)
+            setOnClickListener { openDictation() }
+            setOnTouchListener(DragListener())
+        }
+        wm.addView(button, params)
+        bubble = button
+    }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action == ACTION_STOP) {
+            stopSelf()
+            return START_NOT_STICKY
+        }
+        return START_STICKY
+    }
+
+    override fun onDestroy() {
+        bubble?.let {
+            try {
+                wm.removeView(it)
+            } catch (_: Throwable) {
+            }
+        }
+        bubble = null
+        super.onDestroy()
+    }
+
+    private fun openDictation() {
+        val intent = Intent(this, DictateActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        startActivity(intent)
+    }
+
+    private fun buildNotification(): Notification {
+        val nm = getSystemService(NotificationManager::class.java)
+        nm.createNotificationChannel(
+            NotificationChannel(
+                CHANNEL_ID,
+                getString(R.string.bubble_channel),
+                NotificationManager.IMPORTANCE_LOW
+            )
+        )
+        val stopIntent = Intent(this, BubbleService::class.java)
+            .setAction(ACTION_STOP)
+        val stopPi = PendingIntent.getService(
+            this, 0, stopIntent,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+        return Notification.Builder(this, CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_tile_mic)
+            .setContentTitle(getString(R.string.app_name))
+            .setContentText(getString(R.string.bubble_active))
+            .setOngoing(true)
+            .addAction(
+                Notification.Action.Builder(
+                    null,
+                    getString(R.string.hide_bubble),
+                    stopPi
+                ).build()
+            )
+            .build()
+    }
+
+    /** Distinguishes a tap (open dictation) from a drag (reposition). */
+    private inner class DragListener : View.OnTouchListener {
+        private var downRawX = 0f
+        private var downRawY = 0f
+        private var downX = 0
+        private var downY = 0
+        private var moved = false
+
+        override fun onTouch(v: View, event: MotionEvent): Boolean {
+            val slop = (12 * v.resources.displayMetrics.density).toInt()
+            when (event.action) {
+                MotionEvent.ACTION_DOWN -> {
+                    downRawX = event.rawX
+                    downRawY = event.rawY
+                    downX = params.x
+                    downY = params.y
+                    moved = false
+                    return true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    val dx = (event.rawX - downRawX).toInt()
+                    val dy = (event.rawY - downRawY).toInt()
+                    if (abs(dx) + abs(dy) > slop) {
+                        moved = true
+                        params.x = downX - dx // END gravity: x grows leftward
+                        params.y = downY + dy
+                        wm.updateViewLayout(bubble, params)
+                    }
+                    return true
+                }
+                MotionEvent.ACTION_UP -> {
+                    if (!moved) v.performClick()
+                    return true
+                }
+            }
+            return false
+        }
+    }
+
+    companion object {
+        const val ACTION_STOP = "dev.zacx.dicta.STOP_BUBBLE"
+        private const val NOTIF_ID = 2001
+        private const val CHANNEL_ID = "dicta_service"
+    }
+}
