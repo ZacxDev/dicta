@@ -117,11 +117,124 @@ app/src/test/java/dev/zacx/dicta/   # JUnit 4 + Robolectric unit tests
 .github/workflows/tests.yml         # CI: unit tests + debug APK on JDK 17
 ```
 
+## Remote transcription (self-hosted ASR)
+
+Dictation is transcribed by a **self-hosted speech service**; the phone's
+`SpeechRecognizer` is the fallback and the source of live partials. Configure
+it in **Settings** from the main screen: a service URL (default
+`http://10.42.0.10:8118`) and a bearer token.
+
+### One microphone, teed three ways
+
+🔴 `AudioRecord` and `SpeechRecognizer` **cannot both capture**. Android
+enforces that by silently feeding the loser *exact zeros* — `startRecording()`
+succeeds, `read()` returns the full byte count, and no exception is thrown. So
+there is exactly one microphone client (`MicCapture`, `VOICE_RECOGNITION`,
+16 kHz mono PCM-16) and it tees to:
+
+1. a pipe whose read end is handed to the recogniser via
+   `RecognizerIntent.EXTRA_AUDIO_SOURCE` (API 33+) — one mic client, one UID,
+   nothing to arbitrate. Closing the **write** end is what ends the session: a
+   pipe-fed recogniser does not endpoint on trailing silence.
+2. `MediaCodec` Opus → `MediaMuxer` Ogg at ~24 kbps mono (≈3 kB/s, so 15 s of
+   dictation is ≈45 kB), AAC-LC/MPEG-4 as fallback — this is what gets
+   uploaded. No transcoding beyond compression: the service decodes with
+   ffmpeg and resamples to 16 kHz mono itself.
+3. RMS for the on-screen level meter — the *only* "it is listening" signal in
+   the remote-only tiers, where no partial text ever appears.
+
+### Three degradation tiers — every tier still produces a transcript
+
+| Tier | Trigger | Behaviour |
+|---|---|---|
+| 1 | `EXTRA_AUDIO_SOURCE` honoured | live local partials, then the server's transcript replaces them |
+| 2 | no partial within 1.5 s **while non-zero PCM is flowing** | recognition cancelled, recording continues, level meter only, remote-only transcript |
+| 3 | `SDK_INT < 33` | as tier 2, decided up front |
+
+🔴 `EXTRA_AUDIO_SOURCE` support is **optional per recogniser implementation**
+and an implementation that ignores it does so *silently* — it just opens the
+microphone. There is no capability flag, so the tier is detected at runtime.
+The `wroteNonZeroPcm` term is load-bearing: without it, a user who takes more
+than 1.5 s to start speaking has recognition cancelled every time.
+
+### Fallback policy
+
+Connect timeout 10 s; read timeout `max(20 s, 2 × audio_seconds)` capped at
+90 s; **exactly one upload in flight** — client-side serialisation is the only
+backpressure that exists, because the service is a synchronous handler on a
+single GPU replica with no admission control.
+
+| Response | Action |
+|---|---|
+| 400 / 401 / 413 / 422 / 500 | fail fast, no retry, surfaced to the user |
+| 503 whose `detail` names `STT_API_TOKEN` | fail fast, **permanent** — and no `/healthz` poll, because `/healthz` is unauthenticated and would answer 200 forever |
+| 502 / 503 / 504, connect-refused, timeouts | retry with jittered backoff (±30%) |
+| still failing | hand over the on-device transcript **now**, then poll `GET /healthz` every 10 s for ≤120 s and make ONE final attempt on the first 200 |
+
+🔴 **Hard ceiling: 4 uploads of one recording, ever** — there is no
+server-side de-duplication or idempotency key, so a retry after a read-timeout
+on a request the server actually completed burns a full GPU generation. The
+ceiling is enforced by a single `UploadBudget` that every upload path spends
+from, including the recovery path, so adding a path cannot quietly raise it.
+
+> **Deliberate deviation from the original spec, stated out loud.** The spec
+> asked for both "retry 3× (2 s, 6 s, 15 s)" — 4 uploads by itself — *and* a
+> 4-upload hard ceiling with a `/healthz`-gated final attempt on top. Those
+> cannot both hold. Resolved in favour of the ceiling: the fast ladder spends
+> 3 uploads (waits 2 s, 6 s) and the 4th is **reserved** for the first
+> `/healthz` 200. Keeping the full fast ladder instead would have made the
+> recovery path unreachable in the exact situation it exists for. The user also
+> gets the local transcript at ~8 s instead of ~23 s. See `SttRetryPolicy`.
+
+### `language` must be a bare ISO code
+
+🔴 The service passes `language` **unvalidated** to a processor that raises
+`ValueError` *outside* its try/except, so an unaccepted value is an unhandled
+**500 with a traceback**, not a 400. `Locale.getDefault().toLanguageTag()`
+returns `"en-US"`, which is *not* accepted — so the obvious implementation
+500s on every request from a US-English phone. `SttLanguage` maps through an
+allowlist (`ar de el en es fr it ja ko nl pl pt vi zh`) and sends the bare
+code; anything unmappable degrades to `en` rather than being passed through.
+
+### Token storage
+
+The token is encrypted with an **AES-256/GCM key held in `AndroidKeyStore`**
+(non-exportable, no user-auth requirement) and the `IV + ciphertext` is stored
+base64 in ordinary `SharedPreferences`.
+
+Deliberately **not** `androidx.security:security-crypto` /
+`EncryptedSharedPreferences`: that is a *runtime* AndroidX dependency and this
+APK ships none (the hand-rolled `DictaFileProvider` exists for the same
+reason; the dex contains zero `androidx` classes). The guarantee asked for —
+encryption at rest under a key the app cannot export — is a
+`KeyGenParameterSpec` away with framework APIs only. Failure is **closed**: if
+the keystore is unavailable the save throws rather than falling back to
+plaintext.
+
+The token is never rendered back into the settings field, never logged, and
+never put into an exception or a user-facing message.
+
+### Cleartext HTTP, scoped to one host
+
+`res/xml/network_security_config.xml` permits cleartext for `10.42.0.10`
+**only**; `usesCleartextTraffic="true"` is deliberately **not** set, because
+the blanket attribute would permit an unencrypted request to any host on any
+network. The mesh traffic is already inside an encrypted Nebula tunnel, and
+the service has no TLS listener a phone could validate.
+
 ## Limitations (PoC)
 
-- `SpeechRecognizer` may stream audio to the recognition service's servers;
-  there is an on-device path (`createOnDeviceSpeechRecognizer`) on supported
-  devices — not wired up here.
+- The on-device recogniser may stream audio to the recognition service's
+  servers; there is an on-device path (`createOnDeviceSpeechRecognizer`) on
+  supported devices — not wired up here. The **remote** path goes only to the
+  self-hosted service you configure.
 - The bubble is killed if the system reclaims the service; reopen the app to
   restart it.
-- Dictation language follows the system recognizer's default.
+- Dictation language follows the system locale, mapped through `SttLanguage`'s
+  allowlist.
+- Truncation at the service's 256-tokens-per-35 s-chunk limit is **silent** —
+  the response carries no finish-reason field, so the client cannot detect it
+  and does not claim to.
+- `KeystoreCipher` is **not** covered by the unit suite: `AndroidKeyStore` has
+  no Robolectric implementation, so the real cipher is device-verified only.
+  The `SecretCipher` seam is what the unit tests exercise.

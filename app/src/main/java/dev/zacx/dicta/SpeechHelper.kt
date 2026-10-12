@@ -3,6 +3,7 @@ package dev.zacx.dicta
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
+import android.os.ParcelFileDescriptor
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
@@ -10,10 +11,26 @@ import android.speech.SpeechRecognizer
 /**
  * Thin wrapper around [SpeechRecognizer] delivering live partial results and a
  * final result. Must be used from the main thread (see SpeechRecognizer docs).
+ *
+ * ## The on-device engine's role changed
+ *
+ * It used to be the only engine. It is now the **fallback** and the source of
+ * live partials, while the authoritative transcript comes from the remote
+ * service — so this class no longer opens the microphone when it can avoid
+ * it. When [sharedSource] is supplied it is fed PCM through a pipe that
+ * [MicCapture] writes, because 🔴 two concurrent captures do not work and do
+ * not fail loudly: Android enforces its policy by handing the loser **exact
+ * zeros**, with a successful `startRecording()` and no exception.
+ *
+ * @param sharedSource the read end of [MicCapture]'s pipe, or null to let the
+ *   recogniser open the microphone itself — which is only correct when
+ *   nothing else holds it.
  */
 class SpeechHelper(
     context: Context,
-    private val listener: Listener
+    private val listener: Listener,
+    private val sharedSource: ParcelFileDescriptor? = null,
+    private val sampleRateHz: Int = AudioCaptureLogic.SAMPLE_RATE_HZ,
 ) {
     interface Listener {
         fun onPartial(text: String)
@@ -63,14 +80,9 @@ class SpeechHelper(
                     if (text.isNotBlank()) listener.onPartial(text)
                 }
             })
-            val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-                putExtra(
-                    RecognizerIntent.EXTRA_LANGUAGE_MODEL,
-                    RecognizerIntent.LANGUAGE_MODEL_FREE_FORM
-                )
-                putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-                putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
-            }
+            val intent = sharedSource
+                ?.let { RecognizerIntents.sharedSourceIntent(it, sampleRateHz) }
+                ?: RecognizerIntents.ownMicIntent()
             listening = true
             r.startListening(intent)
         } catch (t: Throwable) {
@@ -83,6 +95,24 @@ class SpeechHelper(
         listening = false
         try {
             recognizer?.stopListening()
+        } catch (_: Throwable) {
+        }
+    }
+
+    /**
+     * Abandons recognition without asking for a final result.
+     *
+     * This is the tier-2 degradation path: the `EXTRA_AUDIO_SOURCE` extra was
+     * accepted but no partial ever arrived while real audio was flowing, so
+     * the recogniser is not going to produce anything. `cancel()` rather than
+     * `stop()` because `stop()` asks for a final result from a session we have
+     * concluded is dead, and the recogniser would sit on it until it times
+     * out. Recording continues — only the local engine is given up on.
+     */
+    fun cancel() {
+        listening = false
+        try {
+            recognizer?.cancel()
         } catch (_: Throwable) {
         }
     }

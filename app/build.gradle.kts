@@ -13,6 +13,11 @@ android {
         targetSdk = 34
         versionCode = 1
         versionName = "0.1.0"
+        // Instrumented tests only (androidTest/). They never run in CI —
+        // there is no device there — and they are packaged into a SEPARATE
+        // test APK, so this adds nothing to app-debug.apk. See the
+        // androidTestImplementation note in `dependencies`.
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     buildTypes {
@@ -61,4 +66,23 @@ dependencies {
     // the APK, not of the build.
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.robolectric:robolectric:4.13")
+
+    // androidTestImplementation: instrumented tests, packaged into a SEPARATE
+    // test APK (dev.zacx.dicta.test) and never into app-debug.apk. The
+    // "zero androidx classes in the shipped dex" property is therefore
+    // untouched — and it is checked rather than asserted: see the dex scan in
+    // the PR, which parses every classes*.dex in app-debug.apk and reports
+    // both the forbidden prefixes (0) and a positive control (>0), because a
+    // zero from a scan that matches nothing is indistinguishable from a real
+    // zero.
+    //
+    // Why instrumented tests exist at all: three things cannot be established
+    // on the JVM. AndroidKeyStore has no Robolectric implementation, so the
+    // real KeystoreCipher is unverifiable off-device; MediaCodec/MediaMuxer
+    // likewise, so whether our Opus/Ogg output is actually ffmpeg-decodable is
+    // a device question; and the manifest's INTERNET permission plus the
+    // scoped networkSecurityConfig only take effect in a real app process.
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
+    androidTestImplementation("androidx.test:runner:1.6.2")
+    androidTestImplementation("androidx.test:rules:1.6.1")
 }

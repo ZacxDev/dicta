@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Cleartext HTTP, permitted for exactly ONE host.
+
+  Why cleartext is needed at all: the transcription service lives on a Nebula
+  mesh at 10.42.0.10 and speaks plain HTTP. The transport is not actually
+  unprotected — every byte is already inside an authenticated, encrypted
+  Nebula tunnel, and the service has no TLS listener and no certificate a
+  phone could validate. Terminating TLS inside the tunnel would mean issuing
+  and distributing a private CA to the handset for no confidentiality we do
+  not already have.
+
+  🔴 Why this is scoped to a single domain instead of
+  android:usesCleartextTraffic="true":
+
+  The blanket attribute disables cleartext policy for EVERY destination the
+  app will ever talk to, which is a real security downgrade and a permanent
+  one — it would silently permit an unencrypted request to any host, on any
+  network, including a hostile Wi-Fi. The mesh address is a fixed, private,
+  non-routable address with a tunnel underneath it; "that one host" and "the
+  whole internet" are not the same claim, and only the first one is true.
+
+  cleartextTrafficPermitted is false everywhere else by inheriting the
+  platform default for targetSdk 28+, which is what base-config restates
+  explicitly below so that a future edit cannot widen it by accident.
+
+  includeSubdomains is absent on purpose: 10.42.0.10 is a literal address and
+  has no subdomains, so including them would only broaden the rule's reach
+  if the entry were later changed to a hostname.
+-->
+<network-security-config>
+
+    <!-- Everything not named below: cleartext refused. -->
+    <base-config cleartextTrafficPermitted="false" />
+
+    <domain-config cleartextTrafficPermitted="true">
+        <!-- The self-hosted ASR service, reachable only over the mesh. -->
+        <domain>10.42.0.10</domain>
+    </domain-config>
+
+</network-security-config>

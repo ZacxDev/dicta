@@ -165,6 +165,23 @@
                 android:layout_height="wrap_content" />
         </LinearLayout>
 
+        <!-- Reachable from MainActivity, per the brief: the token and the
+             service URL are entered here, on the device, and never passed in
+             through adb argv. -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="24dp"
+            android:text="@string/settings_row"
+            android:textSize="13sp" />
+
+        <Button
+            android:id="@+id/settings_button"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="@string/open_settings" />
+
         <Button
             android:id="@+id/try_now_button"
             android:layout_width="match_parent"

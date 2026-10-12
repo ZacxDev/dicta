@@ -35,6 +35,41 @@
             android:text="@string/dictate_hint"
             android:textColor="@color/dicta_text_dim" />
 
+        <!--
+          The microphone level meter.
+
+          🔴 Not decoration. In the remote-only degradation tiers no partial
+          text ever appears while recording, so this bar is the ONLY on-screen
+          evidence that the microphone is live. Without it "nothing is moving"
+          is indistinguishable from a dead capture — and a dead capture is a
+          real state here, because Android enforces its one-capture-at-a-time
+          policy by silently feeding the loser exact zeros.
+        -->
+        <ProgressBar
+            android:id="@+id/level_meter"
+            style="?android:attr/progressBarStyleHorizontal"
+            android:layout_width="match_parent"
+            android:layout_height="6dp"
+            android:layout_marginTop="8dp"
+            android:max="100"
+            android:progress="0"
+            android:contentDescription="@string/stt_level"
+            android:visibility="gone" />
+
+        <!--
+          Which engine produced the text currently in the box. The server and
+          the phone disagree, sometimes materially, so the user has to be able
+          to tell them apart rather than trust whatever appeared.
+        -->
+        <TextView
+            android:id="@+id/engine_label"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:textSize="12sp"
+            android:textColor="@color/dicta_text_dim"
+            android:visibility="gone" />
+
         <EditText
             android:id="@+id/dictated_text"
             android:layout_width="match_parent"
