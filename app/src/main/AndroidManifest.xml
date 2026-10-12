@@ -7,9 +7,16 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!-- icon/roundIcon point at the adaptive icon in mipmap-anydpi-v26, NOT at a
+         bare drawable: a 24dp vector used directly as a launcher icon is drawn
+         unmasked and unpadded, so it rendered small and got square-cropped by
+         the launcher's own icon shapes. roundIcon exists because some launchers
+         (Samsung's included — the target device is a Galaxy S21) still query it,
+         and one that asks and finds nothing drops to the legacy square path. -->
     <application
         android:allowBackup="true"
-        android:icon="@drawable/ic_mic"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
         android:label="@string/app_name"
         android:theme="@style/Theme.Dicta">
 

@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Identical to ic_launcher.xml by design.
+
+  android:roundIcon is a pre-adaptive-icon mechanism that a few launchers
+  (notably Samsung's, which matters here — the target device is a Galaxy S21)
+  still query. For an adaptive icon the launcher applies its own circular mask,
+  so a separate round artwork would be redundant; what is NOT redundant is
+  having the resource exist, because a launcher that asks for roundIcon and
+  finds nothing falls back to the legacy square path.
+-->
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@drawable/ic_launcher_background" />
+    <foreground android:drawable="@drawable/ic_launcher_foreground" />
+    <monochrome android:drawable="@drawable/ic_launcher_monochrome" />
+</adaptive-icon>
