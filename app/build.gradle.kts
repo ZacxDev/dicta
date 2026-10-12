@@ -28,8 +28,37 @@ android {
     kotlinOptions {
         jvmTarget = "17"
     }
+
+    testOptions {
+        unitTests {
+            // Robolectric needs the merged resources/assets/manifest to inflate
+            // layouts and resolve theme attributes.
+            isIncludeAndroidResources = true
+            all {
+                // Robolectric reflects into java.io/java.lang internals to
+                // emulate libcore (e.g. FileDescriptor.fd for
+                // ParcelFileDescriptor). Under JDK 17's module system that
+                // throws InaccessibleObjectException unless the packages are
+                // opened.
+                it.jvmArgs(
+                    "--add-opens=java.base/java.io=ALL-UNNAMED",
+                    "--add-opens=java.base/java.lang=ALL-UNNAMED",
+                    "--add-opens=java.base/java.nio=ALL-UNNAMED",
+                    "--add-opens=java.base/java.util=ALL-UNNAMED",
+                    "--add-opens=java.base/java.net=ALL-UNNAMED",
+                    "--add-opens=java.base/java.text=ALL-UNNAMED",
+                )
+            }
+        }
+    }
 }
 
 dependencies {
-    // No external dependencies — framework + Kotlin stdlib only.
+    // Runtime: no external dependencies — framework + Kotlin stdlib only, so
+    // the APK ships nothing but our own code. The entries below are
+    // testImplementation: they are compiled into the unit-test classpath only
+    // and are never packaged. "No external dependencies" is therefore true of
+    // the APK, not of the build.
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.robolectric:robolectric:4.13")
 }
