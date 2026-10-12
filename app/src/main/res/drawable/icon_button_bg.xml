@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Pressable background for the icon-only action buttons. Matches the
+     12dp radius of input_bg so the action row reads as part of the card. -->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:state_pressed="true">
+        <shape android:shape="rectangle">
+            <solid android:color="@color/dicta_accent" />
+            <corners android:radius="12dp" />
+        </shape>
+    </item>
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="@color/dicta_input" />
+            <corners android:radius="12dp" />
+        </shape>
+    </item>
+</selector>

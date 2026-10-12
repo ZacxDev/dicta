@@ -43,33 +43,50 @@
         android:layout_marginTop="16dp"
         android:text="@string/start_dictation" />
 
+    <!-- Icon-only actions: the labelled variants were truncated at this width
+         (three ALL-CAPS Material buttons can't fit inside the dialog card). -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="horizontal"
         android:layout_marginTop="8dp">
 
-        <Button
+        <ImageButton
             android:id="@+id/copy_button"
             android:layout_width="0dp"
-            android:layout_height="wrap_content"
+            android:layout_height="52dp"
             android:layout_weight="1"
-            android:text="@string/copy" />
+            android:src="@drawable/ic_copy"
+            android:scaleType="center"
+            android:background="@drawable/icon_button_bg"
+            android:tint="@color/dicta_text"
+            android:contentDescription="@string/copy"
+            android:tooltipText="@string/copy" />
 
-        <Button
+        <ImageButton
             android:id="@+id/share_button"
             android:layout_width="0dp"
-            android:layout_height="wrap_content"
+            android:layout_height="52dp"
             android:layout_weight="1"
             android:layout_marginStart="8dp"
-            android:text="@string/share" />
+            android:src="@drawable/ic_send"
+            android:scaleType="center"
+            android:background="@drawable/icon_button_bg"
+            android:tint="@color/dicta_text"
+            android:contentDescription="@string/share"
+            android:tooltipText="@string/share" />
 
-        <Button
+        <ImageButton
             android:id="@+id/close_button"
             android:layout_width="0dp"
-            android:layout_height="wrap_content"
+            android:layout_height="52dp"
             android:layout_weight="1"
             android:layout_marginStart="8dp"
-            android:text="@string/close" />
+            android:src="@drawable/ic_close"
+            android:scaleType="center"
+            android:background="@drawable/icon_button_bg"
+            android:tint="@color/dicta_text"
+            android:contentDescription="@string/close"
+            android:tooltipText="@string/close" />
     </LinearLayout>
 </LinearLayout>

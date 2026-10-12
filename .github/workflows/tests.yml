@@ -1,0 +1,55 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+
+# A second push to the same branch supersedes the first run.
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # JDK 17 is not optional: compileOptions / kotlinOptions pin 17, and the
+      # test task's --add-opens flags are JDK 9+ module-system syntax.
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v3
+
+      # The ubuntu-latest image ships the Android SDK; AGP installs
+      # compileSdk 34 / build-tools 34.0.0 from app/build.gradle.kts if missing.
+      - name: Unit tests
+        run: ./gradlew :app:testDebugUnitTest --no-daemon --stacktrace
+
+      # The JUnit XML is the authority on what ran. A Gradle task can report
+      # success having executed ZERO tests, and a gate that is green because it
+      # measured nothing is worse than no gate — so the count is asserted, not
+      # inferred from the task's exit status. --min is the floor the suite is at
+      # today: raise it when tests are added, and it catches a silent collapse
+      # to a handful.
+      - name: Assert tests actually ran
+        if: always()
+        run: python3 scripts/assert-tests-ran.py --min 3
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: |
+            app/build/reports/tests/testDebugUnitTest/
+            app/build/test-results/testDebugUnitTest/
+          if-no-files-found: warn
+
+      - name: Assemble debug APK
+        run: ./gradlew :app:assembleDebug --no-daemon
