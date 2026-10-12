@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Track for the RESERVED mic level meter (@id/level_meter in
+  activity_dictate.xml) — see that layout's comment.
+
+  A horizontal ProgressBar styled with this as its track and
+  @color/dicta_accent as its progress tint is the intended consumer. Reserved
+  here, with the geometry and the colour already decided, so the in-flight
+  remote-STT branch only has to bind a level to it.
+-->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="@color/dicta_surface_4" />
+    <corners android:radius="2dp" />
+</shape>

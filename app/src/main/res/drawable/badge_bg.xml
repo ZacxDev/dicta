@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Pill background for the RESERVED engine-provenance badge
+  (@id/engine_badge in activity_dictate.xml) — see that layout's comment.
+
+  accent_container fill with @color/dicta_on_accent_container text measures
+  9.84:1. Reserved here so the in-flight remote-STT branch has a styled slot to
+  drop into rather than inventing a second badge look.
+-->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="@color/dicta_accent_container" />
+    <corners android:radius="8dp" />
+</shape>

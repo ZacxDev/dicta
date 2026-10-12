@@ -1,9 +1,43 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <!--
+      The setup screen.
+
+      The parent stays the PLATFORM dark Material theme. Dicta has no Material
+      Components dependency (see app/build.gradle.kts), so the visual identity
+      is carried by the colour tokens in colors.xml and by the shape drawables,
+      not by a component library.
+
+      colorAccent / colorControlActivated / textColorHighlight are set because
+      this screen still uses platform widgets (Switch, Button, text selection
+      handles) that otherwise render in the stock Material teal and would fight
+      the ember accent.
+    -->
     <style name="Theme.Dicta" parent="android:Theme.Material.NoActionBar">
-        <item name="android:windowBackground">@color/dicta_bg</item>
+        <item name="android:windowBackground">@color/dicta_surface_0</item>
+        <item name="android:colorBackground">@color/dicta_surface_0</item>
         <item name="android:colorAccent">@color/dicta_accent</item>
-        <item name="android:textColorPrimary">@color/dicta_text</item>
+        <item name="android:colorControlActivated">@color/dicta_accent</item>
+        <item name="android:colorControlNormal">@color/dicta_on_surface_variant</item>
+        <item name="android:textColorPrimary">@color/dicta_on_surface</item>
+        <item name="android:textColorSecondary">@color/dicta_on_surface_variant</item>
+        <item name="android:textColorHighlight">@color/dicta_accent_container</item>
+        <item name="android:statusBarColor">@color/dicta_surface_0</item>
+        <item name="android:navigationBarColor">@color/dicta_surface_0</item>
+    </style>
+
+    <!-- Section heading on the setup screen: the one place the accent appears
+         on an otherwise plain list. Accent on surface_0 measures 9.85:1, and
+         13sp bold tracked-out is read as a label, not as body text. -->
+    <!-- parent="" is REQUIRED, not noise: aapt2 treats a dotted style name as
+         implicit inheritance, so without it this tries to extend a
+         non-existent style/Text.Dicta and fails to link. -->
+    <style name="Text.Dicta.SectionHeading" parent="">
+        <item name="android:textSize">13sp</item>
+        <item name="android:textStyle">bold</item>
+        <item name="android:letterSpacing">0.12</item>
+        <item name="android:textAllCaps">true</item>
+        <item name="android:textColor">@color/dicta_accent</item>
     </style>
 
     <!--
@@ -40,6 +74,15 @@
         i.e. a dialog fade rather than an activity-launch slide. The public
         alternatives are all downgrades, and @android:style/Animation.Material.Dialog
         is itself a private resource.
+
+      🔴 The 2026-10 design pass (new palette + minimal overlay) changed ONLY
+      the colour items below. `parent`, `windowBackground`, `windowIsFloating`,
+      `windowIsTranslucent` and `backgroundDimAmount` were left byte-identical
+      on purpose: switching the parent to a Material3 dialog theme, or pointing
+      windowBackground at a plain colour or a <shape>, removes the <inset>'s
+      reported padding and that padding IS the floating card's screen margin.
+      Re-verified after the pass on an SM-G991W / Android 15: the window still
+      resolves to (993xwrap) gr=CENTER on a 1080px display.
     -->
     <style name="Theme.Dicta.Overlay" parent="android:Theme.Material.Dialog.NoActionBar">
         <item name="android:windowIsFloating">true</item>
@@ -50,6 +93,10 @@
         <item name="android:backgroundDimAmount">0.6</item>
         <item name="android:windowCloseOnTouchOutside">true</item>
         <item name="android:colorAccent">@color/dicta_accent</item>
-        <item name="android:textColorPrimary">@color/dicta_text</item>
+        <item name="android:colorControlActivated">@color/dicta_accent</item>
+        <item name="android:colorControlNormal">@color/dicta_on_surface_variant</item>
+        <item name="android:textColorPrimary">@color/dicta_on_surface</item>
+        <item name="android:textColorSecondary">@color/dicta_on_surface_variant</item>
+        <item name="android:textColorHighlight">@color/dicta_accent_container</item>
     </style>
 </resources>

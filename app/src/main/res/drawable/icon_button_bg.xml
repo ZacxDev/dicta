@@ -1,17 +1,27 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Pressable background for the icon-only action buttons. Matches the
-     12dp radius of input_bg so the action row reads as part of the card. -->
+<!--
+  Pressable background for the icon-only actions in the on-demand row.
+
+  Ghost at rest (level-3 fill, no stroke) and accent-container when pressed —
+  so pressing lifts the control *within* the warm accent family rather than
+  flashing the full saturated accent, which at 48dp reads as an error state.
+  @color/dicta_on_accent_container measures 9.84:1 against it, which is what
+  the pressed icon tint uses.
+
+  Radius 16dp matches input_bg, so the revealed action row reads as part of the
+  same card rather than as a toolbar bolted on.
+-->
 <selector xmlns:android="http://schemas.android.com/apk/res/android">
     <item android:state_pressed="true">
         <shape android:shape="rectangle">
-            <solid android:color="@color/dicta_accent" />
-            <corners android:radius="12dp" />
+            <solid android:color="@color/dicta_accent_container" />
+            <corners android:radius="16dp" />
         </shape>
     </item>
     <item>
         <shape android:shape="rectangle">
-            <solid android:color="@color/dicta_input" />
-            <corners android:radius="12dp" />
+            <solid android:color="@color/dicta_surface_3" />
+            <corners android:radius="16dp" />
         </shape>
     </item>
 </selector>

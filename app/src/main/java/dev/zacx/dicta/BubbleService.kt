@@ -53,6 +53,14 @@ class BubbleService : Service() {
 
         val button = ImageButton(this).apply {
             setImageResource(R.drawable.ic_mic)
+            // ic_mic ships a flat white fill, because it doubles as the QS tile
+            // icon where the platform requires solid white. Tint it to the
+            // signature accent so the bubble carries Dicta's identity over an
+            // arbitrary wallpaper. bubble_bg.xml documents why the pressed
+            // state lifts instead of inverting to an accent fill, which this
+            // tint would disappear into.
+            imageTintList = android.content.res.ColorStateList
+                .valueOf(getColor(R.color.dicta_accent))
             background = getDrawable(R.drawable.bubble_bg)
             contentDescription = getString(R.string.dictate)
             setOnClickListener { openDictation() }
@@ -125,6 +133,12 @@ class BubbleService : Service() {
         )
         return Notification.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_tile_mic)
+            // The one styling hook a platform notification offers: the shade
+            // tints the small icon and the app name with this. Without it
+            // Dicta's notifications render in the system's default accent and
+            // are the one surface that does not look like the app.
+            .setColor(getColor(R.color.dicta_accent))
+            .setColorized(false)
             .setContentTitle(getString(R.string.app_name))
             .setContentText(getString(R.string.bubble_active))
             .setOngoing(true)
