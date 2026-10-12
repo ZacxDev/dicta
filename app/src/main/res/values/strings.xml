@@ -37,8 +37,23 @@
     <string name="dictate">Dictate</string>
     <string name="copied">Copied to clipboard</string>
     <string name="nothing_to_copy">Nothing to copy yet — dictate something first.</string>
-    <string name="nothing_to_share">Nothing to send yet — dictate something first.</string>
+    <string name="nothing_to_share">Nothing to send yet — dictate something or attach a screenshot first.</string>
     <string name="share_via">Send dictated text via…</string>
+    <string name="share_with_image_via">Send screenshot + text via…</string>
+    <string name="share_image_via">Send screenshot via…</string>
+
+    <string name="screenshot">Screenshot</string>
+    <string name="screenshot_requesting">Asking for screen-capture permission…</string>
+    <string name="screenshot_consent_declined">Screen capture declined — nothing was captured.</string>
+    <string name="screenshot_unsupported">This device has no screen-capture support.</string>
+    <string name="screenshot_ready">Screenshot attached. Tap Send to share it.</string>
+    <string name="screenshot_failed">Screenshot failed: %1$s</string>
+    <!-- Honest, not decorative: with an image attached, many share targets read
+         only the image and silently discard the text. -->
+    <string name="screenshot_attached_note">Screenshot attached. Some apps (most chat apps) drop the text when an image is attached — use Copy if the text must arrive.</string>
+
+    <string name="projection_channel">Dicta screen capture</string>
+    <string name="projection_active">Capturing the screen…</string>
     <string name="speak_now">Speak now</string>
     <string name="mic_denied_fallback">Mic permission denied — you can still dictate with the system voice typing.</string>
     <string name="use_system_voice_typing">Use system voice typing</string>

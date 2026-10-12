@@ -123,8 +123,35 @@ class DictateOverlayThemeTest {
             "windowIsTranslucent resolved false",
             overlayAttr(android.R.attr.windowIsTranslucent).data != 0
         )
+        assertTrue(
+            "backgroundDimAmount resolved to " +
+                "${overlayAttr(android.R.attr.backgroundDimAmount).float}, " +
+                "which is not a visible dim",
+            overlayAttr(android.R.attr.backgroundDimAmount).float > 0f
+        )
+    }
+
+    /**
+     * SEAM guard, added by the screenshot change — which is what creates the
+     * hazard. The capture path clears `FLAG_DIM_BEHIND` and sets
+     * `dimAmount = 0` to keep the dim out of the frame, then restores the dim
+     * from the Kotlin constant [DictateActivity.DIM_AMOUNT], NOT from the
+     * theme. The theme value and the constant are therefore two copies of one
+     * number, and a theme-only edit to 0.5 would leave the card permanently
+     * mis-dimmed after the first capture with every other test green.
+     *
+     * Asserting the RELATIONSHIP rather than the literal 0.6 is the whole
+     * point: a third copy of the literal in the test moves with neither side
+     * and passes whichever one drifted. Editing either value alone turns this
+     * red; editing both together is a deliberate change and stays green.
+     */
+    @Test
+    fun theRestoredDimEqualsTheThemeDim() {
         assertEquals(
-            0.6f,
+            "DictateActivity.DIM_AMOUNT (${DictateActivity.DIM_AMOUNT}) and " +
+                "android:backgroundDimAmount in Theme.Dicta.Overlay disagree; " +
+                "the card would be mis-dimmed after a screenshot capture",
+            DictateActivity.DIM_AMOUNT,
             overlayAttr(android.R.attr.backgroundDimAmount).float,
             0.0001f
         )
