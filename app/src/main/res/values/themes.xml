@@ -6,12 +6,49 @@
         <item name="android:textColorPrimary">@color/dicta_text</item>
     </style>
 
-    <!-- Floating overlay: translucent dialog window over whatever is underneath. -->
+    <!--
+      Floating overlay: a centred card over whatever is underneath, which stays
+      visible and dimmed.
+
+      Measured facts behind each line (see DictateOverlayThemeTest):
+
+      * windowIsFloating is already inherited as true from
+        Theme.Material.Dialog — it resolves true even with the old theme, so
+        "the window is not floating" was NOT the fullscreen cause. It is pinned
+        explicitly so a future parent change cannot silently turn the activity
+        back into a fullscreen window.
+
+      * windowBackground must be a drawable that reports padding. A dialog's
+        screen margin on Android is decor padding taken from this drawable
+        (Drawable.getPadding -> View padding in setBackgroundDrawable), NOT a
+        layout margin. The previous value — @android:color/transparent — is a
+        ColorDrawable, which reports no padding, so the decor inset became zero
+        and the card sat flush against the screen edges.
+        @drawable/overlay_window_bg is an <inset> that restores it, by the same
+        mechanism @android:drawable/dialog_background_material uses.
+
+      * The width cap is NOT here. windowFixedWidthMinor/Major — the only theme
+        attributes that can make a floating window narrower than its content
+        wants — are private platform attributes and fail to link from an app
+        theme ("style attribute 'android:attr/windowFixedWidthMinor' is
+        private"). windowMinWidth* can only widen. So the cap is applied in code
+        via Window.setLayout(), from @fraction/overlay_width_fraction. See
+        DictateActivity.applyFloatingWindowSize().
+
+      * windowAnimationStyle is deliberately NOT overridden: it already resolves
+        to Animation.Material.Dialog through the parent (measured: 0x10302ff),
+        i.e. a dialog fade rather than an activity-launch slide. The public
+        alternatives are all downgrades, and @android:style/Animation.Material.Dialog
+        is itself a private resource.
+    -->
     <style name="Theme.Dicta.Overlay" parent="android:Theme.Material.Dialog.NoActionBar">
+        <item name="android:windowIsFloating">true</item>
         <item name="android:windowIsTranslucent">true</item>
-        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowBackground">@drawable/overlay_window_bg</item>
+        <item name="android:windowContentOverlay">@null</item>
         <item name="android:backgroundDimEnabled">true</item>
         <item name="android:backgroundDimAmount">0.6</item>
+        <item name="android:windowCloseOnTouchOutside">true</item>
         <item name="android:colorAccent">@color/dicta_accent</item>
         <item name="android:textColorPrimary">@color/dicta_text</item>
     </style>

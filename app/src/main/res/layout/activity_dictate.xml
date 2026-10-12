@@ -1,92 +1,106 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<!--
+  The floating card. Wrapped in a ScrollView because the window is a floating
+  dialog with WRAP_CONTENT height: on a landscape phone (~411dp of usable
+  height, minus the 12dp window inset top and bottom) the column below is
+  taller than the window can be, and without a scroll container the bottom
+  action row would simply be clipped off the card.
+-->
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
-    android:orientation="vertical"
-    android:padding="24dp"
-    android:background="@drawable/card_bg">
+    android:background="@drawable/card_bg"
+    android:clipToOutline="true">
 
-    <TextView
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="@string/dictate_title"
-        android:textSize="18sp"
-        android:textStyle="bold"
-        android:textColor="@color/dicta_text" />
-
-    <TextView
-        android:id="@+id/status_text"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="6dp"
-        android:text="@string/dictate_hint"
-        android:textColor="@color/dicta_text_dim" />
-
-    <EditText
-        android:id="@+id/dictated_text"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:minLines="5"
-        android:gravity="top"
-        android:layout_marginTop="12dp"
-        android:hint="@string/dictate_text_hint"
-        android:textColor="@color/dicta_text"
-        android:textColorHint="@color/dicta_text_dim"
-        android:background="@drawable/input_bg"
-        android:padding="12dp"
-        android:inputType="textMultiLine|textCapSentences" />
-
-    <Button
-        android:id="@+id/mic_button"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="16dp"
-        android:text="@string/start_dictation" />
-
-    <!-- Icon-only actions: the labelled variants were truncated at this width
-         (three ALL-CAPS Material buttons can't fit inside the dialog card). -->
     <LinearLayout
+        android:id="@+id/dictate_card"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:layout_marginTop="8dp">
+        android:orientation="vertical"
+        android:padding="24dp">
 
-        <ImageButton
-            android:id="@+id/copy_button"
-            android:layout_width="0dp"
-            android:layout_height="52dp"
-            android:layout_weight="1"
-            android:src="@drawable/ic_copy"
-            android:scaleType="center"
-            android:background="@drawable/icon_button_bg"
-            android:tint="@color/dicta_text"
-            android:contentDescription="@string/copy"
-            android:tooltipText="@string/copy" />
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/dictate_title"
+            android:textSize="18sp"
+            android:textStyle="bold"
+            android:textColor="@color/dicta_text" />
 
-        <ImageButton
-            android:id="@+id/share_button"
-            android:layout_width="0dp"
-            android:layout_height="52dp"
-            android:layout_weight="1"
-            android:layout_marginStart="8dp"
-            android:src="@drawable/ic_send"
-            android:scaleType="center"
-            android:background="@drawable/icon_button_bg"
-            android:tint="@color/dicta_text"
-            android:contentDescription="@string/share"
-            android:tooltipText="@string/share" />
+        <TextView
+            android:id="@+id/status_text"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:text="@string/dictate_hint"
+            android:textColor="@color/dicta_text_dim" />
 
-        <ImageButton
-            android:id="@+id/close_button"
-            android:layout_width="0dp"
-            android:layout_height="52dp"
-            android:layout_weight="1"
-            android:layout_marginStart="8dp"
-            android:src="@drawable/ic_close"
-            android:scaleType="center"
-            android:background="@drawable/icon_button_bg"
-            android:tint="@color/dicta_text"
-            android:contentDescription="@string/close"
-            android:tooltipText="@string/close" />
+        <EditText
+            android:id="@+id/dictated_text"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:minLines="4"
+            android:gravity="top"
+            android:layout_marginTop="12dp"
+            android:hint="@string/dictate_text_hint"
+            android:textColor="@color/dicta_text"
+            android:textColorHint="@color/dicta_text_dim"
+            android:background="@drawable/input_bg"
+            android:padding="12dp"
+            android:inputType="textMultiLine|textCapSentences" />
+
+        <Button
+            android:id="@+id/mic_button"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:text="@string/start_dictation" />
+
+        <!-- Icon-only actions: the labelled variants were truncated at this width
+             (three ALL-CAPS Material buttons can't fit inside the dialog card). -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:layout_marginTop="8dp">
+
+            <ImageButton
+                android:id="@+id/copy_button"
+                android:layout_width="0dp"
+                android:layout_height="52dp"
+                android:layout_weight="1"
+                android:src="@drawable/ic_copy"
+                android:scaleType="center"
+                android:background="@drawable/icon_button_bg"
+                android:tint="@color/dicta_text"
+                android:contentDescription="@string/copy"
+                android:tooltipText="@string/copy" />
+
+            <ImageButton
+                android:id="@+id/share_button"
+                android:layout_width="0dp"
+                android:layout_height="52dp"
+                android:layout_weight="1"
+                android:layout_marginStart="8dp"
+                android:src="@drawable/ic_send"
+                android:scaleType="center"
+                android:background="@drawable/icon_button_bg"
+                android:tint="@color/dicta_text"
+                android:contentDescription="@string/share"
+                android:tooltipText="@string/share" />
+
+            <ImageButton
+                android:id="@+id/close_button"
+                android:layout_width="0dp"
+                android:layout_height="52dp"
+                android:layout_weight="1"
+                android:layout_marginStart="8dp"
+                android:src="@drawable/ic_close"
+                android:scaleType="center"
+                android:background="@drawable/icon_button_bg"
+                android:tint="@color/dicta_text"
+                android:contentDescription="@string/close"
+                android:tooltipText="@string/close" />
+        </LinearLayout>
     </LinearLayout>
-</LinearLayout>
+</ScrollView>

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Tablets / large screens: a dialog should not track the display width. -->
+<resources>
+    <dimen name="overlay_window_inset">16dp</dimen>
+    <item name="overlay_width_fraction" type="fraction">70%</item>
+</resources>

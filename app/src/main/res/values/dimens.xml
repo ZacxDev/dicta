@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Inner breathing room between the floating window edge and the card.
+         Applied as decor padding via @drawable/overlay_window_bg — see that
+         file for why this, and not a layout margin, is what the platform
+         uses. -->
+    <dimen name="overlay_window_inset">12dp</dimen>
+
+    <!-- Fraction of the display width the floating window may occupy. Applied
+         with Window.setLayout() because the theme attributes that would express
+         it (windowFixedWidthMinor/Major) are private platform attributes.
+         Overridden in values-land, values-sw600dp, values-sw600dp-land. -->
+    <item name="overlay_width_fraction" type="fraction">92%</item>
+</resources>

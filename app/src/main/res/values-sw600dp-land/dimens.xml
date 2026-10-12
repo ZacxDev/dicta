@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <dimen name="overlay_window_inset">16dp</dimen>
+    <item name="overlay_width_fraction" type="fraction">50%</item>
+</resources>
