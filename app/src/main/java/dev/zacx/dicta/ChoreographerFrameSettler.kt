@@ -6,26 +6,28 @@ import android.view.Choreographer
  * Real [FrameSettler]: chains [frames] Choreographer callbacks before running
  * the action.
  *
- * Why a frame chain and not a fixed sleep:
+ * Why a frame chain and not a fixed sleep: a `sleep` is a guess that is
+ * simultaneously too long on a 120 Hz panel and too short under load, whereas a
+ * Choreographer callback is tied to an actual vsync, so the wait scales with
+ * the device. It gives the WindowManager relayout that
+ * [HideableUi.hideForCapture] triggers a few vsyncs to be applied before the
+ * mirror is created.
  *
- *  * A `sleep` is a guess that is simultaneously too long on a 120 Hz panel and
- *    too short under load. A Choreographer callback is tied to an actual vsync,
- *    so the wait scales with the device.
- *  * Hiding a window is a WindowManager relayout. The first vsync after
- *    `setVisibility(INVISIBLE)` is when *our* process submits the frame that no
- *    longer draws it; the surface removal reaches SurfaceFlinger's next
- *    composition after that. Two chained callbacks therefore put us past the
- *    composition that still contained our windows; the third is slack for a
- *    dropped frame.
+ * 🔴 **What this class does NOT establish.** A Choreographer callback only says
+ * *this process* ticked; it says nothing about what SurfaceFlinger composited,
+ * and nothing about what a freshly created VirtualDisplay emits first. An
+ * earlier version of this comment argued that the first frame of a new mirror
+ * "cannot" contain an already-removed window, and called the settle sufficient.
+ * That argument was never measured. It also was not what the one shipped defect
+ * turned on: the card appeared in captures because it was still **fully
+ * visible** at capture time — `Activity.makeVisible()` had reverted a
+ * view-level hide — not because of any frame timing. See
+ * `DictateActivity.DictaWindows` for the measurement. The hide being a window
+ * attribute is what makes the frame clean; this settle is slack on top.
  *
- * Why that is *sufficient* rather than merely likely: the capture step does not
- * reuse an existing mirror. It creates the ImageReader and VirtualDisplay only
- * after this settle completes, and takes the **first** image that display ever
- * produces. A VirtualDisplay mirror is composited at acquisition time from the
- * screen as it is then, so its first frame cannot contain a window that was
- * already removed before the display existed. The frame chain is what makes
- * "already removed" true rather than "requested"; it is not load-bearing for
- * the content of the frame itself.
+ * Whether a shorter or longer chain would also work has not been measured; 3 is
+ * the value the device evidence (7/7 clean captures, SM-G991W / Android 15) was
+ * collected with.
  */
 class ChoreographerFrameSettler(
     private val frames: Int = 3,

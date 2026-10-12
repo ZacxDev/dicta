@@ -281,11 +281,40 @@ class DictateActivity : Activity() {
         statusText.text = getString(R.string.screenshot_requesting)
         try {
             @Suppress("DEPRECATION")
-            startActivityForResult(mpm.createScreenCaptureIntent(), REQ_PROJECTION)
+            startActivityForResult(screenCaptureIntent(mpm), REQ_PROJECTION)
         } catch (_: ActivityNotFoundException) {
             statusText.text = getString(R.string.screenshot_unsupported)
         }
     }
+
+    /**
+     * The consent intent, pinned to **whole-display** capture where the
+     * platform allows it.
+     *
+     * Android 14 (API 34) added a scope chooser to the system consent dialog
+     * with *A single app* as the **default**. Dicta's feature is "capture what
+     * is behind this card", and [ProjectionService] sizes its VirtualDisplay
+     * from the real display metrics — a single-app projection is neither what
+     * the user asked for nor what the mirror is sized for (it arrives scaled
+     * and letterboxed inside a full-screen surface, with the rest blank).
+     *
+     * `MediaProjectionConfig.createConfigForDefaultDisplay()` tells the
+     * framework this app only ever wants the default display, which removes the
+     * single-app option from the dialog. Measured on Android 15 / SM-G991W: the
+     * scope spinner is gone and the dialog reads "Entire screen" only.
+     *
+     * Below API 34 there is no chooser at all — the one-argument overload
+     * always means the whole display — so the fallback is not a degradation.
+     */
+    private fun screenCaptureIntent(mpm: MediaProjectionManager): Intent =
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            mpm.createScreenCaptureIntent(
+                android.media.projection.MediaProjectionConfig
+                    .createConfigForDefaultDisplay()
+            )
+        } else {
+            mpm.createScreenCaptureIntent()
+        }
 
     private fun runScreenshotSequence(resultCode: Int, data: Intent) {
         val worker = captureWorker
@@ -293,7 +322,7 @@ class DictateActivity : Activity() {
         val main = Executor { command -> runOnUiThread(command) }
 
         ScreenshotSequencer(
-            ui = DictaWindows(),
+            ui = DictaWindows(window, DIM_AMOUNT),
             settler = ChoreographerFrameSettler(),
             worker = worker,
             main = main,
@@ -341,32 +370,6 @@ class DictateActivity : Activity() {
                 )
             }
         )
-    }
-
-    /**
-     * Every Dicta-owned window: this dialog plus, if the bubble service is
-     * running, its overlay. MediaProjection composites the whole screen, so
-     * both would otherwise appear in our own screenshot.
-     */
-    private inner class DictaWindows : HideableUi {
-
-        override fun hideForCapture() {
-            // The 0.6 background dim is a WINDOW attribute, applied by the
-            // window manager regardless of whether the decor draws anything.
-            // Hiding the decor alone would leave the whole screen darkened in
-            // the capture, so the dim has to be cleared too.
-            window.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
-            window.setDimAmount(0f)
-            window.decorView.visibility = View.INVISIBLE
-            OverlayVisibility.setVisible(false)
-        }
-
-        override fun restoreAfterCapture() {
-            window.decorView.visibility = View.VISIBLE
-            window.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
-            window.setDimAmount(DIM_AMOUNT)
-            OverlayVisibility.setVisible(true)
-        }
     }
 
     // --- copy / share -------------------------------------------------------

@@ -19,10 +19,19 @@ data class CaptureTarget(val widthPx: Int, val heightPx: Int, val densityDpi: In
  * One-shot screen capture through a [MediaProjection].
  *
  * The ImageReader and VirtualDisplay are created *inside* [capture] and torn
- * down before it returns, which is both how resources are released
- * deterministically and how we know the frame is clean: see
- * [ChoreographerFrameSettler] for why the first frame of a freshly created
- * mirror cannot contain a window that was removed before the mirror existed.
+ * down before it returns, so resources are released deterministically.
+ *
+ * This class takes the **first** image the mirror produces and does not inspect
+ * it, so it contributes nothing to whether Dicta's own windows are in the
+ * frame: that is decided before the mirror exists, by
+ * `DictateActivity.DictaWindows.hideForCapture`. (An earlier comment here
+ * claimed the first frame of a fresh mirror "cannot" contain an already-removed
+ * window. That was never measured, and is not what the capture's cleanliness
+ * rests on.)
+ *
+ * [target] is sized from the real display metrics, which is correct only for a
+ * whole-display projection. `DictateActivity.screenCaptureIntent` is what makes
+ * that true: it pins the consent dialog to "Entire screen" on API 34+.
  *
  * Blocking. Call it off the main thread.
  */
