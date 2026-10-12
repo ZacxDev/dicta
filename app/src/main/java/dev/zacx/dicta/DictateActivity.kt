@@ -11,6 +11,7 @@ import android.os.Bundle
 import android.speech.RecognizerIntent
 import android.widget.Button
 import android.widget.EditText
+import android.widget.ImageButton
 import android.widget.TextView
 import android.widget.Toast
 
@@ -39,9 +40,11 @@ class DictateActivity : Activity() {
         micButton = findViewById(R.id.mic_button)
 
         micButton.setOnClickListener { toggleDictation() }
-        findViewById<Button>(R.id.copy_button).setOnClickListener { copyToClipboard() }
-        findViewById<Button>(R.id.share_button).setOnClickListener { shareText() }
-        findViewById<Button>(R.id.close_button).setOnClickListener { finish() }
+        // Copy/Send/Close are ImageButtons (ImageView subclasses, NOT Buttons) —
+        // findViewById<Button> on them would throw ClassCastException.
+        findViewById<ImageButton>(R.id.copy_button).setOnClickListener { copyToClipboard() }
+        findViewById<ImageButton>(R.id.share_button).setOnClickListener { shareText() }
+        findViewById<ImageButton>(R.id.close_button).setOnClickListener { finish() }
 
         if (hasMicPermission()) {
             startDictation()
