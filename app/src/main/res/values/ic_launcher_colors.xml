@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Launcher-icon palette, kept in its own file rather than colors.xml.
+
+  These are icon-specific tokens: they exist to make the mic glyph read at
+  48dp against a launcher wallpaper, which is a different problem from the
+  in-app surfaces colors.xml describes. Mixing them would invite someone to
+  "unify" the two and flatten the icon's contrast.
+
+  The glow pair is deliberately the SAME hue at two alphas. Fading cyan to a
+  transparent *grey* instead produces a dirty halo, because the interpolation
+  runs through the grey.
+-->
+<resources>
+    <color name="ic_launcher_bg_start">#2E4A52</color>
+    <color name="ic_launcher_bg_end">#121A1F</color>
+    <color name="ic_launcher_glow_inner">#334DD0E1</color>
+    <color name="ic_launcher_glow_outer">#004DD0E1</color>
+    <!-- Matches dicta_accent; duplicated so a theme change cannot silently
+         recolour the launcher icon without someone looking at it. -->
+    <color name="ic_launcher_mic">#4DD0E1</color>
+</resources>

@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  minSdk is 26, so this -v26 qualifier covers the ENTIRE supported range and
+  no legacy density-bucket PNG fallback is needed. That is what keeps this
+  icon vector-only; if minSdk is ever lowered below 26, mipmap-mdpi..xxxhdpi
+  PNGs become mandatory or the app ships with no launcher icon at all on the
+  new lower devices.
+
+  <monochrome> is API 33+. It is declared here rather than in a separate
+  -v33 variant because platforms 26..32 ignore unknown child elements of
+  <adaptive-icon>; aapt2 on compileSdk 34 accepts it.
+-->
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@drawable/ic_launcher_background" />
+    <foreground android:drawable="@drawable/ic_launcher_foreground" />
+    <monochrome android:drawable="@drawable/ic_launcher_monochrome" />
+</adaptive-icon>
