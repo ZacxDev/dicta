@@ -56,6 +56,7 @@ class DictateActionViewTypesTest {
      */
     private val iconActions = listOf(
         R.id.copy_button,
+        R.id.screenshot_button,
         R.id.share_button,
         R.id.close_button,
     )
@@ -88,8 +89,13 @@ class DictateActionViewTypesTest {
 
     /**
      * Seam guard: the action row's membership is asserted as a set, so adding a
-     * fourth action (or deleting one) without updating [iconActions] fails here
+     * fifth action (or deleting one) without updating [iconActions] fails here
      * rather than silently escaping type coverage.
+     *
+     * Observed working, not assumed: adding `screenshot_button` to the layout
+     * for this PR turned this test red with "the action row's children changed"
+     * until [iconActions] was updated. That is the reachability proof — the
+     * guard fires on a row that genuinely grew.
      */
     @Test
     fun theLedgerCoversEveryIdInTheActionRow() {

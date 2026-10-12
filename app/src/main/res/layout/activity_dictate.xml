@@ -49,6 +49,19 @@
             android:padding="12dp"
             android:inputType="textMultiLine|textCapSentences" />
 
+        <!-- Shown only once a screenshot has actually been attached. The note is
+             not decoration: many share targets drop EXTRA_TEXT when a stream is
+             present, so the user needs to know Copy is the reliable text path. -->
+        <TextView
+            android:id="@+id/attachment_note"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:textSize="12sp"
+            android:textColor="@color/dicta_text_dim"
+            android:visibility="gone"
+            android:text="@string/screenshot_attached_note" />
+
         <Button
             android:id="@+id/mic_button"
             android:layout_width="match_parent"
@@ -57,7 +70,11 @@
             android:text="@string/start_dictation" />
 
         <!-- Icon-only actions: the labelled variants were truncated at this width
-             (three ALL-CAPS Material buttons can't fit inside the dialog card). -->
+             (ALL-CAPS Material buttons can't fit inside the dialog card). Four
+             52dp icon buttons at weight 1 still fit — there is no text to
+             ellipsize, so the truncation bug cannot recur. Every one needs BOTH
+             contentDescription (a11y) and tooltipText (discoverability), since
+             there is no visible label. -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -75,6 +92,19 @@
                 android:tint="@color/dicta_text"
                 android:contentDescription="@string/copy"
                 android:tooltipText="@string/copy" />
+
+            <ImageButton
+                android:id="@+id/screenshot_button"
+                android:layout_width="0dp"
+                android:layout_height="52dp"
+                android:layout_weight="1"
+                android:layout_marginStart="8dp"
+                android:src="@drawable/ic_screenshot"
+                android:scaleType="center"
+                android:background="@drawable/icon_button_bg"
+                android:tint="@color/dicta_text"
+                android:contentDescription="@string/screenshot"
+                android:tooltipText="@string/screenshot" />
 
             <ImageButton
                 android:id="@+id/share_button"

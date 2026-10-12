@@ -5,6 +5,7 @@
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
@@ -54,6 +55,30 @@
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="User-toggled floating mic bubble that opens voice dictation from anywhere on the device." />
         </service>
+
+        <!--
+          MediaProjection host. On Android 14+ a mediaProjection-typed FGS must
+          already be running before MediaProjectionManager.getMediaProjection()
+          is called, so the consent result is handed to this service rather than
+          used in the Activity.
+        -->
+        <service
+            android:name=".ProjectionService"
+            android:exported="false"
+            android:foregroundServiceType="mediaProjection" />
+
+        <!--
+          Serves the captured PNG to the share target. Hand-rolled rather than
+          androidx.core FileProvider so the APK keeps zero runtime
+          dependencies — see DictaFileProvider's kdoc. grantUriPermissions is
+          what makes FLAG_GRANT_READ_URI_PERMISSION on the share intent
+          meaningful; without it the receiver gets a SecurityException.
+        -->
+        <provider
+            android:name=".DictaFileProvider"
+            android:authorities="dev.zacx.dicta.files"
+            android:exported="false"
+            android:grantUriPermissions="true" />
 
     </application>
 </manifest>

@@ -60,6 +60,26 @@ class BubbleService : Service() {
         }
         wm.addView(button, params)
         bubble = button
+        OverlayVisibility.register(visibilitySink)
+    }
+
+    /**
+     * The bubble is an always-on-top overlay, so MediaProjection composites it
+     * into any screenshot. [DictateActivity] hides it for the duration of a
+     * capture through [OverlayVisibility].
+     */
+    private val visibilitySink: (Boolean) -> Unit = { visible ->
+        bubble?.post {
+            val view = bubble
+            if (view != null) {
+                view.visibility = if (visible) View.VISIBLE else View.INVISIBLE
+                // Belt and braces: INVISIBLE already makes the view draw
+                // nothing into a TRANSLUCENT window, but zeroing the window
+                // alpha removes it from composition outright.
+                params.alpha = if (visible) 1f else 0f
+                runCatching { wm.updateViewLayout(view, params) }
+            }
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -71,6 +91,7 @@ class BubbleService : Service() {
     }
 
     override fun onDestroy() {
+        OverlayVisibility.unregister(visibilitySink)
         bubble?.let {
             try {
                 wm.removeView(it)
