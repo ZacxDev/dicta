@@ -9,6 +9,8 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Bundle
 import android.speech.RecognizerIntent
+import android.view.Gravity
+import android.view.WindowManager
 import android.widget.Button
 import android.widget.EditText
 import android.widget.ImageButton
@@ -34,6 +36,9 @@ class DictateActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_dictate)
+        // Must run AFTER setContentView: PhoneWindow.generateLayout() resets a
+        // floating window to WRAP_CONTENT x WRAP_CONTENT while inflating.
+        applyFloatingWindowSize()
 
         statusText = findViewById(R.id.status_text)
         textInput = findViewById(R.id.dictated_text)
@@ -57,6 +62,33 @@ class DictateActivity : Activity() {
         speech?.destroy()
         speech = null
         super.onDestroy()
+    }
+
+    // --- floating window geometry -------------------------------------------
+
+    /**
+     * Caps the floating window at [R.fraction.overlay_width_fraction] of the
+     * display width and centres it.
+     *
+     * Why in code rather than in the theme: the dialog window is WRAP_CONTENT,
+     * so without a cap the decor is measured at `AT_MOST(displayWidth)` and any
+     * content that wants to be wider than the screen — a long hint, a
+     * match_parent row — simply clamps to the full display width, which is how
+     * the "it looks like a full app screen" report happens. The only theme
+     * attributes that can make the window *narrower* than its content
+     * (`windowFixedWidthMinor` / `windowFixedWidthMajor`) are private platform
+     * attributes and fail aapt2 linking from an app theme; `windowMinWidth*`
+     * can only widen. `Window.setLayout` is the public equivalent and is
+     * applied on every create, so a rotation (which recreates the activity)
+     * re-reads the orientation-qualified fraction.
+     */
+    internal fun applyFloatingWindowSize() {
+        val metrics = resources.displayMetrics
+        val fraction = resources.getFraction(R.fraction.overlay_width_fraction, 1, 1)
+        val width = (metrics.widthPixels * fraction).toInt()
+        if (width <= 0) return
+        window.setLayout(width, WindowManager.LayoutParams.WRAP_CONTENT)
+        window.setGravity(Gravity.CENTER)
     }
 
     // --- dictation ----------------------------------------------------------

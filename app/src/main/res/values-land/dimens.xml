@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Landscape phone: 92% of a ~900dp-wide display would be a 830dp dialog,
+     which is the fullscreen look this change exists to fix. -->
+<resources>
+    <item name="overlay_width_fraction" type="fraction">62%</item>
+</resources>
