@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Secondary button on the setup screen (Grant, Add tile): outlined rather than
+  filled, because the accent fill is reserved for the dictation affordance
+  itself. The 1dp ring is @color/dicta_outline at 3.51:1 on surface_2 and
+  3.99:1 on surface_0, so the control's bounds are visible without a fill.
+-->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:state_pressed="true">
+        <shape android:shape="rectangle">
+            <solid android:color="@color/dicta_surface_3" />
+            <corners android:radius="22dp" />
+            <stroke android:width="1dp" android:color="@color/dicta_accent" />
+        </shape>
+    </item>
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="@android:color/transparent" />
+            <corners android:radius="22dp" />
+            <stroke android:width="1dp" android:color="@color/dicta_outline" />
+        </shape>
+    </item>
+</selector>

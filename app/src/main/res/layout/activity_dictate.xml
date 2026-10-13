@@ -1,10 +1,52 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  The floating card. Wrapped in a ScrollView because the window is a floating
-  dialog with WRAP_CONTENT height: on a landscape phone (~411dp of usable
-  height, minus the 12dp window inset top and bottom) the column below is
-  taller than the window can be, and without a scroll container the bottom
-  action row would simply be clipped off the card.
+  The floating dictation card — RADICALLY MINIMAL.
+
+  ## What is present at rest, and what is not
+
+  At rest this card contains the transcript and one mic control. That is all.
+  Removed by the 2026-10 design pass:
+
+    * the "Dicta" title TextView — the card only ever appears because the user
+      just tapped a Dicta trigger, so it named the app to someone who had just
+      named it themselves;
+    * the always-visible four-icon action row (Copy / Screenshot / Send /
+      Close), which is now @id/action_row and starts GONE;
+    * the full-bleed mic Button, which is now a centred pill sharing its row
+      with the overflow trigger.
+
+  Kept, because the layout is not the only consumer: @id/status_text,
+  @id/dictated_text, @id/mic_button, @id/attachment_note, @id/copy_button,
+  @id/screenshot_button, @id/share_button, @id/close_button and
+  @id/dictate_card all still exist with the same ids and the same view types.
+  DictateActivity and the unit suite address them by id, and so does in-flight
+  work on another branch.
+
+  ## 🔴 How a first-time user finds Send
+
+  Three independent routes, deliberately — a hidden action with one route is a
+  feature that exists only in the author's head:
+
+    1. @id/more_button is ALWAYS VISIBLE, at rest, next to the mic. It is a
+       ringed overflow control with contentDescription AND tooltipText ("More
+       actions" / "Hide actions"), and tapping it reveals @id/action_row. It is
+       the only other thing on the card besides the transcript and the mic, so
+       it cannot be missed.
+    2. The row AUTO-REVEALS the moment the transcript stops being empty —
+       DictateActivity watches @id/dictated_text. So after the very first
+       utterance the actions are simply on screen, and the user never has to
+       discover anything. They are hidden only in the state where every one of
+       them would refuse ("Nothing to copy yet…").
+    3. @id/status_text, which is the first line of the card, names the route in
+       words while the row is hidden ("Tap ⋯ for Copy, Send, Screenshot").
+
+  ## Why still a ScrollView
+
+  Unchanged reason: the window is a floating dialog with WRAP_CONTENT height,
+  and on a landscape phone (~411dp usable, minus the 12dp window inset top and
+  bottom) the column can be taller than the window. Without a scroll container
+  the bottom of the card is clipped off rather than scrolled. Pinned by
+  FloatingWindowSizeTest.theCardScrollsRatherThanClipping.
 -->
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
@@ -17,36 +59,113 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="vertical"
-        android:padding="24dp">
+        android:padding="20dp">
 
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="@string/dictate_title"
-            android:textSize="18sp"
-            android:textStyle="bold"
-            android:textColor="@color/dicta_text" />
+        <!--
+          ========================= RESERVED SLOT =========================
+          The status strip. One 20dp-tall row carrying three things, two of
+          which are reserved for in-flight work on another branch and are
+          STUBBED GONE here so that branch's merge is mechanical rather than
+          interpretive:
 
-        <TextView
-            android:id="@+id/status_text"
+            @id/level_meter   a 4dp horizontal mic-level meter, track
+                              @drawable/meter_track_bg, progress tint
+                              @color/dicta_accent. Sized 72dp x 4dp, placed
+                              FIRST in the strip so it reads left-to-right as
+                              "input is arriving" before the words do. It is a
+                              plain View here; swap the element to a
+                              ProgressBar (style
+                              ?android:attr/progressBarStyleHorizontal) and
+                              flip visibility — no other change to this file is
+                              needed. Must work with no partials, so it is
+                              deliberately independent of @id/dictated_text.
+
+            @id/status_text   the live status line. 12sp, variant colour,
+                              single line, ellipsized — it takes the weight so
+                              the two reserved views keep their intrinsic size.
+                              This is also the home for a "transcribing…" /
+                              in-flight message: no layout change required,
+                              just setText.
+
+            @id/engine_badge  an 11sp pill (@drawable/badge_bg,
+                              @color/dicta_on_accent_container at 9.84:1)
+                              naming which engine produced the current text —
+                              "on-device" / "remote". Placed LAST so it sits at
+                              the trailing edge and does not shift the status
+                              text when it appears. It carries a
+                              contentDescription of its own because a 3-letter
+                              badge is not self-describing to a screen reader.
+
+          🔴 Do not encode engine or in-flight state in colour alone: the badge
+          exists so there is always a WORD. OverlayMinimalLayoutTest pins the
+          reservation (both stubs exist, both are GONE at rest).
+          =================================================================
+        -->
+        <LinearLayout
+            android:id="@+id/overlay_status_strip"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="6dp"
-            android:text="@string/dictate_hint"
-            android:textColor="@color/dicta_text_dim" />
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:baselineAligned="false">
 
+            <View
+                android:id="@+id/level_meter"
+                android:layout_width="72dp"
+                android:layout_height="4dp"
+                android:layout_marginEnd="10dp"
+                android:background="@drawable/meter_track_bg"
+                android:contentDescription="@string/level_meter_desc"
+                android:visibility="gone" />
+
+            <TextView
+                android:id="@+id/status_text"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="@string/dictate_hint"
+                android:textSize="12sp"
+                android:maxLines="1"
+                android:ellipsize="end"
+                android:textColor="@color/dicta_on_surface_variant" />
+
+            <TextView
+                android:id="@+id/engine_badge"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:paddingStart="8dp"
+                android:paddingEnd="8dp"
+                android:paddingTop="2dp"
+                android:paddingBottom="2dp"
+                android:background="@drawable/badge_bg"
+                android:textSize="11sp"
+                android:textColor="@color/dicta_on_accent_container"
+                android:contentDescription="@string/engine_badge_desc"
+                android:visibility="gone" />
+        </LinearLayout>
+
+        <!--
+          The transcript: the hero, and the reason the card exists. 17sp rather
+          than the platform default because this is the content, not a form
+          field, and minLines 3 rather than 4 — with the title and the action
+          row gone the card no longer needs a tall box to look balanced.
+          @color/dicta_on_surface measures 14.01:1 on the card.
+        -->
         <EditText
             android:id="@+id/dictated_text"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:minLines="4"
-            android:gravity="top"
             android:layout_marginTop="12dp"
+            android:minLines="3"
+            android:gravity="top"
             android:hint="@string/dictate_text_hint"
-            android:textColor="@color/dicta_text"
-            android:textColorHint="@color/dicta_text_dim"
+            android:textSize="17sp"
+            android:lineSpacingExtra="3dp"
+            android:textColor="@color/dicta_on_surface"
+            android:textColorHint="@color/dicta_on_surface_variant"
             android:background="@drawable/input_bg"
-            android:padding="12dp"
+            android:padding="14dp"
             android:inputType="textMultiLine|textCapSentences" />
 
         <!-- Shown only once a screenshot has actually been attached. The note is
@@ -58,77 +177,133 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="8dp"
             android:textSize="12sp"
-            android:textColor="@color/dicta_text_dim"
+            android:textColor="@color/dicta_on_surface_variant"
             android:visibility="gone"
             android:text="@string/screenshot_attached_note" />
 
-        <Button
-            android:id="@+id/mic_button"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="16dp"
-            android:text="@string/start_dictation" />
+        <!--
+          The resting control row: the mic, and the way to everything else.
 
-        <!-- Icon-only actions: the labelled variants were truncated at this width
-             (ALL-CAPS Material buttons can't fit inside the dialog card). Four
-             52dp icon buttons at weight 1 still fit — there is no text to
-             ellipsize, so the truncation bug cannot recur. Every one needs BOTH
-             contentDescription (a11y) and tooltipText (discoverability), since
-             there is no visible label. -->
+          @id/mic_button stays a Button (not an ImageButton) on purpose. Four
+          places in DictateActivity assign `micButton.text`, another branch is
+          editing that file right now, and the label is what keeps the recording
+          state off colour-only footing ("Speak" / "Stop"). It is styled as an
+          accent pill with the mic glyph as a compound drawable instead.
+        -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="horizontal"
-            android:layout_marginTop="8dp">
+            android:layout_marginTop="16dp"
+            android:gravity="center_vertical">
+
+            <Button
+                android:id="@+id/mic_button"
+                android:layout_width="0dp"
+                android:layout_height="56dp"
+                android:layout_weight="1"
+                android:background="@drawable/mic_pill_bg"
+                android:drawableStart="@drawable/ic_mic"
+                android:drawableTint="@color/dicta_on_accent"
+                android:drawablePadding="8dp"
+                android:paddingStart="22dp"
+                android:paddingEnd="22dp"
+                android:stateListAnimator="@null"
+                android:textColor="@color/dicta_on_accent"
+                android:textSize="15sp"
+                android:textAllCaps="false"
+                android:text="@string/start_dictation" />
+
+            <!-- The overflow. 48dp square = the minimum touch target, and the
+                 ONLY always-visible route to the hidden actions, so it carries
+                 both a contentDescription and a tooltipText and DictateActivity
+                 swaps both when it toggles. -->
+            <ImageButton
+                android:id="@+id/more_button"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:layout_marginStart="12dp"
+                android:src="@drawable/ic_more"
+                android:scaleType="center"
+                android:background="@drawable/ghost_button_bg"
+                android:tint="@color/dicta_on_surface_variant"
+                android:contentDescription="@string/more_actions"
+                android:tooltipText="@string/more_actions" />
+        </LinearLayout>
+
+        <!--
+          The on-demand actions. GONE at rest; revealed by @id/more_button or
+          automatically once the transcript is non-empty (see the header).
+
+          Still icon-only and still 4 children, unchanged ids and unchanged
+          order. Each is 48dp tall (the minimum touch target; the previous 52dp
+          was fine too, 48 is what the extra row of chrome can afford) and each
+          keeps BOTH contentDescription and tooltipText — a control that is
+          sometimes invisible needs its label more than one that is always on
+          screen, not less.
+
+          🔴 DictateActionViewTypesTest asserts this row's child-id set as a
+          ledger: adding a fifth action here without updating that list turns
+          the suite red. @id/more_button is deliberately NOT a child of this row
+          (it must stay visible when the row is hidden), and is covered instead
+          by OverlayMinimalLayoutTest's icon-control ledger.
+        -->
+        <LinearLayout
+            android:id="@+id/action_row"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:layout_marginTop="10dp"
+            android:visibility="gone">
 
             <ImageButton
                 android:id="@+id/copy_button"
                 android:layout_width="0dp"
-                android:layout_height="52dp"
+                android:layout_height="48dp"
                 android:layout_weight="1"
                 android:src="@drawable/ic_copy"
                 android:scaleType="center"
                 android:background="@drawable/icon_button_bg"
-                android:tint="@color/dicta_text"
+                android:tint="@color/dicta_on_surface"
                 android:contentDescription="@string/copy"
                 android:tooltipText="@string/copy" />
 
             <ImageButton
                 android:id="@+id/screenshot_button"
                 android:layout_width="0dp"
-                android:layout_height="52dp"
+                android:layout_height="48dp"
                 android:layout_weight="1"
                 android:layout_marginStart="8dp"
                 android:src="@drawable/ic_screenshot"
                 android:scaleType="center"
                 android:background="@drawable/icon_button_bg"
-                android:tint="@color/dicta_text"
+                android:tint="@color/dicta_on_surface"
                 android:contentDescription="@string/screenshot"
                 android:tooltipText="@string/screenshot" />
 
             <ImageButton
                 android:id="@+id/share_button"
                 android:layout_width="0dp"
-                android:layout_height="52dp"
+                android:layout_height="48dp"
                 android:layout_weight="1"
                 android:layout_marginStart="8dp"
                 android:src="@drawable/ic_send"
                 android:scaleType="center"
                 android:background="@drawable/icon_button_bg"
-                android:tint="@color/dicta_text"
+                android:tint="@color/dicta_on_surface"
                 android:contentDescription="@string/share"
                 android:tooltipText="@string/share" />
 
             <ImageButton
                 android:id="@+id/close_button"
                 android:layout_width="0dp"
-                android:layout_height="52dp"
+                android:layout_height="48dp"
                 android:layout_weight="1"
                 android:layout_marginStart="8dp"
                 android:src="@drawable/ic_close"
                 android:scaleType="center"
                 android:background="@drawable/icon_button_bg"
-                android:tint="@color/dicta_text"
+                android:tint="@color/dicta_on_surface"
                 android:contentDescription="@string/close"
                 android:tooltipText="@string/close" />
         </LinearLayout>

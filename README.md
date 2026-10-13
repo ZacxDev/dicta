@@ -16,10 +16,24 @@ Three independent triggers, all opening the same overlay:
    you can drag anywhere. Tap it from any app.
 3. **Persistent notification** — "Dicta" notification with a Dictate action.
 
-The overlay is a floating dialog-style activity with:
+The overlay is a floating dialog-style activity, and it is deliberately
+**minimal at rest**: the transcript, one mic pill, and a small overflow
+control. Nothing else. The four actions below live in a row that is hidden
+until there is something to act on.
+
+Three independent routes reach them, so none of them is the single point of
+failure:
+
+1. the **⋯ overflow** next to the mic, always visible, with a
+   `contentDescription` and a long-press `tooltipText` that both flip between
+   "More actions" and "Hide actions";
+2. the row **reveals itself** the moment the transcript stops being blank — so
+   after the first utterance the actions are simply on screen;
+3. the status line names the route in words while the row is hidden.
 
 - One-tap dictation via `SpeechRecognizer` (live partial results as you speak)
-- Editable text field (fix anything the recognizer got wrong)
+- Editable text field (fix anything the recognizer got wrong) — the hero of the
+  card, not one row of a form
 - **Copy** → puts the text on the system clipboard (`ClipboardManager`)
 - **Screenshot** → captures the screen *behind* Dicta via `MediaProjection`
   (Dicta's own dialog and bubble are hidden for the frame) and attaches the PNG
@@ -70,11 +84,28 @@ Gradle install is needed:
 python3 scripts/assert-tests-ran.py     # asserts the suite ran AND was green
 ```
 
-JUnit 4 + Robolectric, `testImplementation` only — the APK stays
-dependency-free. `.github/workflows/tests.yml` runs both on every push and pull
+JUnit 4 + Robolectric, `testImplementation` only — never packaged.
+`.github/workflows/tests.yml` runs both on every push and pull
 request, on JDK 17. The second command exists because a Gradle task can report
 success having executed **zero** tests; it reads the JUnit XML and fails on an
 empty result set rather than trusting the exit status.
+
+### Runtime dependencies
+
+The APK has **no third-party runtime dependencies**: no AndroidX, no Material
+Components. Material Components was explicitly permitted for the 2026-10 design
+pass and deliberately declined — the design is a surface ramp in `colors.xml`
+plus `<shape>`/`<selector>` drawables, and adopting M3 components would have
+meant re-parenting `Theme.Dicta.Overlay`, whose parent is what gives the
+floating card its screen margin. The reasoning is in `app/build.gradle.kts`.
+
+This used to read "the APK stays dependency-free", which was slightly
+overstated: scanning the debug APK's dex (2026-10-12) the package prefixes
+present are `dev/zacx` (the app), `kotlin/*` (stdlib), `java/*` `android/*`
+`dalvik/*` (platform), and `org/jetbrains/` `org/intellij/` — the
+`@Nullable`/`@NotNull` annotation classes that ship *inside* kotlin-stdlib
+rather than as a dependency of their own. "No third-party runtime
+dependencies" is the accurate form.
 
 On NixOS, AGP's downloaded `aapt2` is a generic-linux binary the system cannot
 exec, so add the override:

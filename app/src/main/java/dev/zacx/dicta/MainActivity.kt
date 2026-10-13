@@ -152,6 +152,11 @@ class MainActivity : Activity() {
         )
         val notif = Notification.Builder(this, TRIGGER_CHANNEL)
             .setSmallIcon(R.drawable.ic_tile_mic)
+            // Matches BubbleService.buildNotification(): the shade tints the
+            // small icon and the app name from this, and it is the only styling
+            // hook a platform notification offers.
+            .setColor(getColor(R.color.dicta_accent))
+            .setColorized(false)
             .setContentTitle(getString(R.string.app_name))
             .setContentText(getString(R.string.notif_text))
             .setContentIntent(pi)

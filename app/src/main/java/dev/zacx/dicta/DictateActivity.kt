@@ -73,6 +73,8 @@ class DictateActivity : Activity() {
         findViewById<ImageButton>(R.id.share_button).setOnClickListener { shareText() }
         findViewById<ImageButton>(R.id.close_button).setOnClickListener { finish() }
 
+        wireOnDemandActions()
+
         if (hasMicPermission()) {
             startDictation()
         } else {
@@ -88,6 +90,71 @@ class DictateActivity : Activity() {
         // If we are torn down mid-capture the bubble must not stay hidden.
         OverlayVisibility.setVisible(true)
         super.onDestroy()
+    }
+
+    // --- the on-demand action row -------------------------------------------
+
+    /**
+     * Wires the two routes that reveal `@id/action_row`, which the layout
+     * starts GONE so that the resting card is the transcript and the mic and
+     * nothing else.
+     *
+     * 🔴 Discoverability is the whole risk of hiding a control, so there are
+     * deliberately TWO mechanisms here plus a third in the copy, and none of
+     * them depends on the others:
+     *
+     *  1. [R.id.more_button] — always visible next to the mic, toggles the row.
+     *     Its `contentDescription` and `tooltipText` are BOTH swapped with the
+     *     row's visibility, so the toggle state is announced rather than only
+     *     drawn (the `state_selected` fill in `ghost_button_bg` is the visual
+     *     half, and would be colour-only on its own).
+     *  2. A [android.text.TextWatcher] on the transcript — the row appears by
+     *     itself the moment there is text to act on, so after the first
+     *     utterance the user is never asked to find anything. It is hidden only
+     *     in the state where every action in it would refuse ("Nothing to copy
+     *     yet…").
+     *  3. `@string/dictate_hint`, the resting status line, names the route in
+     *     words.
+     *
+     * The watcher only ever reveals, never hides: a user who types, deletes and
+     * retypes should not have the row flicker, and once revealed the row has
+     * been seen — re-hiding it would be the app forgetting what the user
+     * already learned. [R.id.more_button] remains the way to put it away.
+     */
+    private fun wireOnDemandActions() {
+        val row = findViewById<View>(R.id.action_row)
+        val more = findViewById<ImageButton>(R.id.more_button)
+
+        more.setOnClickListener {
+            setActionsRevealed(row, more, row.visibility != View.VISIBLE)
+        }
+        setActionsRevealed(row, more, currentText().isNotEmpty())
+
+        textInput.addTextChangedListener(object : android.text.TextWatcher {
+            override fun afterTextChanged(s: android.text.Editable?) {
+                if (!s.isNullOrBlank() && row.visibility != View.VISIBLE) {
+                    setActionsRevealed(row, more, true)
+                }
+            }
+
+            override fun beforeTextChanged(
+                s: CharSequence?, start: Int, count: Int, after: Int
+            ) = Unit
+
+            override fun onTextChanged(
+                s: CharSequence?, start: Int, before: Int, count: Int
+            ) = Unit
+        })
+    }
+
+    private fun setActionsRevealed(row: View, more: ImageButton, revealed: Boolean) {
+        row.visibility = if (revealed) View.VISIBLE else View.GONE
+        more.isSelected = revealed
+        val label = getString(
+            if (revealed) R.string.hide_actions else R.string.more_actions
+        )
+        more.contentDescription = label
+        more.tooltipText = label
     }
 
     // --- floating window geometry -------------------------------------------
