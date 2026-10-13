@@ -366,7 +366,14 @@ class DictationSession(
             // returns "en-US" here, which the service passes unvalidated to a
             // processor that raises ValueError outside its try/except — an
             // unhandled 500.
-            language = SttLanguage.fromLocale(locale),
+            //
+            // The user's explicit Settings choice wins over the device locale
+            // (issue #7): on an es-CO handset the locale alone made English
+            // dictation impossible, because the service faithfully transcribed
+            // English speech as Spanish — which reads as a broken recogniser
+            // rather than as a setting nobody was offered. null still means
+            // "follow the device", and is still the default.
+            language = SttLanguage.resolve(settings.language, locale),
         )
     }
 }

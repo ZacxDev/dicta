@@ -2,11 +2,14 @@ package dev.zacx.dicta
 
 import android.app.Activity
 import android.os.Bundle
+import android.widget.ArrayAdapter
 import android.widget.Button
 import android.widget.CheckBox
 import android.widget.EditText
+import android.widget.Spinner
 import android.widget.TextView
 import android.widget.Toast
+import java.util.Locale
 import java.util.concurrent.Executors
 
 /**
@@ -32,6 +35,13 @@ class SettingsActivity : Activity() {
     private lateinit var tokenField: EditText
     private lateinit var statusLine: TextView
     private lateinit var remoteToggle: CheckBox
+    private lateinit var languageSpinner: Spinner
+
+    /**
+     * The spinner's rows, by position. `null` is "follow the device locale" and
+     * is always position 0 — see [languageCodes].
+     */
+    private var languageCodes: List<String?> = emptyList()
 
     private val worker = Executors.newSingleThreadExecutor()
 
@@ -44,9 +54,11 @@ class SettingsActivity : Activity() {
         tokenField = findViewById(R.id.stt_token)
         statusLine = findViewById(R.id.stt_status)
         remoteToggle = findViewById(R.id.stt_remote_enabled)
+        languageSpinner = findViewById(R.id.stt_language)
 
         urlField.setText(settings.baseUrl)
         remoteToggle.isChecked = settings.remoteEnabled
+        bindLanguageSpinner()
         renderTokenState()
 
         findViewById<Button>(R.id.stt_save).setOnClickListener { save() }
@@ -57,6 +69,48 @@ class SettingsActivity : Activity() {
     override fun onDestroy() {
         worker.shutdownNow()
         super.onDestroy()
+    }
+
+    /**
+     * Builds the dictation-language picker (issue #7).
+     *
+     * Position 0 is always "follow the device", and it *names* the language
+     * that currently means — a bare "Follow device language" would leave an
+     * operator on an `es-CO` handset no way to discover that this is why their
+     * English came back in Spanish.
+     *
+     * The remaining rows come from [SttLanguage.DISPLAY_NAMES], sorted by the
+     * label so the list reads alphabetically rather than by ISO code. The codes
+     * are kept in [languageCodes] positionally, so nothing has to parse a label
+     * back into a code.
+     */
+    private fun bindLanguageSpinner() {
+        val deviceResolved = SttLanguage.fromLocale(Locale.getDefault())
+        val followLabel = getString(
+            R.string.stt_language_follow_device,
+            SttLanguage.DISPLAY_NAMES[deviceResolved] ?: deviceResolved,
+        )
+
+        val named = SttLanguage.DISPLAY_NAMES.entries
+            .sortedBy { it.value }
+
+        languageCodes = listOf<String?>(null) + named.map { it.key }
+        val labels = listOf(followLabel) + named.map { it.value }
+
+        languageSpinner.adapter = ArrayAdapter(
+            this,
+            android.R.layout.simple_spinner_item,
+            labels,
+        ).apply {
+            setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
+        }
+
+        // settings.language is null when following the device, which is
+        // position 0 — and indexOf returns the same 0 for null, so this is one
+        // lookup rather than a special case.
+        languageSpinner.setSelection(
+            languageCodes.indexOf(settings.language).coerceAtLeast(0)
+        )
     }
 
     private fun renderTokenState() {
@@ -73,6 +127,11 @@ class SettingsActivity : Activity() {
     private fun save() {
         settings.baseUrl = urlField.text.toString()
         settings.remoteEnabled = remoteToggle.isChecked
+        // 🔴 Without this line the picker renders, moves, and changes nothing —
+        // a control that looks like a setting and is not one. SettingsLanguageTest
+        // drives the spinner and reads the value back out of SttSettings for
+        // exactly that reason.
+        settings.language = languageCodes.getOrNull(languageSpinner.selectedItemPosition)
 
         val typed = tokenField.text.toString()
         if (typed.isNotBlank()) {

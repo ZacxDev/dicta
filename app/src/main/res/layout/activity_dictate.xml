@@ -63,7 +63,20 @@
 
         <!--
           ========================= THE STATUS STRIP =========================
-          One row carrying three things. Two of them were RESERVED, GONE stubs
+          🔴 ISSUE #9: @id/status_text USED TO LIVE IN THIS ROW and no longer
+          does. It was maxLines=1 + ellipsize=end, sharing a 801px strip with
+          the 72dp meter, which left it 555px — about 30 characters. The two
+          longest strings it carries are 154 and 145 characters
+          (@string/stt_fell_back_retrying, @string/stt_tier_remote_only), so
+          the user never saw the half of the sentence that says what happens
+          NEXT ("…the server transcript is on its way"). No amount of maxLines
+          rescues it inside this row: four lines of 555px is still ~123
+          characters. It therefore sits BELOW the strip at full card width,
+          where four lines hold ~194 characters. Pinned by
+          OverlayMinimalLayoutTest.theLongestStatusStringIsNotTruncated.
+
+          This row now carries two things, both GONE at rest. Both were
+          RESERVED stubs
           for in-flight work on another branch; that branch (remote STT) has
           landed and both are now BOUND to real state. The reservation held —
           the merge was the mechanical swap the stubs were shaped for — so what
@@ -80,21 +93,16 @@
                               DictateActivity.onLevel. Works with no partials:
                               deliberately independent of @id/dictated_text.
 
-            @id/status_text   the live status line. 12sp, variant colour,
-                              single line, ellipsized — it takes the weight so
-                              the two reserved views keep their intrinsic size.
-                              This is also the home for a "transcribing…" /
-                              in-flight message: no layout change required,
-                              just setText.
-
             @id/engine_badge  an 11sp pill (@drawable/badge_bg,
                               @color/dicta_on_accent_container at 9.84:1)
                               naming which engine produced the current text.
                               Bound by DictateActivity.showEngine(fromRemote)
                               to @string/stt_remote_done or
-                              @string/stt_local_label. Placed LAST so it sits
-                              at the trailing edge and does not shift the
-                              status text when it appears. It carries a
+                              @string/stt_local_label. Still placed LAST, now
+                              simply so the meter leads; the older reason ("so
+                              it does not shift the status text") retired with
+                              the #9 move — there is no longer any status text
+                              in this row to shift. It carries a
                               contentDescription of its own because a short
                               badge is not self-describing to a screen reader.
                               (Reserved as @id/engine_badge, built on the
@@ -152,16 +160,13 @@
                 android:contentDescription="@string/level_meter_desc"
                 android:visibility="gone" />
 
-            <TextView
-                android:id="@+id/status_text"
+            <!-- Pushes the badge to the trailing edge now that the status
+                 text no longer takes the row's spare weight. -->
+            <Space
+                android:id="@+id/status_strip_spacer"
                 android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="@string/dictate_hint"
-                android:textSize="12sp"
-                android:maxLines="1"
-                android:ellipsize="end"
-                android:textColor="@color/dicta_on_surface_variant" />
+                android:layout_height="1dp"
+                android:layout_weight="1" />
 
             <!--
               Which engine produced the text currently in the box. The server
@@ -199,6 +204,36 @@
                 android:contentDescription="@string/engine_badge_desc"
                 android:visibility="gone" />
         </LinearLayout>
+
+        <!--
+          The live status line — the card's first words.
+
+          🔴 FULL CARD WIDTH, AND NOT ONE LINE. This is the #9 fix. It used to
+          be a weighted child of @id/overlay_status_strip above, capped at
+          maxLines=1 with ellipsize=end, which on this 1080px device left it
+          555px — roughly 30 characters — to render strings up to 154.
+          Everything after the first clause was replaced by an ellipsis,
+          including the half that tells the user what happens next.
+
+          maxLines=4 at full width is ~194 characters, which clears the longest
+          string with margin. ellipsize=end is kept only as a backstop for copy
+          added later; if it ever actually engages, this view needs another
+          line, not a shorter sentence — the card is a ScrollView and can
+          afford the height. OverlayMinimalLayoutTest measures the real longest
+          string against the real inflated width rather than trusting this
+          arithmetic.
+        -->
+        <TextView
+            android:id="@+id/status_text"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="2dp"
+            android:text="@string/dictate_hint"
+            android:textSize="12sp"
+            android:maxLines="4"
+            android:ellipsize="end"
+            android:lineSpacingExtra="1dp"
+            android:textColor="@color/dicta_on_surface_variant" />
 
         <!--
           The transcript: the hero, and the reason the card exists. 17sp rather
