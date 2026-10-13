@@ -11,14 +11,14 @@
   @id/grant_overlay_button, @id/add_tile_button, @id/bubble_switch,
   @id/notif_switch, @id/try_now_button.
 
-  🔴 RESERVED SLOT: @id/settings_slot, below Triggers and above "Try dictation
-  now". In-flight work on another branch adds a settings screen (API token +
-  base URL) reachable from here. It is an empty, GONE FrameLayout and NOT a dead
-  control on purpose — a visible button that opens nothing is worse than no
-  button. To use it: drop the entry row in as its child, flip visibility to
-  visible, and label it @string/settings (already defined). Placement is
-  deliberate: settings is configuration, so it belongs after the things it
-  configures and before the call to action.
+  @id/settings_slot, below Triggers and above "Try dictation now", was a
+  RESERVED empty/GONE FrameLayout for a settings screen on another branch. That
+  branch (remote STT) has landed, so the slot is now FILLED and visible: it
+  holds the blurb plus @id/settings_button, which MainActivity wires to
+  SettingsActivity. Placement is still deliberate — settings is configuration,
+  so it belongs after the things it configures and before the call to action.
+  The reserved @string/settings was dropped at that merge in favour of the
+  branch's own @string/open_settings, which is the one the button uses.
 -->
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
@@ -260,14 +260,57 @@
                 android:layout_marginStart="12dp" />
         </LinearLayout>
 
-        <!-- 🔴 RESERVED — see the file header. Empty and GONE; it is a slot, not
-             a control. Do not give it a listener here. -->
+        <!--
+          🔴 THE RESERVATION IS NOW FILLED. @id/settings_slot was an empty, GONE
+          FrameLayout reserved by the design pass for exactly this control; the
+          remote-STT work supplies it. Filled by the protocol the file header
+          lays down — "drop the entry row in as its child, flip visibility to
+          visible" — so the slot keeps its id and its deliberate placement
+          (after the triggers it configures, before the call to action) and the
+          control inside it is real: MainActivity gives @id/settings_button a
+          listener that starts SettingsActivity.
+
+          Styled to this screen's secondary convention (@drawable/outline_button_bg,
+          44dp, 110dp minWidth, no state-list animator, no caps) and NOT to
+          @drawable/mic_pill_bg: the accent fill means "dictate", and Settings
+          is not a dictation affordance.
+
+          The inner LinearLayout is load-bearing, not decoration — a FrameLayout
+          STACKS its children, so the blurb and the button would draw on top of
+          one another as direct children of the slot.
+        -->
         <FrameLayout
             android:id="@+id/settings_slot"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:visibility="gone" />
+            android:layout_marginTop="24dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical">
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/settings_row"
+                    android:textSize="13sp"
+                    android:lineSpacingExtra="3dp"
+                    android:textColor="@color/dicta_on_surface_variant" />
+
+                <Button
+                    android:id="@+id/settings_button"
+                    android:layout_width="wrap_content"
+                    android:layout_height="44dp"
+                    android:layout_marginTop="10dp"
+                    android:minWidth="110dp"
+                    android:background="@drawable/outline_button_bg"
+                    android:stateListAnimator="@null"
+                    android:textAllCaps="false"
+                    android:textColor="@color/dicta_on_surface"
+                    android:text="@string/open_settings" />
+            </LinearLayout>
+        </FrameLayout>
 
         <!-- The only accent-filled control on this screen, matching the mic
              pill in the overlay: the accent always means "dictate". -->

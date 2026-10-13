@@ -57,6 +57,9 @@ class MainActivity : Activity() {
             )
         }
         findViewById<Button>(R.id.add_tile_button).setOnClickListener { promptAddTile() }
+        findViewById<Button>(R.id.settings_button).setOnClickListener {
+            startActivity(Intent(this, SettingsActivity::class.java))
+        }
         findViewById<Button>(R.id.try_now_button).setOnClickListener {
             startActivity(Intent(this, DictateActivity::class.java))
         }

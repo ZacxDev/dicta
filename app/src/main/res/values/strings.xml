@@ -79,16 +79,61 @@
     <string name="trigger_channel">Dicta quick trigger</string>
     <string name="notif_text">Tap Dictate to capture a voice note from anywhere.</string>
 
-    <!-- ===== RESERVED for in-flight work on another branch =====
-         Neutral contentDescriptions for the two stubbed slots in
-         activity_dictate.xml (@id/level_meter, @id/engine_badge). The VISIBLE
-         copy for those views is that branch's call; these exist so the stubs
-         are not announced as unlabelled views in the meantime, and so the
-         branch has a named string to replace rather than one to invent. -->
+    <!-- ===== Remote transcription ===== -->
+    <string name="settings_title">Transcription settings</string>
+    <string name="settings_row">Transcription service — use your self-hosted recognizer instead of the phone\'s.</string>
+    <string name="open_settings">Settings</string>
+
+    <string name="stt_section_remote">Self-hosted transcription</string>
+    <string name="stt_section_remote_blurb">Dicta uploads each recording to your own speech service and uses its transcript. If the service cannot be reached, the phone\'s built-in recognizer is used instead and you are told.</string>
+    <string name="stt_remote_enabled_label">Use the self-hosted service</string>
+    <string name="stt_url_label">Service URL</string>
+    <string name="stt_url_hint">http://10.42.0.10:8118</string>
+    <string name="stt_token_label">Bearer token</string>
+    <!-- The two hints are the ONLY signal about the stored token. The token
+         itself is never rendered back into the field. -->
+    <string name="stt_token_hint_empty">Paste the token</string>
+    <string name="stt_token_hint_stored">A token is stored — leave blank to keep it</string>
+    <string name="stt_token_note">Stored encrypted with a key held in the Android keystore. It is never shown again, never logged, and never included in an error message.</string>
+    <string name="stt_save">Save</string>
+    <string name="stt_test">Test</string>
+    <string name="stt_clear_token">Clear token</string>
+    <string name="stt_saved">Saved.</string>
+    <string name="stt_token_cleared">Token cleared — Dicta will use the phone\'s recognizer.</string>
+    <string name="stt_token_save_failed">Could not encrypt the token (%1$s) — nothing was saved.</string>
+    <string name="stt_status_idle">Not tested yet.</string>
+    <string name="stt_testing">Checking the service…</string>
+    <!-- Deliberately silent about the token: /healthz is unauthenticated, so a
+         green result says nothing about whether the token is right. -->
+    <string name="stt_test_ok">Service reachable and the model is loaded. (This does not check the token.)</string>
+    <string name="stt_test_failed">Could not reach the service at that URL.</string>
+
+    <!-- Dictation status line, remote path -->
+    <string name="stt_recording">Recording… tap Stop when done</string>
+    <string name="stt_uploading">Transcribing on the server…</string>
+    <string name="stt_remote_done">Transcribed by the server ✓</string>
+    <!-- 🔴 The user must know WHICH engine produced the text on screen. The
+         two engines disagree, sometimes materially, and silently swapping one
+         for the other is how a wrong transcript gets trusted. -->
+    <string name="stt_fell_back">Using the phone\'s recognizer — %1$s</string>
+    <string name="stt_fell_back_retrying">Using the phone\'s recognizer for now — %1$s. Still trying the server; the text will update if it succeeds.</string>
+    <string name="stt_local_label">Transcribed on the phone</string>
+    <string name="stt_not_configured">No transcription service configured — using the phone\'s recognizer. Set one up in Settings.</string>
+    <string name="stt_no_audio">Nothing was recorded.</string>
+    <string name="stt_mic_silenced">Another app has the microphone — Dicta is receiving silence.</string>
+    <string name="stt_tier_remote_only">The phone\'s recognizer produced nothing — recording continues, the server transcript is on its way.</string>
+
+    <!-- ===== Accessibility labels for the status strip =====
+         Static contentDescriptions for @id/level_meter and @id/engine_badge in
+         activity_dictate.xml. Reserved by the design pass and KEPT at the merge
+         of the remote-STT work: both views are now bound, and both still need a
+         label that does not change as their value does.
+
+         @string/level_meter_desc replaced a `stt_level` ("Level: %1$s") that the
+         STT branch wired straight into android:contentDescription. A format
+         string used as a literal label is announced verbatim, so a screen
+         reader read out "Level: %1$s"; the meter's level is conveyed by the
+         ProgressBar's own progress, so the label only has to name the view. -->
     <string name="level_meter_desc">Microphone input level</string>
     <string name="engine_badge_desc">Transcription engine</string>
-
-    <!-- RESERVED: the label for the settings entry point that belongs in
-         @id/settings_slot in activity_main.xml. See that layout. -->
-    <string name="settings">Settings</string>
 </resources>

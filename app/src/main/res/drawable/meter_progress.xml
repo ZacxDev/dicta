@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  progressDrawable for the mic level meter (@id/level_meter in
+  activity_dictate.xml), added when the remote-STT branch bound a real level to
+  the design pass's reserved slot.
+
+  Why this file exists rather than pointing android:progressDrawable straight at
+  @drawable/meter_track_bg: progressDrawable is a LAYERED drawable, and the
+  layer with id @android:id/progress is the part that gets clipped to the
+  current level. A bare <shape> there becomes the progress itself and the track
+  disappears, so the meter would render as a 72dp accent bar at every level —
+  including level 0, which is the exact state the meter exists to distinguish.
+
+  The two layers are the geometry and the colours the design pass already
+  decided (see @drawable/meter_track_bg's own comment): the reserved shape IS
+  the track, and @color/dicta_accent is the progress tint.
+-->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- The track, exactly as reserved: surface_4 fill, 2dp corners. -->
+    <item android:drawable="@drawable/meter_track_bg" />
+
+    <!-- The level. <scale> is what makes a layer track the progress value. -->
+    <item android:id="@android:id/progress">
+        <scale android:scaleWidth="100%">
+            <shape android:shape="rectangle">
+                <solid android:color="@color/dicta_accent" />
+                <corners android:radius="2dp" />
+            </shape>
+        </scale>
+    </item>
+</layer-list>

@@ -28,14 +28,36 @@ import org.robolectric.annotation.Config
  * ## Red-before-green
  *
  * `action_row`, `more_button`, `level_meter` and `engine_badge` do not exist at
- * `origin/main`, so this file cannot compile there and "red at base" would be a
- * compile error rather than a guard watched failing. What was observed instead
- * is a set of hand-rolled mutations on this tree; the matrix is in the PR body.
- * In particular, deleting the `wireOnDemandActions()` call from
+ * the design pass's base, so this file cannot compile there and "red at base"
+ * would be a compile error rather than a guard watched failing. What was
+ * observed instead is a set of hand-rolled mutations on this tree; the matrix is
+ * in the PR body. In particular, deleting the `wireOnDemandActions()` call from
  * `DictateActivity.onCreate` — i.e. shipping the layout's hidden row with
  * nothing to reveal it, which is the exact defect the operator warned about —
  * turns [tappingMoreRevealsTheActions] and [typingRevealsTheActions] red while
  * the rest of the suite stays green.
+ *
+ * ## The reserved slots, and what happened to them
+ *
+ * This file originally pinned three RESERVATIONS the design pass left for
+ * in-flight remote-STT work: `settings_slot` empty and GONE, and `level_meter` /
+ * `engine_badge` as GONE, unbound stubs. Those assertions were correct as
+ * reservations and became wrong the moment the slots were filled, so the merge
+ * of that branch RETIRED them — and replaced them, rather than deleting them:
+ *
+ *  * `theReservedSettingsSlotExistsAndIsInert` (slot has 0 children) became
+ *    [theSettingsSlotIsFilledWithAControlThatOpensSettings], which asserts the
+ *    inverse AND the thing the old guard existed to protect: that the control
+ *    in the slot actually opens something.
+ *  * `theReservedMeterAndEngineSlotsExistAndAreInert` split in two. Its shape
+ *    half survives verbatim as
+ *    [theStatusStripHoldsTheMeterTheStatusAndTheBadgeInThatOrder]; its
+ *    inertness half became [theMeterAndTheBadgeSaySilentUntilADictationDrivesThem]
+ *    (the at-rest default, now justified by "nothing true to say yet" rather
+ *    than "unbound") plus the new
+ *    [aDictationBindsTheMeterAndNamesTheEngine], which drives the real
+ *    callbacks and is the half with teeth — "present and GONE" passes just as
+ *    well when nothing will ever show them.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -331,20 +353,20 @@ class OverlayMinimalLayoutTest {
     // --- the reserved slots -------------------------------------------------
 
     /**
-     * INVARIANT GUARD, labelled as one — it pins a reservation, not a fixed
-     * bug. Two views in the status strip are stubs for in-flight work on
-     * another branch (a mic level meter and an engine-provenance badge). The
-     * contract this asserts is "the ids exist, they are inside
-     * `overlay_status_strip`, and they are invisible until that branch lands",
-     * so the merge is mechanical rather than a layout negotiation.
+     * The status strip's SHAPE: membership and order.
      *
-     * It is NOT regression coverage and should not be counted as such.
+     * Unchanged by the remote-STT merge and still an invariant guard, not
+     * regression coverage. The meter is first so the strip reads left-to-right
+     * as "input is arriving" before the words do, and the badge is last so it
+     * sits at the trailing edge and does not shift the status text when it
+     * appears. Asserting the exact list makes this a RELATIONSHIP: it fails
+     * when the strip grows a fourth child, loses one, or reorders.
      */
     @Test
-    fun theReservedMeterAndEngineSlotsExistAndAreInert() {
+    fun theStatusStripHoldsTheMeterTheStatusAndTheBadgeInThatOrder() {
         val root = inflate()
         val strip = root.findViewById<ViewGroup>(R.id.overlay_status_strip)
-        assertNotNull("overlay_status_strip is gone — the reserved slots have no home", strip)
+        assertNotNull("overlay_status_strip is gone — the strip has no home", strip)
 
         val children = (0 until strip.childCount).map { strip.getChildAt(it).id }
         assertEquals(
@@ -354,20 +376,6 @@ class OverlayMinimalLayoutTest {
             children
         )
 
-        for (id in listOf(R.id.level_meter, R.id.engine_badge)) {
-            assertEquals(
-                "${nameOf(id)} is visible; it is an unbound stub and would " +
-                    "render as empty chrome",
-                View.GONE,
-                root.findViewById<View>(id).visibility
-            )
-            assertTrue(
-                "${nameOf(id)} has no contentDescription; an unlabelled stub " +
-                    "becomes an unlabelled view the moment it is shown",
-                !root.findViewById<View>(id).contentDescription.isNullOrBlank()
-            )
-        }
-
         // status_text keeps carrying the live status (and is where a
         // "transcribing…" message goes), so it must stay visible.
         assertEquals(
@@ -376,25 +384,255 @@ class OverlayMinimalLayoutTest {
         )
     }
 
-    /** Companion reservation on the setup screen: the settings entry point. */
+    /**
+     * The at-rest default for the two strip views that carry dictation state.
+     *
+     * RETIRED-AND-REPLACED: this used to read "both stubs exist and are inert",
+     * justified as "an unbound stub would render as empty chrome". The stubs are
+     * now bound (the remote-STT merge is the event that retired that reading),
+     * so the assertion survives with a DIFFERENT contract — these views describe
+     * a dictation, and before one has happened there is nothing true for them to
+     * say. A meter at zero and an empty badge are not neutral: they assert "no
+     * input" and "no engine" about a session that has not started.
+     *
+     * Deliberately against [inflate] rather than a running activity, for the
+     * same reason [theLayoutDefaultForTheActionRowIsHidden] is: this pins the
+     * XML's own default, so any path that inflates this layout without
+     * DictateActivity's wiring still starts clean.
+     */
     @Test
-    fun theReservedSettingsSlotExistsAndIsInert() {
+    fun theMeterAndTheBadgeSaySilentUntilADictationDrivesThem() {
+        val root = inflate()
+        for (id in listOf(R.id.level_meter, R.id.engine_badge)) {
+            assertEquals(
+                "${nameOf(id)} is visible in the layout default; it reports on " +
+                    "a dictation, and at rest there has not been one",
+                View.GONE,
+                root.findViewById<View>(id).visibility
+            )
+            assertTrue(
+                "${nameOf(id)} has no contentDescription; it is announced the " +
+                    "moment a dictation shows it, and a bar and a short badge " +
+                    "are not self-describing to a screen reader",
+                !root.findViewById<View>(id).contentDescription.isNullOrBlank()
+            )
+        }
+        // The badge must start with nothing TO announce, not with stale text.
+        assertTrue(
+            "engine_badge ships with text in the layout; it would claim an " +
+                "engine for a transcript that does not exist yet",
+            root.findViewById<android.widget.TextView>(R.id.engine_badge)
+                .text.isNullOrEmpty()
+        )
+    }
+
+    /**
+     * REPLACES the reservation guard, and is the half that has teeth: the meter
+     * and the badge are actually WIRED, not merely present and labelled.
+     *
+     * The previous version of this file could only assert that two stubs sat
+     * there GONE. That passes just as well when nothing will ever show them —
+     * which is the defect this one catches, because it drives the real
+     * callbacks object [DictateActivity.uiCallbacks] hands to
+     * [DictationSession] and asserts the views move.
+     *
+     * The level is deliberately 0.37 rather than a round number: 37 is not
+     * reachable from a hardcoded 0, 50 or 100, so a mutant that ignores its
+     * argument cannot produce it.
+     */
+    @Test
+    fun aDictationBindsTheMeterAndNamesTheEngine() {
+        val controller = Robolectric.buildActivity(DictateActivity::class.java).setup()
+        try {
+            val a = controller.get()
+            val meter = a.findViewById<android.widget.ProgressBar>(R.id.level_meter)
+            val badge = a.findViewById<android.widget.TextView>(R.id.engine_badge)
+            val cb = a.uiCallbacks()
+
+            assertEquals("precondition: the meter starts hidden", View.GONE, meter.visibility)
+            assertEquals("precondition: the badge starts hidden", View.GONE, badge.visibility)
+
+            // --- the meter tracks the microphone -----------------------------
+            cb.onTier(AudioCaptureLogic.Tier.REMOTE_ONLY_NO_API)
+            assertEquals(
+                "the meter is still hidden after a tier was settled; in the " +
+                    "remote-only tiers it is the ONLY evidence the mic is live",
+                View.VISIBLE, meter.visibility
+            )
+            cb.onLevel(0.37)
+            assertEquals(
+                "onLevel did not reach the meter's progress — the bar is " +
+                    "drawn but bound to nothing",
+                37, meter.progress
+            )
+
+            // INVISIBLE, not GONE: the strip must not reflow when another app
+            // steals the mic, or the card resizes under the user.
+            cb.onClientSilenced(true)
+            assertEquals(
+                "a silenced mic hid the meter with GONE; the strip reflows and " +
+                    "the card changes height on a state the user did not cause",
+                View.INVISIBLE, meter.visibility
+            )
+            cb.onClientSilenced(false)
+            assertEquals(View.VISIBLE, meter.visibility)
+
+            // --- the badge names the engine, in words ------------------------
+            cb.onTranscript("from the server", fromRemote = true, isFinal = true)
+            assertEquals(
+                "engine_badge is hidden after a remote transcript arrived; the " +
+                    "user cannot tell which engine produced the text on screen",
+                View.VISIBLE, badge.visibility
+            )
+            assertEquals(
+                a.getString(R.string.stt_remote_done), badge.text.toString()
+            )
+
+            // The two engines must be DISTINGUISHABLE, which is the whole point
+            // of the badge — asserted as a difference, so a mutant that returns
+            // one constant for both cannot pass.
+            val remoteText = badge.text.toString()
+            val fresh = Robolectric.buildActivity(DictateActivity::class.java).setup()
+            try {
+                val b = fresh.get()
+                b.uiCallbacks().onTranscript("from the phone", fromRemote = false, isFinal = true)
+                val localText = b.findViewById<android.widget.TextView>(R.id.engine_badge)
+                    .text.toString()
+                assertEquals(a.getString(R.string.stt_local_label), localText)
+                assertTrue(
+                    "the badge reads \"$localText\" for BOTH engines — it is " +
+                        "present, labelled, and says nothing",
+                    localText != remoteText
+                )
+            } finally {
+                fresh.close()
+            }
+        } finally {
+            controller.close()
+        }
+    }
+
+    /**
+     * REPLACES `theReservedSettingsSlotExistsAndIsInert`.
+     *
+     * That guard asserted `settings_slot` had ZERO children, because "a visible
+     * control here would open nothing". The remote-STT merge supplied the thing
+     * it was holding the place for, so the assertion inverts: the slot is
+     * visible, it has the control in it, and — the part the old guard could not
+     * check and the reason it was written that way — the control is REACHABLE,
+     * with a listener that resolves to a real activity.
+     */
+    @Test
+    fun theSettingsSlotIsFilledWithAControlThatOpensSettings() {
+        val controller = Robolectric.buildActivity(MainActivity::class.java).setup()
+        try {
+            val a = controller.get()
+            val slot = a.findViewById<ViewGroup>(R.id.settings_slot)
+            assertNotNull("settings_slot is gone from activity_main.xml", slot)
+            assertTrue(
+                "settings_slot is empty; the reservation was never filled",
+                slot.childCount > 0
+            )
+            assertEquals(
+                "settings_slot is not visible; the control inside it cannot be " +
+                    "reached",
+                View.VISIBLE,
+                slot.visibility
+            )
+
+            val button = a.findViewById<View>(R.id.settings_button)
+            assertNotNull("settings_button is missing", button)
+            assertTrue(
+                "settings_button is not inside settings_slot; the design pass " +
+                    "placed that slot after the triggers it configures, and a " +
+                    "control that drifted out of it has lost that placement",
+                hasAncestorWithId(button, R.id.settings_slot)
+            )
+            assertTrue(
+                "settings_button has no click listener — it is the dead control " +
+                    "the reservation existed to avoid",
+                button.hasOnClickListeners()
+            )
+
+            // Reachability, not just a listener: the tap must start something.
+            button.performClick()
+            val next = org.robolectric.Shadows.shadowOf(a).nextStartedActivity
+            assertNotNull(
+                "tapping settings_button started no activity; the control opens " +
+                    "nothing, which is exactly what the reservation forbade",
+                next
+            )
+            assertEquals(
+                SettingsActivity::class.java.name,
+                next.component?.className
+            )
+        } finally {
+            controller.close()
+        }
+    }
+
+    /**
+     * The accent fill is the "dictate" affordance and nothing else. Pinned
+     * because the merge had to style a new button on this screen and reaching
+     * for `@drawable/mic_pill_bg` is the easy wrong answer.
+     *
+     * Compared against the screen's real accent control rather than against a
+     * drawable NAME, so it cannot be walked past by renaming the drawable.
+     *
+     * 🔴 The obvious spelling of this — comparing the two backgrounds'
+     * `constantState` — is INERT, and was caught by mutation F in the sweep
+     * (pointing `settings_button` at `@drawable/mic_pill_bg` SURVIVED a fully
+     * green suite). Two inflations of one drawable resource do not share a
+     * `constantState` instance here, so that comparison was unequal whatever
+     * the resources were. The resource ID that each background was inflated
+     * FROM is the thing that actually distinguishes them.
+     */
+    @Test
+    fun settingsIsNotStyledAsADictationAffordance() {
         val ctx = ContextThemeWrapper(
             RuntimeEnvironment.getApplication(), R.style.Theme_Dicta
         )
         val root = LayoutInflater.from(ctx).inflate(R.layout.activity_main, null)
-        val slot = root.findViewById<ViewGroup>(R.id.settings_slot)
-        assertNotNull("settings_slot is gone from activity_main.xml", slot)
-        assertEquals(
-            "settings_slot has children; it is a reservation, and a visible " +
-                "control here would open nothing",
-            0,
-            slot.childCount
+        val settingsBg = org.robolectric.Shadows.shadowOf(
+            root.findViewById<View>(R.id.settings_button).background
+        ).createdFromResId
+        val accentBg = org.robolectric.Shadows.shadowOf(
+            root.findViewById<View>(R.id.try_now_button).background
+        ).createdFromResId
+
+        // Positive control for the comparison itself: if the ids were not
+        // resolvable, both would be -1 and the inequality below would be
+        // vacuously false-negative.
+        assertTrue(
+            "neither background resolved to a drawable resource id " +
+                "($settingsBg / $accentBg); this guard is reading nothing",
+            settingsBg != -1 && accentBg != -1
         )
-        assertEquals(View.GONE, slot.visibility)
+        assertTrue(
+            "settings_button and try_now_button are inflated from the SAME " +
+                "background drawable; the accent fill means \"dictate\", and " +
+                "Settings is not a dictation affordance",
+            settingsBg != accentBg
+        )
     }
 
     // --- helpers ------------------------------------------------------------
+
+    /**
+     * Whether [v] sits anywhere under the view with id [id].
+     *
+     * The explicit `as ViewParent` is load-bearing: once `p` smart-casts to
+     * `View`, `p.parent` is ambiguous between `View.parent` and
+     * `ViewParent.parent` and does not compile.
+     */
+    private fun hasAncestorWithId(v: View, id: Int): Boolean {
+        var p: android.view.ViewParent? = v.parent
+        while (p != null) {
+            if (p is View && p.id == id) return true
+            p = (p as android.view.ViewParent).parent
+        }
+        return false
+    }
 
     private fun collectImageButtons(v: View, into: MutableSet<Int>) {
         if (v is ImageButton) into.add(v.id)

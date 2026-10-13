@@ -62,22 +62,22 @@
         android:padding="20dp">
 
         <!--
-          ========================= RESERVED SLOT =========================
-          The status strip. One 20dp-tall row carrying three things, two of
-          which are reserved for in-flight work on another branch and are
-          STUBBED GONE here so that branch's merge is mechanical rather than
-          interpretive:
+          ========================= THE STATUS STRIP =========================
+          One row carrying three things. Two of them were RESERVED, GONE stubs
+          for in-flight work on another branch; that branch (remote STT) has
+          landed and both are now BOUND to real state. The reservation held —
+          the merge was the mechanical swap the stubs were shaped for — so what
+          follows documents the live contract, not a promise:
 
-            @id/level_meter   a 4dp horizontal mic-level meter, track
-                              @drawable/meter_track_bg, progress tint
-                              @color/dicta_accent. Sized 72dp x 4dp, placed
-                              FIRST in the strip so it reads left-to-right as
-                              "input is arriving" before the words do. It is a
-                              plain View here; swap the element to a
-                              ProgressBar (style
-                              ?android:attr/progressBarStyleHorizontal) and
-                              flip visibility — no other change to this file is
-                              needed. Must work with no partials, so it is
+            @id/level_meter   a 4dp horizontal mic-level meter, 72dp x 4dp,
+                              placed FIRST in the strip so it reads
+                              left-to-right as "input is arriving" before the
+                              words do. Now a ProgressBar (style
+                              ?android:attr/progressBarStyleHorizontal) with
+                              @drawable/meter_progress — the reserved
+                              @drawable/meter_track_bg track under a
+                              @color/dicta_accent level. Bound by
+                              DictateActivity.onLevel. Works with no partials:
                               deliberately independent of @id/dictated_text.
 
             @id/status_text   the live status line. 12sp, variant colour,
@@ -89,16 +89,26 @@
 
             @id/engine_badge  an 11sp pill (@drawable/badge_bg,
                               @color/dicta_on_accent_container at 9.84:1)
-                              naming which engine produced the current text —
-                              "on-device" / "remote". Placed LAST so it sits at
-                              the trailing edge and does not shift the status
-                              text when it appears. It carries a
-                              contentDescription of its own because a 3-letter
+                              naming which engine produced the current text.
+                              Bound by DictateActivity.showEngine(fromRemote)
+                              to @string/stt_remote_done or
+                              @string/stt_local_label. Placed LAST so it sits
+                              at the trailing edge and does not shift the
+                              status text when it appears. It carries a
+                              contentDescription of its own because a short
                               badge is not self-describing to a screen reader.
+                              (Reserved as @id/engine_badge, built on the
+                              branch as @id/engine_label; this id won the
+                              merge. See the view's own comment.)
 
           🔴 Do not encode engine or in-flight state in colour alone: the badge
-          exists so there is always a WORD. OverlayMinimalLayoutTest pins the
-          reservation (both stubs exist, both are GONE at rest).
+          exists so there is always a WORD.
+
+          OverlayMinimalLayoutTest pins this strip: the membership and ORDER of
+          the three children, that the meter and the badge are GONE in the
+          layout's at-rest default, that both are labelled, and — since the
+          reservation was filled — that both actually become visible and
+          carry text/level once a dictation drives them.
           =================================================================
         -->
         <LinearLayout
@@ -109,12 +119,36 @@
             android:gravity="center_vertical"
             android:baselineAligned="false">
 
-            <View
+            <!--
+              The microphone level meter — the design's reserved 72dp x 4dp slot,
+              now carrying the remote-STT branch's real implementation. The swap
+              is the one this file's header prescribed: a ProgressBar styled
+              ?android:attr/progressBarStyleHorizontal, whose progressDrawable
+              (@drawable/meter_progress) layers the reserved
+              @drawable/meter_track_bg track under a @color/dicta_accent level.
+
+              🔴 Not decoration. In the remote-only degradation tiers no partial
+              text ever appears while recording, so this bar is the ONLY
+              on-screen evidence that the microphone is live. Without it
+              "nothing is moving" is indistinguishable from a dead capture — and
+              a dead capture is a real state here, because Android enforces its
+              one-capture-at-a-time policy by silently feeding the loser exact
+              zeros. DictateActivity.onLevel binds progress; onClientSilenced
+              flips it to INVISIBLE (not GONE) so the strip does not reflow when
+              another app steals the mic.
+
+              GONE is the LAYOUT default only — it is the at-rest state, before
+              a dictation starts, not an "unbound stub" any more.
+            -->
+            <ProgressBar
                 android:id="@+id/level_meter"
+                style="?android:attr/progressBarStyleHorizontal"
                 android:layout_width="72dp"
                 android:layout_height="4dp"
                 android:layout_marginEnd="10dp"
-                android:background="@drawable/meter_track_bg"
+                android:max="100"
+                android:progress="0"
+                android:progressDrawable="@drawable/meter_progress"
                 android:contentDescription="@string/level_meter_desc"
                 android:visibility="gone" />
 
@@ -129,6 +163,25 @@
                 android:ellipsize="end"
                 android:textColor="@color/dicta_on_surface_variant" />
 
+            <!--
+              Which engine produced the text currently in the box. The server
+              and the phone disagree, sometimes materially, so the user has to
+              be able to tell them apart rather than trust whatever appeared.
+              DictateActivity.showEngine(fromRemote) binds the text.
+
+              🔴 This view was @id/engine_label on the remote-STT branch and
+              @id/engine_badge in the design pass's reservation. ONE id
+              survived the merge — this one — because the design side owns more
+              references (this layout, @string/engine_badge_desc,
+              @drawable/badge_bg, OverlayMinimalLayoutTest's strip ledger) and
+              because "badge" names what it renders as. The branch's two
+              references were renamed to match.
+
+              maxLines=1: the strip is one row, and the two bound strings are
+              short. If longer copy ever lands here it must shrink, not reflow
+              the card — the long-form fallback explanation belongs in
+              @id/status_text, which already takes the weight and ellipsizes.
+            -->
             <TextView
                 android:id="@+id/engine_badge"
                 android:layout_width="wrap_content"
@@ -140,6 +193,8 @@
                 android:paddingBottom="2dp"
                 android:background="@drawable/badge_bg"
                 android:textSize="11sp"
+                android:maxLines="1"
+                android:ellipsize="end"
                 android:textColor="@color/dicta_on_accent_container"
                 android:contentDescription="@string/engine_badge_desc"
                 android:visibility="gone" />

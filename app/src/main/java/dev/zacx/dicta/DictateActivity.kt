@@ -36,10 +36,29 @@ class DictateActivity : Activity() {
     private lateinit var textInput: EditText
     private lateinit var micButton: Button
     private lateinit var attachmentNote: TextView
+    private lateinit var levelMeter: android.widget.ProgressBar
+    private lateinit var engineBadge: TextView
 
     private var speech: SpeechHelper? = null
     private val finalText = StringBuilder()
     private var lastPartial = ""
+
+    /**
+     * The remote-first dictation session: one microphone, the phone's
+     * recogniser fed from it through a pipe, and the self-hosted service
+     * producing the authoritative transcript.
+     */
+    private var session: DictationSession? = null
+    private var settings: SttSettings? = null
+
+    /**
+     * True once the server's transcript has landed.
+     *
+     * Guards the one ordering hazard in the handover: the phone's *final*
+     * result can arrive after the server's, and without this flag it would
+     * overwrite the better transcript with the worse one.
+     */
+    private var haveRemoteTranscript = false
 
     /**
      * Set once a capture succeeds. `internal` rather than `private` only so a
@@ -62,6 +81,19 @@ class DictateActivity : Activity() {
         textInput = findViewById(R.id.dictated_text)
         micButton = findViewById(R.id.mic_button)
         attachmentNote = findViewById(R.id.attachment_note)
+        levelMeter = findViewById(R.id.level_meter)
+        engineBadge = findViewById(R.id.engine_badge)
+
+        // Robolectric can create the real Activity but cannot provide an
+        // AndroidKeyStore, so settings construction is allowed to fail here
+        // without taking the whole overlay down with it. In that state the
+        // remote path reports "not configured" and the phone's recogniser is
+        // used — which is exactly the documented degradation.
+        settings = try {
+            SttSettings.create(this)
+        } catch (_: Throwable) {
+            null
+        }
 
         micButton.setOnClickListener { toggleDictation() }
         // Copy/Screenshot/Send/Close are ImageButtons (ImageView subclasses, NOT
@@ -83,6 +115,12 @@ class DictateActivity : Activity() {
     }
 
     override fun onDestroy() {
+        // Before speech: the session owns the microphone and the recogniser's
+        // pipe, and closing the pipe's write end is what ends the recognition
+        // session. Tearing the recogniser down first leaves a writer with
+        // nowhere to write.
+        session?.destroy()
+        session = null
         speech?.destroy()
         speech = null
         captureWorker?.shutdown()
@@ -209,6 +247,11 @@ class DictateActivity : Activity() {
     }
 
     private fun toggleDictation() {
+        session?.takeIf { it.isRecording }?.let {
+            it.stop()
+            micButton.text = getString(R.string.start_dictation)
+            return
+        }
         val helper = speech
         if (helper != null && helper.isListening) {
             helper.stop()
@@ -223,7 +266,43 @@ class DictateActivity : Activity() {
         startDictation()
     }
 
+    /**
+     * Starts the remote-first session, falling back to the phone-only path
+     * when capture cannot start at all.
+     *
+     * The two paths are kept distinct rather than unified: the remote path
+     * owns the microphone and pipes the recogniser, while the phone-only path
+     * lets the recogniser open the microphone itself. 🔴 Doing both at once is
+     * the one thing that must never happen — Android would hand one of them
+     * exact zeros with no error.
+     */
     private fun startDictation() {
+        haveRemoteTranscript = false
+        val config = settings
+        if (config != null && startRemoteSession(config)) return
+        startPhoneOnlyDictation()
+    }
+
+    private fun startRemoteSession(config: SttSettings): Boolean {
+        val started = DictationSession(
+            context = this,
+            settings = config,
+            callbacks = uiCallbacks(),
+        )
+        return if (started.start()) {
+            session?.destroy()
+            session = started
+            micButton.text = getString(R.string.stop_dictation)
+            levelMeter.visibility = View.VISIBLE
+            true
+        } else {
+            started.destroy()
+            false
+        }
+    }
+
+    /** The original behaviour: the phone's recogniser, opening its own mic. */
+    private fun startPhoneOnlyDictation() {
         val helper = SpeechHelper(this, object : SpeechHelper.Listener {
             override fun onReady() {
                 statusText.text = getString(R.string.listening)
@@ -236,6 +315,7 @@ class DictateActivity : Activity() {
 
             override fun onFinal(text: String) {
                 appendFinal(text)
+                showEngine(fromRemote = false)
                 micButton.text = getString(R.string.start_dictation)
                 statusText.text = getString(R.string.dictate_hint)
             }
@@ -255,6 +335,83 @@ class DictateActivity : Activity() {
         speech = helper
         helper.start()
         micButton.text = getString(R.string.stop_dictation)
+    }
+
+    /**
+     * The one construction site for the view-binding callbacks — the real
+     * session at [startRemoteSession] and `OverlayMinimalLayoutTest` both go
+     * through here.
+     *
+     * That shared route is the point. The status strip's level meter and engine
+     * badge are only reachable through these callbacks, so a test that built its
+     * own stand-in would be asserting against a fixture rather than against the
+     * object the activity actually hands to [DictationSession] — and would stay
+     * green if this method started returning something else. [SessionCallbacks]
+     * holds no state of its own (it writes the activity's views), so a fresh
+     * instance behaves identically to the session's.
+     *
+     * Deliberately NOT annotated `@VisibleForTesting`: that annotation lives in
+     * androidx.annotation, and this module ships no androidx at runtime on
+     * purpose (see the long note in app/build.gradle.kts, and the dex scan that
+     * checks it rather than asserting it). `internal` plus this comment is the
+     * whole visibility contract.
+     */
+    internal fun uiCallbacks(): DictationSession.Callbacks = SessionCallbacks()
+
+    /** Bridges [DictationSession] to the card's views. */
+    private inner class SessionCallbacks : DictationSession.Callbacks {
+
+        override fun onTranscript(text: String, fromRemote: Boolean, isFinal: Boolean) {
+            // 🔴 The remote transcript wins, and keeps winning: the phone's
+            // final result can arrive after it, and overwriting the server's
+            // text with the phone's would silently downgrade the result.
+            if (haveRemoteTranscript && !fromRemote) return
+            if (fromRemote) haveRemoteTranscript = true
+
+            if (isFinal) {
+                finalText.setLength(0)
+                finalText.append(text.trim())
+                lastPartial = ""
+            } else {
+                lastPartial = text
+            }
+            renderPreview()
+            showEngine(fromRemote)
+        }
+
+        override fun onStatus(text: String) {
+            statusText.text = text
+        }
+
+        override fun onLevel(level: Double) {
+            levelMeter.progress = (level * 100).toInt().coerceIn(0, 100)
+        }
+
+        override fun onTier(tier: AudioCaptureLogic.Tier) {
+            // The meter matters most in the remote-only tiers, where no
+            // partial text ever appears.
+            levelMeter.visibility = View.VISIBLE
+        }
+
+        override fun onClientSilenced(silenced: Boolean) {
+            // Surfaced as a real state rather than logged: the user can act
+            // on "another app has the microphone", and cannot act on a dead
+            // level meter.
+            levelMeter.visibility = if (silenced) View.INVISIBLE else View.VISIBLE
+        }
+
+        override fun onRecordingStopped() {
+            micButton.text = getString(R.string.start_dictation)
+            levelMeter.progress = 0
+        }
+    }
+
+    /** Names the engine behind the text currently in the box. */
+    private fun showEngine(fromRemote: Boolean) {
+        engineBadge.visibility = View.VISIBLE
+        engineBadge.text = getString(
+            if (fromRemote) R.string.stt_remote_done else R.string.stt_local_label
+        )
     }
 
     private fun appendFinal(text: String) {
@@ -333,6 +490,16 @@ class DictateActivity : Activity() {
      * the capture.
      */
     private fun requestScreenshot() {
+        // Same reasoning as the recogniser below, and for the same reason it
+        // applies to the capture session too: the consent dialog takes window
+        // focus and moves Dicta out of the top-app state that wins microphone
+        // arbitration, so the capture would be fed silence mid-utterance.
+        // Stopping explicitly means the recording is finalised and uploaded
+        // rather than abandoned.
+        session?.takeIf { it.isRecording }?.let {
+            it.stop()
+            micButton.text = getString(R.string.start_dictation)
+        }
         speech?.takeIf { it.isListening }?.let {
             it.stop()
             micButton.text = getString(R.string.start_dictation)

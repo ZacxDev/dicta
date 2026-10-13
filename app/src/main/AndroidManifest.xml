@@ -2,6 +2,11 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- 🔴 Added with the remote-STT client. The app had never made a network
+         call before this change, so INTERNET was genuinely absent — and its
+         absence raises no permission dialog and no build warning: every
+         socket simply throws at runtime. -->
+    <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
@@ -14,11 +19,18 @@
          the launcher's own icon shapes. roundIcon exists because some launchers
          (Samsung's included — the target device is a Galaxy S21) still query it,
          and one that asks and finds nothing drops to the legacy square path. -->
+    <!-- networkSecurityConfig rather than usesCleartextTraffic="true": the
+         transcription service speaks plain HTTP on the Nebula mesh, and the
+         XML permits cleartext for THAT ONE HOST while leaving it refused
+         everywhere else. The blanket attribute would permit an unencrypted
+         request to any host on any network, which is a real downgrade — see
+         res/xml/network_security_config.xml for the full reasoning. -->
     <application
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:label="@string/app_name"
+        android:networkSecurityConfig="@xml/network_security_config"
         android:theme="@style/Theme.Dicta">
 
         <activity
@@ -37,6 +49,14 @@
             android:theme="@style/Theme.Dicta.Overlay"
             android:excludeFromRecents="true"
             android:launchMode="singleTop" />
+
+        <!-- Transcription settings: the base URL and the bearer token. Not
+             exported — the token field must not be reachable by another app's
+             intent. -->
+        <activity
+            android:name=".SettingsActivity"
+            android:exported="false"
+            android:label="@string/settings_title" />
 
         <!-- Quick Settings tile: the "trigger from anywhere" entry point. -->
         <service

@@ -1,0 +1,122 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Transcription settings. Plain framework widgets only — the APK ships no
+  AndroidX, so no ConstraintLayout and no Material components.
+-->
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:fillViewport="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="20dp">
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/stt_section_remote"
+            android:textSize="18sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:text="@string/stt_section_remote_blurb"
+            android:textSize="13sp" />
+
+        <CheckBox
+            android:id="@+id/stt_remote_enabled"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:text="@string/stt_remote_enabled_label" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:labelFor="@id/stt_url"
+            android:text="@string/stt_url_label" />
+
+        <EditText
+            android:id="@+id/stt_url"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="@string/stt_url_hint"
+            android:importantForAutofill="no"
+            android:inputType="textUri"
+            android:minHeight="48dp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:labelFor="@id/stt_token"
+            android:text="@string/stt_token_label" />
+
+        <!--
+          textPassword, and the stored value is NEVER rendered back into this
+          field: an empty field means "keep what is stored". importantForAutofill
+          is off so the token is not offered to a password manager or synced.
+        -->
+        <EditText
+            android:id="@+id/stt_token"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="@string/stt_token_hint_empty"
+            android:importantForAutofill="no"
+            android:inputType="textPassword"
+            android:minHeight="48dp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:text="@string/stt_token_note"
+            android:textSize="12sp" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:orientation="horizontal">
+
+            <Button
+                android:id="@+id/stt_save"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:minHeight="48dp"
+                android:text="@string/stt_save" />
+
+            <Button
+                android:id="@+id/stt_test"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:layout_weight="1"
+                android:minHeight="48dp"
+                android:text="@string/stt_test" />
+        </LinearLayout>
+
+        <Button
+            android:id="@+id/stt_clear_token"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:minHeight="48dp"
+            android:text="@string/stt_clear_token" />
+
+        <TextView
+            android:id="@+id/stt_status"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:text="@string/stt_status_idle"
+            android:textSize="13sp" />
+    </LinearLayout>
+</ScrollView>
