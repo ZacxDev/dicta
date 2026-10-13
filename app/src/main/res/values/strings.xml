@@ -87,6 +87,12 @@
     <string name="stt_section_remote">Self-hosted transcription</string>
     <string name="stt_section_remote_blurb">Dicta uploads each recording to your own speech service and uses its transcript. If the service cannot be reached, the phone\'s built-in recognizer is used instead and you are told.</string>
     <string name="stt_remote_enabled_label">Use the self-hosted service</string>
+    <!-- Issue #7. "Follow device language" is the first entry and the default;
+         the rest are built from SttLanguage.DISPLAY_NAMES. -->
+    <string name="stt_language_label">Dictation language</string>
+    <string name="stt_language_follow_device">Follow device language (%1$s)</string>
+    <string name="stt_language_note">What you speak — not the app\'s language. Change this if your phone is set to one language but you dictate in another.</string>
+
     <string name="stt_url_label">Service URL</string>
     <string name="stt_url_hint">http://10.42.0.10:8118</string>
     <string name="stt_token_label">Bearer token</string>

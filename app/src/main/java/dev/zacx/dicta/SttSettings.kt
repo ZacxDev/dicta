@@ -103,12 +103,42 @@ class SttSettings(
         get() = prefs.getBoolean(KEY_REMOTE_ENABLED, true)
         set(value) = prefs.edit().putBoolean(KEY_REMOTE_ENABLED, value).apply()
 
+    /**
+     * The dictation language the user explicitly chose, or **null** to follow
+     * the device locale.
+     *
+     * 🔴 Null is a real, reachable state and not merely "unset": "follow the
+     * device" is the default and the first entry in the picker, so a user can
+     * deliberately come back to it. Storing the resolved code instead would
+     * freeze whatever the locale happened to be on the day they first opened
+     * Settings.
+     *
+     * The getter filters through [SttLanguage.SUPPORTED] rather than trusting
+     * the file: a code outside the allowlist is an unhandled **500** on the
+     * service, so a preference written by an older build (or hand-edited) must
+     * degrade to "follow the device" rather than break every request.
+     */
+    var language: String?
+        get() = prefs.getString(KEY_LANGUAGE, null)
+            ?.trim()
+            ?.lowercase()
+            ?.takeIf { it in SttLanguage.SUPPORTED }
+        set(value) {
+            val normalised = value?.trim()?.lowercase()
+            if (normalised == null || normalised !in SttLanguage.SUPPORTED) {
+                prefs.edit().remove(KEY_LANGUAGE).apply()
+            } else {
+                prefs.edit().putString(KEY_LANGUAGE, normalised).apply()
+            }
+        }
+
     val isRemoteConfigured: Boolean
         get() = remoteEnabled && tokens.hasToken
 
     companion object {
         const val KEY_BASE_URL: String = "stt_base_url"
         const val KEY_REMOTE_ENABLED: String = "stt_remote_enabled"
+        const val KEY_LANGUAGE: String = "stt_language"
         private const val PREFS_NAME = "dicta_stt"
 
         /** The one place the preferences file name is spelled. */

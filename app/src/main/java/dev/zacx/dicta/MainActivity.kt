@@ -5,7 +5,6 @@ import android.app.Activity
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
-import android.app.PendingIntent
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
@@ -147,12 +146,9 @@ class MainActivity : Activity() {
                 NotificationManager.IMPORTANCE_LOW
             )
         )
-        val intent = Intent(this, DictateActivity::class.java)
-            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        val pi = PendingIntent.getActivity(
-            this, 0, intent,
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-        )
+        // Via DictateLaunch so the notification cannot drift from the bubble
+        // and the tile — all three shared the issue #11 defect.
+        val pi = DictateLaunch.pendingIntent(this)
         val notif = Notification.Builder(this, TRIGGER_CHANNEL)
             .setSmallIcon(R.drawable.ic_tile_mic)
             // Matches BubbleService.buildNotification(): the shade tints the

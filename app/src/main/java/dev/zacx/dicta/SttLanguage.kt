@@ -47,6 +47,59 @@ object SttLanguage {
     const val DEFAULT: String = "en"
 
     /**
+     * What to show the user for each supported code, in the language itself.
+     *
+     * Endonyms rather than English names, and a Kotlin map rather than a
+     * `<string-array>`, for two different reasons:
+     *
+     *  * endonyms, because a user picking a dictation language recognises
+     *    "Español" whatever the UI language happens to be — and this control
+     *    exists precisely because the UI language and the dictation language
+     *    had been wrongly welded together (issue #7);
+     *  * a map keyed by code rather than two parallel arrays, because parallel
+     *    arrays drift silently and a one-element offset would mislabel every
+     *    language after it. `SttLanguageTest` asserts the key set equals
+     *    [SUPPORTED] exactly, so adding a code to the allowlist without naming
+     *    it here turns the suite red.
+     */
+    val DISPLAY_NAMES: Map<String, String> = mapOf(
+        "ar" to "العربية",
+        "de" to "Deutsch",
+        "el" to "Ελληνικά",
+        "en" to "English",
+        "es" to "Español",
+        "fr" to "Français",
+        "it" to "Italiano",
+        "ja" to "日本語",
+        "ko" to "한국어",
+        "nl" to "Nederlands",
+        "pl" to "Polski",
+        "pt" to "Português",
+        "vi" to "Tiếng Việt",
+        "zh" to "中文",
+    )
+
+    /**
+     * The code to send, given the user's explicit choice and the device locale.
+     *
+     * 🔴 This is issue #7. Before it existed, the dictation language was
+     * [fromLocale] of the device locale and nothing else — so an operator whose
+     * phone is `es-CO` could not dictate English at all: the server faithfully
+     * transcribed English speech as Spanish, which looks like a broken
+     * recogniser rather than a configuration the user was never offered.
+     *
+     * @param override the user's choice from Settings, or null to follow the
+     *   device. A value outside [SUPPORTED] is treated as no choice rather
+     *   than passed through — the allowlist is a hard boundary (an unknown
+     *   code is an unhandled 500 on the service), and a stale preference
+     *   written by an older build must not be able to break every request.
+     */
+    fun resolve(override: String?, locale: Locale): String {
+        val chosen = override?.trim()?.lowercase()
+        return if (chosen != null && chosen in SUPPORTED) chosen else fromLocale(locale)
+    }
+
+    /**
      * Reduces an arbitrary locale tag to a member of [SUPPORTED].
      *
      * Accepts anything the platform might hand over: a BCP-47 tag

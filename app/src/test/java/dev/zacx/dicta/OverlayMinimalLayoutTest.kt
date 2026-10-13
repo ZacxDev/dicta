@@ -6,6 +6,7 @@ import android.view.ViewGroup
 import android.view.ContextThemeWrapper
 import android.widget.ImageButton
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -355,15 +356,17 @@ class OverlayMinimalLayoutTest {
     /**
      * The status strip's SHAPE: membership and order.
      *
-     * Unchanged by the remote-STT merge and still an invariant guard, not
-     * regression coverage. The meter is first so the strip reads left-to-right
-     * as "input is arriving" before the words do, and the badge is last so it
-     * sits at the trailing edge and does not shift the status text when it
-     * appears. Asserting the exact list makes this a RELATIONSHIP: it fails
-     * when the strip grows a fourth child, loses one, or reorders.
+     * CHANGED BY ISSUE #9. `status_text` used to be the middle child here,
+     * weighted and capped at one ellipsized line. It now lives BELOW the strip
+     * at full card width (see [theLongestStatusStringIsNotTruncated]), and a
+     * spacer took over the job of holding the badge at the trailing edge.
+     *
+     * Still an invariant guard, not regression coverage: asserting the exact
+     * list makes this a RELATIONSHIP, failing when the strip grows a child,
+     * loses one, or reorders.
      */
     @Test
-    fun theStatusStripHoldsTheMeterTheStatusAndTheBadgeInThatOrder() {
+    fun theStatusStripHoldsTheMeterTheSpacerAndTheBadgeInThatOrder() {
         val root = inflate()
         val strip = root.findViewById<ViewGroup>(R.id.overlay_status_strip)
         assertNotNull("overlay_status_strip is gone — the strip has no home", strip)
@@ -372,16 +375,192 @@ class OverlayMinimalLayoutTest {
         assertEquals(
             "the status strip's membership or order changed; the meter is " +
                 "placed first and the badge last on purpose",
-            listOf(R.id.level_meter, R.id.status_text, R.id.engine_badge),
+            listOf(R.id.level_meter, R.id.status_strip_spacer, R.id.engine_badge),
             children
         )
 
         // status_text keeps carrying the live status (and is where a
-        // "transcribing…" message goes), so it must stay visible.
+        // "transcribing…" message goes), so it must stay visible — and it must
+        // NOT be back inside the strip, which is what capped it at #9's width.
         assertEquals(
             View.VISIBLE,
             root.findViewById<View>(R.id.status_text).visibility
         )
+        assertFalse(
+            "status_text is a child of the status strip again — that is the " +
+                "layout that truncated it at ~30 characters (issue #9)",
+            hasAncestorWithId(
+                root.findViewById<View>(R.id.status_text),
+                R.id.overlay_status_strip,
+            ),
+        )
+    }
+
+    /**
+     * Issue #9, as regression coverage rather than an invariant guard.
+     *
+     * ## What this measures, and what it deliberately does not
+     *
+     * It takes the **longest string the status line actually carries** —
+     * discovered from the resources, not hardcoded, so new copy is covered
+     * automatically — renders it into the real inflated `status_text` at the
+     * real card width, and requires the `Layout` to report **zero ellipsised
+     * characters**.
+     *
+     * 🔴 The pixel numbers are Robolectric's text metrics, not the S21's, so
+     * this does not prove the exact on-device wrap. What it DOES pin is the
+     * property that broke: a `status_text` constrained such that the longest
+     * real string does not fit is red here, and the pre-#9 layout (one
+     * ellipsized line inside the strip) fails it. The device check is a
+     * screenshot, recorded in the PR.
+     */
+    /**
+     * 🔴 DEAD END, RECORDED SO IT IS NOT RE-DERIVED.
+     *
+     * The obvious test here is "render the longest status string and assert it
+     * is not truncated". It **cannot be written on the JVM**, and the way it
+     * fails is silent:
+     *
+     *  * `Layout.getEllipsisCount` under Robolectric returns **0 for a
+     *    4000-character string** in a one-line view. It does not model
+     *    ellipsising at all.
+     *  * `TextPaint.measureText` returns **exactly 1.0px per character**
+     *    regardless of `textSize` (measured: 154 chars -> 154.0px, textSize
+     *    12.0, density 1.0). So the longest real string "fits" in one line of
+     *    the ~953px card, and a `maxLines="1"` regression measures as fine.
+     *
+     * Both versions were written, and both passed a mutation that put the old
+     * broken layout back. They were only caught because the mutation battery
+     * ran — a positive control using an absurd 4000-character string passed
+     * while the real 154-character assertion stayed vacuous, since 4000px DOES
+     * exceed the width and 154px does not.
+     *
+     * So the wrap itself is a **device** question, confirmed by screenshot on
+     * the PR. What is pinned here instead is the configuration that caused #9,
+     * asserted as state rather than as rendered pixels: the view's real
+     * measured width, and its real line budget. Both mutations die against
+     * these two tests.
+     */
+    @Test
+    fun theStatusLineSpansTheFullCardWidth() {
+        val root = inflate()
+        val widthPx = 993
+        root.measure(
+            View.MeasureSpec.makeMeasureSpec(widthPx, View.MeasureSpec.EXACTLY),
+            View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
+        )
+        root.layout(0, 0, widthPx, root.measuredHeight)
+
+        val card = root.findViewById<View>(R.id.dictate_card)
+        val status = root.findViewById<android.widget.TextView>(R.id.status_text)
+        val cardInner = card.width - card.paddingLeft - card.paddingRight
+
+        assertTrue(
+            "nothing was laid out (card inner width ${cardInner}px), so this " +
+                "test would pass without measuring anything",
+            cardInner > 0,
+        )
+        assertEquals(
+            "status_text is ${status.width}px wide inside a ${cardInner}px " +
+                "card. It must span the FULL card width — issue #9 was this " +
+                "view being a weighted child of the status strip, left with " +
+                "555px of an 801px row (~30 characters) for strings up to 154.",
+            cardInner,
+            status.width,
+        )
+    }
+
+    @Test
+    fun theStatusLineAllowsEnoughLinesForTheLongestString() {
+        val status = inflate().findViewById<android.widget.TextView>(R.id.status_text)
+        val longest = longestStatusString()
+
+        assertTrue(
+            "status_text allows ${status.maxLines} line(s). At full card width " +
+                "and 12sp this device fits roughly 48 characters per line, and " +
+                "the longest string it must carry is ${longest.length} " +
+                "characters, so it needs at least $REQUIRED_STATUS_LINES. " +
+                "Issue #9 was this view capped at ONE ellipsized line. " +
+                "String was: \"$longest\"",
+            status.maxLines >= REQUIRED_STATUS_LINES,
+        )
+    }
+
+    /**
+     * A copy budget, not a restatement of the line count.
+     *
+     * #9 is ultimately "the words outgrew the box". Pinning only the box would
+     * leave the other half unguarded: a future 300-character status string
+     * overflows four lines just as surely, and nothing else would notice.
+     * [CHARS_PER_STATUS_LINE] is a DEVICE measurement (1080px-wide card, 12sp,
+     * `@color/dicta_on_surface_variant`), not a Robolectric one — see the dead
+     * end above for why the JVM cannot supply it.
+     */
+    @Test
+    fun noStatusStringOutgrowsItsLineBudget() {
+        val longest = longestStatusString()
+        val budget = REQUIRED_STATUS_LINES * CHARS_PER_STATUS_LINE
+        assertTrue(
+            "the longest status string is ${longest.length} characters but the " +
+                "status line holds about $budget ($REQUIRED_STATUS_LINES lines " +
+                "x ~$CHARS_PER_STATUS_LINE chars). Give the view another line " +
+                "rather than cutting the sentence — the card is a ScrollView " +
+                "and can afford the height. String was: \"$longest\"",
+            longest.length <= budget,
+        )
+    }
+
+    /**
+     * The longest string `status_text` can be asked to display.
+     *
+     * Read from the resources rather than hardcoded: the point of #9 is that
+     * copy outgrew its container, so a guard pinned to today's longest string
+     * would stop protecting the moment someone writes a longer one.
+     * `DictateActivity` sets this view from the `stt_*` status strings and
+     * `@string/dictate_hint`.
+     */
+    private fun longestStatusString(): String {
+        val ctx = RuntimeEnvironment.getApplication()
+        val names = listOf(
+            "dictate_hint",
+            "stt_tier_remote_only",
+            "stt_fell_back_retrying",
+            "stt_not_configured",
+            "mic_denied_fallback",
+        )
+        val values = names.mapNotNull { name ->
+            val id = ctx.resources.getIdentifier(name, "string", ctx.packageName)
+            if (id == 0) null else ctx.resources.getString(id)
+        }
+        assertEquals(
+            "a status string named in this test no longer exists, so the " +
+                "'longest' it measures is not the real longest",
+            names.size,
+            values.size,
+        )
+        // stt_fell_back_retrying carries a %1$s; fill it with a realistic
+        // reason so the measured length is the one a user actually sees.
+        return values
+            .map { it.replace("%1\$s", "the service timed out") }
+            .maxBy { it.length }
+    }
+
+    private companion object {
+        /**
+         * Lines `status_text` must allow. Four, because the longest string it
+         * carries is 154 characters and the card fits roughly
+         * [CHARS_PER_STATUS_LINE] per line.
+         */
+        const val REQUIRED_STATUS_LINES = 4
+
+        /**
+         * Characters per line at full card width, 12sp, on the 1080px target
+         * device. A DEVICE measurement — Robolectric's `measureText` reports a
+         * flat 1.0px per character and cannot supply this (see the dead-end
+         * note above). Deliberately conservative: understating it makes the
+         * copy budget stricter, never looser.
+         */
+        const val CHARS_PER_STATUS_LINE = 48
     }
 
     /**

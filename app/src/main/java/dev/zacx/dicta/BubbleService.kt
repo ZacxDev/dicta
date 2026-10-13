@@ -111,9 +111,12 @@ class BubbleService : Service() {
     }
 
     private fun openDictation() {
-        val intent = Intent(this, DictateActivity::class.java)
-            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        startActivity(intent)
+        // 🔴 Via DictateLaunch, never a hand-built Intent: the overlay must
+        // land in its OWN task. Built here with NEW_TASK alone it joined
+        // MainActivity's task, and because the overlay theme is translucent the
+        // card rendered over the whole app UI rather than over the screen the
+        // user was actually on (issue #11).
+        startActivity(DictateLaunch.intent(this))
     }
 
     private fun buildNotification(): Notification {

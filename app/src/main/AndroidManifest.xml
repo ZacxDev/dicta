@@ -42,12 +42,34 @@
             </intent-filter>
         </activity>
 
-        <!-- Floating dictation overlay: dialog-themed, excluded from recents. -->
+        <!--
+          Floating dictation overlay: dialog-themed, excluded from recents.
+
+          🔴 taskAffinity is LOAD-BEARING, not tidiness. The three "from
+          anywhere" entry points (bubble, tile, notification) start this
+          activity with FLAG_ACTIVITY_NEW_TASK, and that flag does NOT mean
+          "make a new task" — it means "use the task matching this activity's
+          taskAffinity, creating one only if none exists". With no affinity
+          declared this activity inherited the application default, which is
+          MainActivity's task: tapping the bubble brought Dicta's own task
+          forward and stacked the overlay on top of MainActivity, so the
+          translucent card rendered over the entire app UI instead of over
+          whatever the user was actually looking at. That was issue #11.
+
+          The value must stay in sync with DictateLaunch.OVERLAY_TASK_AFFINITY;
+          DictateLaunchTest pins the two together, because they live in
+          different files and a drift here silently restores the bug.
+
+          A distinct name rather than "": an empty affinity means "no affinity
+          to anything" and can hand out a fresh task per launch, which fights
+          launchMode="singleTop".
+        -->
         <activity
             android:name=".DictateActivity"
             android:exported="false"
             android:theme="@style/Theme.Dicta.Overlay"
             android:excludeFromRecents="true"
+            android:taskAffinity="dev.zacx.dicta.overlay"
             android:launchMode="singleTop" />
 
         <!-- Transcription settings: the base URL and the bearer token. Not
