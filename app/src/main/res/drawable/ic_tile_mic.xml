@@ -1,4 +1,17 @@
-<!-- QS tiles require a solid-white icon on transparent background. -->
+<!--
+  Quick Settings tile icon.
+
+  🔴 The fill stays SOLID WHITE and that is not an oversight of the design
+  pass. SystemUI re-tints a tile icon from the shade's own palette (and inverts
+  it between the tile's active/inactive states), so a brand colour here is
+  discarded on an inactive tile and fights the shade on an active one. The same
+  drawable is the notification small icon, where the platform also hard-tints
+  from Notification.Builder.setColor() — which is where Dicta's accent is
+  applied instead (see BubbleService.buildNotification()).
+
+  The path data is the same glyph as ic_mic.xml, so the tile, the bubble and
+  the launcher icon are one mark in three tint contexts.
+-->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="24dp"
     android:height="24dp"

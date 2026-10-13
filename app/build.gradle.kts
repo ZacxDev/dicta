@@ -59,11 +59,45 @@ android {
 }
 
 dependencies {
-    // Runtime: no external dependencies — framework + Kotlin stdlib only, so
-    // the APK ships nothing but our own code. The entries below are
-    // testImplementation: they are compiled into the unit-test classpath only
-    // and are never packaged. "No external dependencies" is therefore true of
-    // the APK, not of the build.
+    // ## Runtime dependencies: still NONE — but now by decision, not default.
+    //
+    // Material Components (com.google.android.material) was explicitly
+    // permitted for the 2026-10 design pass and was deliberately NOT taken.
+    // Two reasons, in order:
+    //
+    //  1. Using M3 components means re-parenting the themes to
+    //     Theme.Material3.*, and Theme.Dicta.Overlay's parent is load-bearing:
+    //     the floating card's screen margin is decor padding taken from the
+    //     <inset> in @drawable/overlay_window_bg, and Material3 dialog themes
+    //     handle windowBackground differently. The overlay already shipped
+    //     full-screen once from exactly that mechanism — see themes.xml and
+    //     DictateOverlayThemeTest.
+    //  2. Nothing in the design needed it. The palette is a surface ramp in
+    //     colors.xml, the shapes are <shape>/<selector> drawables, the overflow
+    //     is a platform ImageButton, and ripples/tooltips/compound-drawable
+    //     tinting are all platform features at minSdk 26.
+    //
+    // 🔴 The claim is unchanged, so it was re-MEASURED rather than left
+    // standing on its own authority. Package prefixes actually present in the
+    // debug APK's dex (unzip classes*.dex + a type-descriptor scan,
+    // 2026-10-12):
+    //
+    //     dev/zacx                       the app
+    //     kotlin/*                       Kotlin stdlib
+    //     org/jetbrains/, org/intellij/  the @Nullable/@NotNull annotation
+    //                                    classes that ship INSIDE
+    //                                    kotlin-stdlib. Not a separate
+    //                                    dependency — but they are in the dex,
+    //                                    so the old wording "the APK ships
+    //                                    nothing but our own code" was
+    //                                    overstated and is corrected here.
+    //     java/*, android/*, dalvik/*    platform
+    //
+    // No androidx, no com.google.android.material, no third-party runtime code.
+    //
+    // The entries below are testImplementation: compiled into the unit-test
+    // classpath only and never packaged. "No external RUNTIME dependencies" is
+    // therefore true of the APK, not of the build.
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.robolectric:robolectric:4.13")
 

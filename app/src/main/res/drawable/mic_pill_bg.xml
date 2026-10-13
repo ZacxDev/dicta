@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The mic control: the single action present at rest, and the only
+  accent-FILLED surface in the whole app. That exclusivity is the point — the
+  accent means "dictate" and nothing else.
+
+  Fully rounded (radius 28dp against a 56dp minHeight, so it is a pill at any
+  width) and filled with @color/dicta_accent. The label and glyph are tinted
+  @color/dicta_on_accent, measured 8.85:1 against the fill.
+
+  Pressed darkens into @color/dicta_accent_container with an accent ring, which
+  keeps a visible edge during the press rather than collapsing into the card.
+-->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:state_pressed="true">
+        <shape android:shape="rectangle">
+            <solid android:color="@color/dicta_accent_container" />
+            <corners android:radius="28dp" />
+            <stroke android:width="2dp" android:color="@color/dicta_accent" />
+        </shape>
+    </item>
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="@color/dicta_accent" />
+            <corners android:radius="28dp" />
+        </shape>
+    </item>
+</selector>

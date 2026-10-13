@@ -1,6 +1,30 @@
 <?xml version="1.0" encoding="utf-8"?>
-<shape xmlns:android="http://schemas.android.com/apk/res/android"
-    android:shape="oval">
-    <solid android:color="@color/dicta_bubble" />
-    <stroke android:width="2dp" android:color="@color/dicta_accent" />
-</shape>
+<!--
+  The floating bubble. Level-2 surface so it matches the dictation card it
+  opens, with a 2dp accent ring — the ring is the identity cue at 60dp over an
+  arbitrary wallpaper.
+
+  Pressed LIFTS (level-3 fill, 3dp ring) rather than inverting to an accent
+  fill. That is a contrast decision, not a taste one: the glyph is tinted
+  @color/dicta_accent by BubbleService, which measures 8.44:1 on surface_2 and
+  7.47:1 on surface_3 but only ~1.5:1 on an accent fill. A state-dependent
+  glyph tint would need a ColorStateList threaded through the service to buy
+  nothing, so the background stays on one side of the accent instead.
+
+  The press feedback matters here because a tap (open dictation) and a drag
+  (reposition the bubble) start identically — see BubbleService.DragListener.
+-->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:state_pressed="true">
+        <shape android:shape="oval">
+            <solid android:color="@color/dicta_surface_3" />
+            <stroke android:width="3dp" android:color="@color/dicta_accent" />
+        </shape>
+    </item>
+    <item>
+        <shape android:shape="oval">
+            <solid android:color="@color/dicta_surface_2" />
+            <stroke android:width="2dp" android:color="@color/dicta_accent" />
+        </shape>
+    </item>
+</selector>

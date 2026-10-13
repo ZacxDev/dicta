@@ -37,7 +37,7 @@ class DictateActivity : Activity() {
     private lateinit var micButton: Button
     private lateinit var attachmentNote: TextView
     private lateinit var levelMeter: android.widget.ProgressBar
-    private lateinit var engineLabel: TextView
+    private lateinit var engineBadge: TextView
 
     private var speech: SpeechHelper? = null
     private val finalText = StringBuilder()
@@ -82,7 +82,7 @@ class DictateActivity : Activity() {
         micButton = findViewById(R.id.mic_button)
         attachmentNote = findViewById(R.id.attachment_note)
         levelMeter = findViewById(R.id.level_meter)
-        engineLabel = findViewById(R.id.engine_label)
+        engineBadge = findViewById(R.id.engine_badge)
 
         // Robolectric can create the real Activity but cannot provide an
         // AndroidKeyStore, so settings construction is allowed to fail here
@@ -105,6 +105,8 @@ class DictateActivity : Activity() {
         findViewById<ImageButton>(R.id.share_button).setOnClickListener { shareText() }
         findViewById<ImageButton>(R.id.close_button).setOnClickListener { finish() }
 
+        wireOnDemandActions()
+
         if (hasMicPermission()) {
             startDictation()
         } else {
@@ -126,6 +128,71 @@ class DictateActivity : Activity() {
         // If we are torn down mid-capture the bubble must not stay hidden.
         OverlayVisibility.setVisible(true)
         super.onDestroy()
+    }
+
+    // --- the on-demand action row -------------------------------------------
+
+    /**
+     * Wires the two routes that reveal `@id/action_row`, which the layout
+     * starts GONE so that the resting card is the transcript and the mic and
+     * nothing else.
+     *
+     * 🔴 Discoverability is the whole risk of hiding a control, so there are
+     * deliberately TWO mechanisms here plus a third in the copy, and none of
+     * them depends on the others:
+     *
+     *  1. [R.id.more_button] — always visible next to the mic, toggles the row.
+     *     Its `contentDescription` and `tooltipText` are BOTH swapped with the
+     *     row's visibility, so the toggle state is announced rather than only
+     *     drawn (the `state_selected` fill in `ghost_button_bg` is the visual
+     *     half, and would be colour-only on its own).
+     *  2. A [android.text.TextWatcher] on the transcript — the row appears by
+     *     itself the moment there is text to act on, so after the first
+     *     utterance the user is never asked to find anything. It is hidden only
+     *     in the state where every action in it would refuse ("Nothing to copy
+     *     yet…").
+     *  3. `@string/dictate_hint`, the resting status line, names the route in
+     *     words.
+     *
+     * The watcher only ever reveals, never hides: a user who types, deletes and
+     * retypes should not have the row flicker, and once revealed the row has
+     * been seen — re-hiding it would be the app forgetting what the user
+     * already learned. [R.id.more_button] remains the way to put it away.
+     */
+    private fun wireOnDemandActions() {
+        val row = findViewById<View>(R.id.action_row)
+        val more = findViewById<ImageButton>(R.id.more_button)
+
+        more.setOnClickListener {
+            setActionsRevealed(row, more, row.visibility != View.VISIBLE)
+        }
+        setActionsRevealed(row, more, currentText().isNotEmpty())
+
+        textInput.addTextChangedListener(object : android.text.TextWatcher {
+            override fun afterTextChanged(s: android.text.Editable?) {
+                if (!s.isNullOrBlank() && row.visibility != View.VISIBLE) {
+                    setActionsRevealed(row, more, true)
+                }
+            }
+
+            override fun beforeTextChanged(
+                s: CharSequence?, start: Int, count: Int, after: Int
+            ) = Unit
+
+            override fun onTextChanged(
+                s: CharSequence?, start: Int, before: Int, count: Int
+            ) = Unit
+        })
+    }
+
+    private fun setActionsRevealed(row: View, more: ImageButton, revealed: Boolean) {
+        row.visibility = if (revealed) View.VISIBLE else View.GONE
+        more.isSelected = revealed
+        val label = getString(
+            if (revealed) R.string.hide_actions else R.string.more_actions
+        )
+        more.contentDescription = label
+        more.tooltipText = label
     }
 
     // --- floating window geometry -------------------------------------------
@@ -220,7 +287,7 @@ class DictateActivity : Activity() {
         val started = DictationSession(
             context = this,
             settings = config,
-            callbacks = SessionCallbacks(),
+            callbacks = uiCallbacks(),
         )
         return if (started.start()) {
             session?.destroy()
@@ -269,6 +336,27 @@ class DictateActivity : Activity() {
         helper.start()
         micButton.text = getString(R.string.stop_dictation)
     }
+
+    /**
+     * The one construction site for the view-binding callbacks — the real
+     * session at [startRemoteSession] and `OverlayMinimalLayoutTest` both go
+     * through here.
+     *
+     * That shared route is the point. The status strip's level meter and engine
+     * badge are only reachable through these callbacks, so a test that built its
+     * own stand-in would be asserting against a fixture rather than against the
+     * object the activity actually hands to [DictationSession] — and would stay
+     * green if this method started returning something else. [SessionCallbacks]
+     * holds no state of its own (it writes the activity's views), so a fresh
+     * instance behaves identically to the session's.
+     *
+     * Deliberately NOT annotated `@VisibleForTesting`: that annotation lives in
+     * androidx.annotation, and this module ships no androidx at runtime on
+     * purpose (see the long note in app/build.gradle.kts, and the dex scan that
+     * checks it rather than asserting it). `internal` plus this comment is the
+     * whole visibility contract.
+     */
+    internal fun uiCallbacks(): DictationSession.Callbacks = SessionCallbacks()
 
     /** Bridges [DictationSession] to the card's views. */
     private inner class SessionCallbacks : DictationSession.Callbacks {
@@ -320,8 +408,8 @@ class DictateActivity : Activity() {
 
     /** Names the engine behind the text currently in the box. */
     private fun showEngine(fromRemote: Boolean) {
-        engineLabel.visibility = View.VISIBLE
-        engineLabel.text = getString(
+        engineBadge.visibility = View.VISIBLE
+        engineBadge.text = getString(
             if (fromRemote) R.string.stt_remote_done else R.string.stt_local_label
         )
     }

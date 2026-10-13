@@ -26,14 +26,27 @@
     <string name="try_now">Try dictation now</string>
 
     <string name="dictate_title">Dicta</string>
-    <string name="dictate_hint">Tap the mic and speak…</string>
-    <string name="dictate_text_hint">Your dictated text appears here — edit it freely.</string>
+    <!-- The resting status line. It names the overflow route in words, because
+         while @id/action_row is hidden this is the only on-screen text that
+         tells a first-time user where Copy / Send / Screenshot went. -->
+    <string name="dictate_hint">Tap Speak — then ⋯ for Copy, Send, Screenshot</string>
+    <string name="dictate_text_hint">Speak, or type here</string>
     <string name="listening">Listening… speak now</string>
-    <string name="start_dictation">🎙 Start dictation</string>
-    <string name="stop_dictation">⏹ Stop</string>
+    <!-- Short because the mic control is now a pill sharing its row with the
+         overflow, and the glyph is a real vector (@drawable/ic_mic as a
+         compound drawable) rather than an emoji that renders differently on
+         every device. The label is also what keeps the recording state off
+         colour-only footing. -->
+    <string name="start_dictation">Speak</string>
+    <string name="stop_dictation">Stop</string>
     <string name="copy">Copy</string>
     <string name="share">Send</string>
     <string name="close">Close</string>
+    <!-- The overflow toggle. Both strings are used as contentDescription AND
+         tooltipText, and DictateActivity swaps them with the row's visibility so
+         the toggle's state is announced, not just coloured. -->
+    <string name="more_actions">More actions</string>
+    <string name="hide_actions">Hide actions</string>
     <string name="dictate">Dictate</string>
     <string name="copied">Copied to clipboard</string>
     <string name="nothing_to_copy">Nothing to copy yet — dictate something first.</string>
@@ -108,6 +121,19 @@
     <string name="stt_not_configured">No transcription service configured — using the phone\'s recognizer. Set one up in Settings.</string>
     <string name="stt_no_audio">Nothing was recorded.</string>
     <string name="stt_mic_silenced">Another app has the microphone — Dicta is receiving silence.</string>
-    <string name="stt_level">Level: %1$s</string>
     <string name="stt_tier_remote_only">The phone\'s recognizer produced nothing — recording continues, the server transcript is on its way.</string>
+
+    <!-- ===== Accessibility labels for the status strip =====
+         Static contentDescriptions for @id/level_meter and @id/engine_badge in
+         activity_dictate.xml. Reserved by the design pass and KEPT at the merge
+         of the remote-STT work: both views are now bound, and both still need a
+         label that does not change as their value does.
+
+         @string/level_meter_desc replaced a `stt_level` ("Level: %1$s") that the
+         STT branch wired straight into android:contentDescription. A format
+         string used as a literal label is announced verbatim, so a screen
+         reader read out "Level: %1$s"; the meter's level is conveyed by the
+         ProgressBar's own progress, so the label only has to name the view. -->
+    <string name="level_meter_desc">Microphone input level</string>
+    <string name="engine_badge_desc">Transcription engine</string>
 </resources>

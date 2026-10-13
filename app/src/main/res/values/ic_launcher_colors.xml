@@ -7,16 +7,45 @@
   in-app surfaces colors.xml describes. Mixing them would invite someone to
   "unify" the two and flatten the icon's contrast.
 
-  The glow pair is deliberately the SAME hue at two alphas. Fading cyan to a
-  transparent *grey* instead produces a dirty halo, because the interpolation
+  The glow pair is deliberately the SAME hue at two alphas. Fading the accent to
+  a transparent *grey* instead produces a dirty halo, because the interpolation
   runs through the grey.
+
+  ## Re-authored by the 2026-10 design pass
+
+  The icon had to move with the palette or it would clash on the home screen:
+  it was a cyan glyph in a cool blue-grey well, and the app is now warm ember on
+  a cool neutral ramp. What changed is COLOUR ONLY — the geometry (108dp canvas,
+  opaque edge-to-edge background, the <group> transform that places ic_mic.xml's
+  path data verbatim, the radius-44 glow, the <monochrome> layer) is unchanged,
+  so the safe-circle arithmetic documented in ic_launcher_foreground.xml still
+  holds without recomputation.
+
+  The background ramp is now warm-dark -> the app's own level-0 surface
+  (#0A0B0F), which ties the icon to the app window rather than to a colour that
+  appears nowhere in the UI.
+
+  Measured contrast of the glyph against what is actually behind it (the glow is
+  composited over the gradient, so the worst case is glyph-over-glow-over-the
+  lightest end of the ramp):
+
+      #FFA070 over #3B2117 (bare gradient start) ....... 7.43 : 1
+      #FFA070 over #0A0B0F (bare gradient end) ......... 9.85 : 1
+      #FFA070 over glow(0x38) over #3B2117 ............. 4.64 : 1   <- worst case
+      #FFA070 over glow(0x38) over #0A0B0F ............. 6.56 : 1
+
+  4.64:1 is the floor, against a 3:1 requirement for a glyph this size.
 -->
 <resources>
-    <color name="ic_launcher_bg_start">#2E4A52</color>
-    <color name="ic_launcher_bg_end">#121A1F</color>
-    <color name="ic_launcher_glow_inner">#334DD0E1</color>
-    <color name="ic_launcher_glow_outer">#004DD0E1</color>
+    <!-- Warm ember-tinted dark, falling to the app's own level-0 surface. -->
+    <color name="ic_launcher_bg_start">#3B2117</color>
+    <color name="ic_launcher_bg_end">#0A0B0F</color>
+
+    <!-- Same hue as ic_launcher_mic at two alphas: 0x38 -> 0x00. -->
+    <color name="ic_launcher_glow_inner">#38FFA070</color>
+    <color name="ic_launcher_glow_outer">#00FFA070</color>
+
     <!-- Matches dicta_accent; duplicated so a theme change cannot silently
          recolour the launcher icon without someone looking at it. -->
-    <color name="ic_launcher_mic">#4DD0E1</color>
+    <color name="ic_launcher_mic">#FFA070</color>
 </resources>
