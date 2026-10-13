@@ -61,6 +61,30 @@ object DictateLaunch {
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
 
     /**
+     * 🔴 The flag that stops the overlay starting a **second** recording.
+     *
+     * When true, the card attaches to a session that is *already finished and
+     * already uploading* — `BubbleService` stopped capture before starting this
+     * activity — and `DictateActivity.onCreate` must therefore NOT run its
+     * `startDictation()`. Getting this wrong does not produce an error: two
+     * `DictationSession`s mean two `AudioRecord`s, and Android resolves that by
+     * silently feeding one of them exact zeros, so it surfaces as "the
+     * transcript came back empty" and looks like a server bug.
+     *
+     * Absent (the tile, the notification, MainActivity, and the mic-permission
+     * fallback) it keeps the original behaviour exactly: open the card and start
+     * recording.
+     */
+    const val EXTRA_ATTACH_SESSION: String = "dev.zacx.dicta.ATTACH_SESSION"
+
+    /**
+     * [intent], plus "do not start recording — attach to the session the bubble
+     * already has in flight and show the transcribing state".
+     */
+    fun transcribingIntent(context: Context): Intent =
+        intent(context).putExtra(EXTRA_ATTACH_SESSION, true)
+
+    /**
      * [intent] wrapped for the callers that cannot start an activity directly:
      * the Quick Settings tile (the `Intent` overload of
      * `startActivityAndCollapse` is deprecated as of API 34) and the

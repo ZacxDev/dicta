@@ -93,11 +93,33 @@ class DictationSession(
 
     val isRecording: Boolean get() = recording.get()
 
+    private val uploadSuppressed = AtomicBoolean(false)
+
+    /**
+     * Refuses the upload for the recording currently in progress.
+     *
+     * 🔴 Why a flag rather than "just call [destroy]": `destroy()` stops the
+     * capture, and `MicCapture.stop()` calls `onFinished`, which hands the file
+     * to the worker — so the upload is already submitted by the time `destroy()`
+     * reaches `worker.shutdownNow()`. Whether the POST actually goes out is then
+     * a race, which is not a basis for either of the two features that need this
+     * to be certain: the cancel button, and the silence gate that exists because
+     * the service answers near-silent audio with confident invention (issue #8).
+     *
+     * Checked in `onFinished` *before* anything is enqueued, so "nothing was
+     * uploaded" is a property of the control flow and not of a timing window.
+     * Cleared by the next [start].
+     */
+    fun suppressUpload() {
+        uploadSuppressed.set(true)
+    }
+
     // --- start / stop -------------------------------------------------------
 
     fun start(): Boolean {
         if (recording.get()) return true
         sawPartial.set(false)
+        uploadSuppressed.set(false)
         localTranscript = ""
 
         val file = File(
@@ -252,6 +274,14 @@ class DictationSession(
         }
 
         override fun onFinished(file: File?, audioSeconds: Double) {
+            // 🔴 Before the null/duration check and before anything is enqueued:
+            // the caller asked for this recording NOT to be transcribed (the
+            // cancel button, or the silence gate), so it must not reach the
+            // service and must not announce a status it will never deliver.
+            if (uploadSuppressed.get()) {
+                file?.let { if (it.exists()) it.delete() }
+                return
+            }
             if (file == null || audioSeconds <= 0.0) {
                 main.post {
                     callbacks.onStatus(appContext.getString(R.string.stt_no_audio))

@@ -107,14 +107,57 @@ class DictateActivity : Activity() {
 
         wireOnDemandActions()
 
-        if (hasMicPermission()) {
+        // 🔴 THE auto-start, and the single highest-risk line in the bubble
+        // redesign. It used to be unconditional, because opening this card and
+        // starting to record were the same event. They are not any more: when
+        // the bubble opens the card, capture has ALREADY happened and the
+        // upload is already in flight, so starting again here would construct a
+        // second DictationSession — a second AudioRecord — while the first
+        // one's file is being POSTed.
+        //
+        // That failure is silent. Android resolves concurrent capture by
+        // feeding the loser bit-exact zeros: startRecording() succeeds, read()
+        // returns the full byte count, and the only observable is a transcript
+        // that comes back empty or hallucinated. It reads as a server bug and
+        // gets investigated as one. DictationSessionLedgerTest is the ledger
+        // that keeps the set of session owners honest.
+        if (intent?.getBooleanExtra(DictateLaunch.EXTRA_ATTACH_SESSION, false) == true) {
+            attachToBubbleSession()
+        } else if (hasMicPermission()) {
             startDictation()
         } else {
             requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), REQ_MIC)
         }
     }
 
+    /**
+     * Binds the card to the recording the bubble already made.
+     *
+     * The status line is set up front rather than waiting for the session's own
+     * first message: by the time this activity is on screen the upload may
+     * already be several hundred milliseconds old, and a card that opens blank
+     * reads as a card that did nothing.
+     *
+     * [BubbleSessionBus] then replays anything said while nothing was attached
+     * — which can include the transcript itself on a short recording — so the
+     * engine badge and the status line stay honest about which engine produced
+     * what is on screen.
+     */
+    private fun attachToBubbleSession() {
+        statusText.text = getString(R.string.stt_uploading)
+        micButton.text = getString(R.string.start_dictation)
+        levelMeter.visibility = View.INVISIBLE
+        val sink = uiCallbacks()
+        busSink = sink
+        BubbleSessionBus.attach(sink)
+    }
+
+    /** Non-null only while this card is attached to a bubble session. */
+    private var busSink: DictationSession.Callbacks? = null
+
     override fun onDestroy() {
+        busSink?.let { BubbleSessionBus.detach(it) }
+        busSink = null
         // Before speech: the session owns the microphone and the recogniser's
         // pipe, and closing the pipe's write end is what ends the recognition
         // session. Tearing the recogniser down first leaves a writer with
