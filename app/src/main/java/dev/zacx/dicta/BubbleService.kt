@@ -137,23 +137,25 @@ class BubbleService : Service() {
     /**
      * Swappable session construction.
      *
-     * The real one needs `SttSettings` (an Android keystore) and `AudioRecord`,
-     * neither of which exists under Robolectric, so without a seam here the
-     * only testable tap is the first one — the service would fail to start
-     * capture, fall back to idle, and a "second tap" would be indistinguishable
-     * from another first tap. `internal` and set before `onCreate`.
+     * The real one needs an `AudioRecord`, which has no usable Robolectric
+     * implementation, so without a seam here the only testable tap is the first
+     * one — the service would fail to start capture, fall back to idle, and a
+     * "second tap" would be indistinguishable from another first tap.
+     * `internal` and set before `onCreate`.
      *
-     * 🔴 The **return** type is nullable as well as the field, and the two
-     * nulls mean different things. A null *field* means "use [realSession]". A
-     * null *return* stands in for [realSession] itself returning null — the
-     * no-settings case — which is otherwise unreachable under Robolectric,
-     * since it needs a keystore that refuses. That is a seam for the
-     * *classification*, exactly like [foregroundPromoter]: it makes
-     * "no session ⇒ `SETTINGS_UNAVAILABLE`" observable. It does **not**
-     * reproduce a keystore failure, and no test here is evidence that
-     * `SttSettings.create` throws on any real device.
+     * 🔴 `AudioRecord` is the whole reason, and this used to also name "an
+     * Android keystore". That was measured wrong: `SttSettings.create` reaches
+     * no keystore at construction and returns a real object under Robolectric
+     * — see [realSession], where the catch written for a keystore failure was
+     * deleted as unreachable.
+     *
+     * Only the *field* is nullable, and it means "use [realSession]". The
+     * **return** type used to be nullable too, as a seam for a
+     * `Failure.SETTINGS_UNAVAILABLE` classification that no longer exists; a
+     * test that wants a refused capture returns a handle whose `start()`
+     * returns false, which is the path production actually takes.
      */
-    internal var sessionFactory: ((DictationSession.Callbacks) -> SessionHandle?)? = null
+    internal var sessionFactory: ((DictationSession.Callbacks) -> SessionHandle)? = null
 
     /**
      * Swappable foreground promotion.
@@ -411,8 +413,6 @@ class BubbleService : Service() {
         BubbleDictation.Failure.MIC_IN_USE -> R.string.stt_mic_in_use
         BubbleDictation.Failure.FOREGROUND_DENIED -> R.string.bubble_foreground_denied
         BubbleDictation.Failure.CAPTURE_UNAVAILABLE -> R.string.bubble_capture_failed
-        BubbleDictation.Failure.SETTINGS_UNAVAILABLE ->
-            R.string.bubble_settings_unavailable
     }
 
     /**
@@ -463,37 +463,12 @@ class BubbleService : Service() {
         // Everything the previous recording's callbacks could still say is now
         // stale — see `generation`.
         generation++
-        // 🔴 `if (factory != null)` rather than `?: realSession()`: the factory
-        // is allowed to return null — that is how a test reaches the branch
-        // below — and an elvis would silently fall through to the real session
-        // instead. Measured (mutant M21a): the elvis is **pinned**, because
-        // under Robolectric `realSession()` returns a NON-null handle whose
-        // `start()` then fails, so the two no-session tests see a different
-        // message. The earlier note here claimed the opposite — that Robolectric
-        // has no keystore, so the elvis would be unobservable — and that was
-        // wrong; `SttSettings.create` does not throw here.
-        val factory = sessionFactory
-        val handle =
-            if (factory != null) factory(serviceCallbacks()) else realSession()
-        // 🔴 No session at all is its OWN cause, decided structurally rather
-        // than by asking MicrophoneOwner. `realSession()` returns null for
-        // exactly one reason — `SttSettings.create()` threw, i.e. no usable
-        // keystore — and that reason never touches the microphone, so routing
-        // it through the `isHeld` discriminator below classified it
-        // CAPTURE_UNAVAILABLE and told the user the device "would not open the
-        // microphone" and to "try again". Both false. The mic was never
-        // opened; the keystore will refuse every retry.
-        if (handle == null) {
-            promoteForeground(recording = false)
-            applyEffects(
-                machine.on(
-                    BubbleDictation.Event.CaptureFailed(
-                        BubbleDictation.Failure.SETTINGS_UNAVAILABLE
-                    )
-                )
-            )
-            return
-        }
+        // An elvis is safe here only because neither side can return null: the
+        // factory's return type is non-null, and so is `realSession()`. It was
+        // written as `if (factory != null)` while the factory was allowed to
+        // return null — a "no session at all" seam that stood in for a
+        // `SttSettings.create()` throw, which was deleted as unreachable.
+        val handle = sessionFactory?.invoke(serviceCallbacks()) ?: realSession()
         if (!handle.start()) {
             runCatching { handle.destroy() }
             promoteForeground(recording = false)
@@ -505,19 +480,12 @@ class BubbleService : Service() {
             // still held HERE is held by somebody else — the card's session or
             // its phone-only recogniser — which is exactly MIC_IN_USE. The other
             // causes (no encoder, an AudioRecord that would not initialise)
-            // take nothing, so a free mic means one of those. The no-settings
-            // cause cannot arrive here at all: it produces no handle, and is
-            // classified SETTINGS_UNAVAILABLE above.
-            // If one of those coincides with another opener holding the mic,
-            // MIC_IN_USE wins: both statements are true and that is the one the
-            // user can act on.
-            // 🔴 SETTINGS_UNAVAILABLE is the one exception, and it is decided
-            // above this line rather than here: it wins over MIC_IN_USE even
-            // when another opener holds the mic, because stopping that opener
-            // would not make the bubble work — the keystore refuses every
-            // attempt — so "stop that recording first" is an action that cannot
-            // succeed. Pinned by
-            // `noSettingsStoreOutranksAnotherOpenerHoldingTheMic`.
+            // take nothing, so a free mic means one of those.
+            // 🔴 If one of those coincides with another opener holding the mic,
+            // MIC_IN_USE wins, with no exceptions: both statements are true and
+            // that is the one the user can act on. (A carve-out used to sit
+            // here for the no-settings cause, which outranked MIC_IN_USE
+            // because no retry could succeed. That cause is gone.)
             val failure = if (MicrophoneOwner.isHeld) {
                 BubbleDictation.Failure.MIC_IN_USE
             } else {
@@ -644,32 +612,38 @@ class BubbleService : Service() {
         }
 
     /**
-     * The production session, or **null for exactly one reason**: the settings
-     * store could not be built.
+     * The production session. **Never null, and no longer guarded.**
      *
-     * 🔴 That single null path is load-bearing — `startRecording` reads a null
-     * handle as `Failure.SETTINGS_UNAVAILABLE` without asking why. A second
-     * null path added here would silently be reported as a keystore problem,
-     * so return a handle whose `start()` fails instead.
+     * 🔴 `SttSettings.create(this)` used to be wrapped in
+     * `catch (_: Throwable) { return null }`, and a null handle was classified
+     * `Failure.SETTINGS_UNAVAILABLE` — *"Dicta cannot open its saved settings
+     * on this device"* — written for a device with no usable `AndroidKeyStore`.
+     * **No throw path to it was found, and the keystore one is impossible.**
+     * The reasoning, read off the code rather than assumed:
      *
-     * ⚠ **This refusal is a known behaviour gap, not the intended end state.**
-     * The comment here used to read *"Same degradation the card documents …
-     * It is NOT a reason to refuse to record"* — and then refused to record,
-     * one line later, with `?: return null`. The card really does degrade on a
-     * keystore-less device (no settings ⇒ the remote path reports "not
-     * configured" ⇒ the phone's own recogniser is used); the bubble does not.
-     * Making it degrade the same way means giving the bubble a phone-only
-     * capture path, which is a larger change and deliberately out of scope
-     * here. What was fixed is the *message*: the user is no longer told the
-     * microphone failed and to retry. See
-     * [BubbleDictation.Failure.SETTINGS_UNAVAILABLE].
+     *  - `SttSettings.create` is `getSharedPreferences` plus two constructors,
+     *    `SttSettings(prefs, TokenStore(prefs, KeystoreCipher()))`.
+     *  - `KeystoreCipher`'s constructor is a parameter list with a default
+     *    alias and **no `init` block**; it touches `AndroidKeyStore` lazily, in
+     *    `key()`, called only from `encrypt`/`decrypt`. `SttSettings` and
+     *    `TokenStore` likewise have no `init` and compute everything in their
+     *    accessors. So constructing these three reaches no keystore at all, and
+     *    a keystore that refuses cannot be observed on this path.
+     *  - That leaves `getSharedPreferences`, which can throw on a
+     *    credential-encrypted context before unlock — unreachable here: this
+     *    service is not `directBootAware`, and the bubble is tapped by a
+     *    present user on an unlocked device.
+     *
+     * The catch is therefore **gone rather than redirected**. A future throw
+     * here crashes with a stack trace naming its own cause, which is
+     * diagnosable; routing it into a generic "capture unavailable — try again"
+     * would restate the defect that was just removed, naming a wrong cause and
+     * a retry we cannot promise, with nothing in the log. It was also asymmetric
+     * — the `DictationSession` construction immediately below has never been
+     * wrapped, so this function already had no exception contract to keep.
      */
-    private fun realSession(): SessionHandle? {
-        val settings = try {
-            SttSettings.create(this)
-        } catch (_: Throwable) {
-            return null
-        }
+    private fun realSession(): SessionHandle {
+        val settings = SttSettings.create(this)
         val real = DictationSession(
             context = this,
             settings = settings,
