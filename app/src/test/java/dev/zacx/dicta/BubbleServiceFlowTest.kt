@@ -544,6 +544,102 @@ class BubbleServiceFlowTest {
     }
 
     /**
+     * 🔴 The microphone held **by Dicta itself** must say so.
+     *
+     * One fixed string was toasted for every cause — *"the microphone may be in
+     * use by a call or another app"* — so the one cause the user can actually
+     * fix was reported as somebody else's fault, and `stt_mic_in_use` ("stop
+     * that recording first"), which already existed and says what to do, was
+     * never shown. The discriminator in production is `MicrophoneOwner`:
+     * `DictationSession.start()` releases on all of its own failures, so a mic
+     * still held after a refused start is held by another opener.
+     */
+    @Test
+    fun aCaptureRefusedBecauseDictaItselfHoldsTheMicSaysThat() {
+        fake.startResult = false
+        val service = start()
+        val otherOpener = Any()
+        MicrophoneOwner.acquire(otherOpener)
+        ShadowToast.reset()
+
+        bubble(service).performClick()
+
+        assertEquals(
+            "the user was told another app had the microphone while DICTA " +
+                "held it, and was given nothing to act on",
+            RuntimeEnvironment.getApplication().getString(R.string.stt_mic_in_use),
+            ShadowToast.getTextOfLatestToast(),
+        )
+    }
+
+    /**
+     * 🔴 A refused `startForeground(TYPE_MICROPHONE)` must not be reported as a
+     * microphone problem: the microphone was never touched. Driven through
+     * [BubbleService.foregroundPromoter] because Robolectric's
+     * `startForeground` cannot be made to refuse — see that field.
+     */
+    @Test
+    fun aRefusedForegroundPromotionSaysSoWithoutBlamingTheMicrophone() {
+        ShadowSettings.setCanDrawOverlays(true)
+        shadowOf(RuntimeEnvironment.getApplication())
+            .grantPermissions(Manifest.permission.RECORD_AUDIO)
+        val c = Robolectric.buildService(BubbleService::class.java)
+        controller = c
+        c.get().sessionFactory = { fake }
+        // At rest the promotion succeeds (or onCreate stops the service); the
+        // microphone-typed one is the one being refused.
+        c.get().foregroundPromoter = { recording -> !recording }
+        val service = c.create().get()
+        ShadowToast.reset()
+
+        bubble(service).performClick()
+
+        assertEquals(
+            "a refused foreground promotion was reported as the microphone " +
+                "being busy, which it was not — the mic is never reached on " +
+                "this path",
+            RuntimeEnvironment.getApplication()
+                .getString(R.string.bubble_foreground_denied),
+            ShadowToast.getTextOfLatestToast(),
+        )
+        assertEquals(
+            "the microphone was opened despite the refused promotion — the " +
+                "promotion is supposed to happen FIRST so an FGS is never " +
+                "capturing without the microphone type",
+            0,
+            fake.starts,
+        )
+    }
+
+    /**
+     * 🔴 Control for the three tests above: the three messages must be
+     * **distinct strings**.
+     *
+     * Without this they could be asserting three identical values and pass
+     * whatever `messageFor` does — the same shape as the `MIN_RECORDING_MS = 0`
+     * fixture that survived a green suite on this PR.
+     */
+    @Test
+    fun theThreeCaptureFailureMessagesAreDistinct() {
+        val app = RuntimeEnvironment.getApplication()
+        val messages = listOf(
+            app.getString(R.string.bubble_capture_failed),
+            app.getString(R.string.bubble_foreground_denied),
+            app.getString(R.string.stt_mic_in_use),
+        )
+        assertEquals(
+            "two of the three capture-failure messages are the same string, so " +
+                "the tests that tell them apart cannot see a wrong mapping",
+            3,
+            messages.toSet().size,
+        )
+        assertTrue(
+            "a blank failure message is a silent failure with extra steps",
+            messages.none { it.isBlank() },
+        )
+    }
+
+    /**
      * Positive control for the toast harness: a *successful* capture must NOT
      * report a failure. Without this, the assertion above could be reading a
      * toast the service shows unconditionally.

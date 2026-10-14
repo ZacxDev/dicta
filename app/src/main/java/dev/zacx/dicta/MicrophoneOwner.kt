@@ -3,8 +3,8 @@ package dev.zacx.dicta
 import java.util.concurrent.atomic.AtomicReference
 
 /**
- * 🔴 Process-wide **microphone ownership**: at most one [DictationSession] may
- * hold the mic, and a second one is refused rather than silently ruined.
+ * 🔴 Process-wide **microphone ownership**: at most one capture in this process
+ * may hold the mic, and a second one is refused rather than silently ruined.
  *
  * ## Why an enforced holder and not another flag
  *
@@ -30,16 +30,31 @@ import java.util.concurrent.atomic.AtomicReference
  *
  * A register/unregister singleton, following [OverlayVisibility] — which exists
  * for the same cross-component problem in the same process. Unit-testable, and
- * it cannot leak a destroyed component because the token is released by
- * `DictationSession.stop()`/`destroy()` and the holder keeps no other state.
+ * it cannot leak a destroyed component because every opener releases on the way
+ * down and the holder keeps no other state.
  *
  * ## What ownership means
  *
- * **The microphone is open.** Acquired in [DictationSession.start] before any
- * platform call, released as soon as capture ends — `stop()`, a capture error,
- * or `destroy()`. It is deliberately *not* held for the upload: the bytes are
- * already on disk by then and the next recording must not be blocked by a POST
- * that is still retrying.
+ * **The microphone is open**, by whichever client opened it. There are two, and
+ * both acquire:
+ *
+ *  * [DictationSession] — one `AudioRecord`. Acquired in
+ *    [DictationSession.start] before any platform call, released as soon as
+ *    capture ends (`stop()`, a capture error, or `destroy()`). It is
+ *    deliberately *not* held for the upload: the bytes are already on disk by
+ *    then and the next recording must not be blocked by a POST that is still
+ *    retrying.
+ *  * `DictateActivity`'s phone-only path — a bare [SpeechHelper], where
+ *    **`SpeechRecognizer` opens the microphone itself**. It is the degradation
+ *    path (no `AndroidKeyStore`, or capture refused), so it is reached by the
+ *    *error* route, which is exactly how an opener that does not register ends
+ *    up competing with one that does. Acquired around `helper.start()` with the
+ *    activity as the token, released when the recogniser stops, finishes,
+ *    errors or is destroyed.
+ *
+ * 🔴 So "`isHeld` is false" means *no client in this process has the mic*, not
+ * merely "no `DictationSession` has it". That distinction is the whole reason
+ * this object is not a field on `DictationSession`.
  */
 object MicrophoneOwner {
 
@@ -47,16 +62,32 @@ object MicrophoneOwner {
     private val holder = AtomicReference<Any?>(null)
 
     /**
-     * Takes ownership for [owner].
+     * Takes ownership for [owner]: a plain compare-and-set against "free".
      *
-     * @return true when [owner] now holds the microphone (including when it
-     *   already did — acquire is re-entrant for the same token, because
-     *   `start()` on an already-recording session is a no-op that must still
-     *   report success). False when **somebody else** holds it, which the
-     *   caller must turn into a reportable failure rather than a recording.
+     * 🔴 **Not re-entrant, and deliberately not.** It used to be
+     * (`|| holder.get() === owner`), documented as needed because "`start()` on
+     * an already-recording session is a no-op that must still report success" —
+     * which was **false**: [DictationSession.start] returns at its
+     * `if (recording.get()) return true` check *before* reaching `acquire`, so
+     * that case never got here. No production path reached the clause; only a
+     * test did, repeating the same wrong reason. Rather than invent a better
+     * reason for it, it is gone.
+     *
+     * Every opener therefore arrives here holding nothing, which all of them
+     * already did. `DictationSession.start()`: the refused-acquire branch never
+     * took it, the capture-failure branch releases what it took, and
+     * `stop()`/`destroy()` release. `DictateActivity`'s phone-only path tears
+     * the previous recogniser down — which releases — before taking the mic for
+     * the next one. A caller that ever
+     * genuinely needs "I may already hold this" must say so at its own call
+     * site with [isHeldBy]; it must not come back and rely on a silent
+     * re-entrancy here.
+     *
+     * @return true when [owner] now holds the microphone. False when it is
+     *   held by anybody at all — including [owner] itself — which the caller
+     *   must turn into a reportable failure rather than a recording.
      */
-    fun acquire(owner: Any): Boolean =
-        holder.compareAndSet(null, owner) || holder.get() === owner
+    fun acquire(owner: Any): Boolean = holder.compareAndSet(null, owner)
 
     /**
      * Releases ownership held by [owner]. A no-op when [owner] is not the
@@ -74,17 +105,26 @@ object MicrophoneOwner {
     fun isHeldBy(owner: Any): Boolean = holder.get() === owner
 
     /**
-     * True when the microphone is held by **somebody other than** [candidate]
-     * (and false when it is free, or when [candidate] is the holder).
+     * True when the microphone is held by **somebody other than** any of
+     * [mine] (and false when it is free, or when one of [mine] is the holder).
      *
-     * The predicate callers that are about to open a microphone want: "is
-     * starting a capture now going to collide". Expressed once here rather
-     * than open-coded as `isHeld && !isHeldBy(x)` at each site, because a
-     * predicate spelled at N sites is typically wrong at N−1 of them.
+     * The predicate a surface about to open a microphone wants: "is starting a
+     * capture here going to collide with a capture that is not one of mine".
+     * Variadic because a surface can have more than one opener and therefore
+     * more than one token: `DictateActivity` has two — its [DictationSession]
+     * and, on the phone-only path, the activity itself — and the question it
+     * has to ask is about the pair, not about either one.
+     *
+     * ⚠ It has exactly **one** call site (`DictateActivity.startDictation`),
+     * and [isHeld]/[isHeldBy] have none outside tests and `BubbleService`'s
+     * failure classification. This is therefore *not* a predicate consolidated
+     * across N sites — an earlier version of this comment claimed that, and it
+     * was never true. It lives here because the holder's representation is
+     * private, not because it is shared.
      */
-    fun isHeldByOther(candidate: Any?): Boolean {
+    fun isHeldByOtherThan(vararg mine: Any?): Boolean {
         val current = holder.get() ?: return false
-        return current !== candidate
+        return mine.none { it === current }
     }
 
     /** Test seam only. */

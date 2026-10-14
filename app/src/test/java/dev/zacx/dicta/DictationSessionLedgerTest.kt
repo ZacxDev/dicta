@@ -30,16 +30,30 @@ import java.io.File
  * It fails when that set **grows or shrinks**, so a new recording surface
  * forces a deliberate decision here rather than inheriting a silent zero-fill.
  *
- * 🔴 The precondition in the failure message below — "make sure it cannot run
- * while another session holds the mic" — used to be a *request to the reader*
- * and nothing more: the ledger was updated when `BubbleService` was added, and
- * the mutual exclusion it asks for was never built. It now exists, as
- * [MicrophoneOwner]: `DictationSession.start()` acquires it and **fails** if it
- * is already held, so a surface added later is refused rather than silently
- * fed zeros, whether or not whoever added it read this file.
- * `MicrophoneOwnershipTest` is where that is pinned. This ledger remains the
- * place a new owner is declared deliberately; it is no longer the only thing
- * standing between a new owner and a corrupted recording.
+ * 🔴 **The scope of what this ledger can promise**, stated precisely because an
+ * earlier version of this comment overstated it.
+ *
+ * It said the mutual exclusion "now exists… whether or not whoever added it read
+ * this file". That was **false for any `SpeechRecognizer`-based opener**, and
+ * such an opener is not even a member here, because this ledger greps for
+ * `DictationSession(`. `DictateActivity.startPhoneOnlyDictation` was exactly
+ * that: it opened the microphone through `SpeechHelper` with no acquire at all,
+ * and nothing in this file could see it.
+ *
+ * What is true now: `DictationSession.start()` acquires [MicrophoneOwner] and
+ * **fails** if it is already held, *and* the phone-only recogniser acquires it
+ * too, so the two openers exclude each other in both directions
+ * ([MicOpenerSeamTest] is where that is pinned, and
+ * `MicrophoneOwnershipTest` where each surface's refusal is). What this ledger
+ * does is narrower and still worth having: it makes the **set of openers** a
+ * declared decision, so a new one cannot arrive unnoticed. It does not and
+ * cannot check that a new opener acquires anything — only a behavioural test
+ * of that opener can.
+ *
+ * 🔴 Hence [theDeclaredSetOfMicrophoneOpenersIsUnchanged] below, which covers
+ * openers rather than only session constructions: a file that constructs a
+ * [MicCapture] or a bare [SpeechHelper] opens a microphone just as surely as
+ * one that constructs a session, and the one that bit us was of the second kind.
  *
  * 🔴 `DictationSession.kt` is deliberately **not** a member, even though it
  * contains the text `DictationSession(`: that occurrence is the type's own
@@ -73,6 +87,88 @@ class DictationSessionLedgerTest {
             listOf("BubbleService.kt", "DictateActivity.kt"),
             constructors,
         )
+    }
+
+    /**
+     * 🔴 The wider ledger: every file that constructs **a microphone client**.
+     *
+     * Three types open one, directly or by handing the platform a descriptor:
+     * [DictationSession] (which owns a [MicCapture]), [MicCapture] itself (the
+     * `AudioRecord`), and [SpeechHelper] (where `SpeechRecognizer` opens the
+     * mic itself unless it is given a shared source). The set:
+     *
+     *  * `BubbleService.kt` — the bubble's session.
+     *  * `DictateActivity.kt` — the card's session, **and** the phone-only
+     *    `SpeechHelper` that opens the microphone itself. That second opener is
+     *    the one the session-only ledger above could not see.
+     *  * `DictationSession.kt` — its own `MicCapture`, and the `SpeechHelper`
+     *    it feeds from that capture's pipe rather than from the microphone.
+     *
+     * 🔴 Membership is **not** evidence that a member acquires
+     * [MicrophoneOwner] — a text scan cannot check that, and claiming it could
+     * is how the overstatement in this file's header happened. Growth of this
+     * set is a prompt to go and write the behavioural test, not a substitute
+     * for one.
+     */
+    @Test
+    fun theDeclaredSetOfMicrophoneOpenersIsUnchanged() {
+        val openers = sourceDir().listFiles { f -> f.name.endsWith(".kt") }
+            .orEmpty()
+            .filter { f -> OPENS_MICROPHONE.containsMatchIn(stripComments(f.readText())) }
+            .map { it.name }
+            .sorted()
+
+        assertEquals(
+            "the set of files that construct a microphone client changed. " +
+                "Every one of them must either acquire MicrophoneOwner before " +
+                "it opens the mic, or be fed from a client that does (the " +
+                "SpeechHelper inside DictationSession is given MicCapture's " +
+                "pipe, not the microphone). Two concurrent openers do NOT " +
+                "error — Android feeds one of them exact zeros, which surfaces " +
+                "as an empty or invented transcript. Add yours here, then go " +
+                "write the behavioural test: this scan cannot tell whether it " +
+                "acquires anything.",
+            listOf("BubbleService.kt", "DictateActivity.kt", "DictationSession.kt"),
+            openers,
+        )
+    }
+
+    @Test
+    fun theOpenerPatternSeesEveryClientAndNoneOfTheMereMentions() {
+        // 🔴 Positive control, for the same reason the session pattern has one:
+        // until this passes, the ledger above is a fact about a regex.
+        val calls = """
+            class X {
+                fun a() = DictationSession(context = this, settings = s, callbacks = c)
+                fun b() = MicCapture(MicListener(), file)
+                fun c() = SpeechHelper (ctx, listener, sharedSource = source)
+                fun d() = SpeechHelper(
+                    this,
+                )
+            }
+        """.trimIndent()
+        assertEquals(
+            "the pattern must see all three microphone-client types, however " +
+                "their arguments are spelled",
+            4,
+            OPENS_MICROPHONE.findAll(stripComments(calls)).count(),
+        )
+
+        val nonCalls = listOf(
+            "// SpeechHelper(ctx, l) <- only a comment",
+            "class SpeechHelper(",
+            "class MicCapture(",
+            "private var speech: SpeechHelper? = null",
+            "private val listener: MicCapture.Listener",
+            "object : SpeechHelper.Listener {",
+        )
+        for (sample in nonCalls) {
+            assertFalse(
+                "the pattern fired on something that opens no microphone, so " +
+                    "the ledger would count files that have none: <$sample>",
+                OPENS_MICROPHONE.containsMatchIn(stripComments(sample)),
+            )
+        }
     }
 
     @Test
@@ -144,6 +240,20 @@ class DictationSessionLedgerTest {
          * assertion would be pinning a constant.
          */
         val CONSTRUCTS_SESSION = Regex("""(?<!class )DictationSession\s*\(""")
+
+        /**
+         * A construction of any of the three microphone-client types, with the
+         * same `class ` lookbehind so each type's own declaration does not make
+         * its file a member and pin a constant.
+         *
+         * `SpeechHelper.Listener` and `MicCapture.Listener` are excluded by the
+         * `\s*\(` requirement — a qualified type reference has a `.` where the
+         * paren would be — and the `private val listener: MicCapture.Listener`
+         * shape by the same token. Both are pinned in
+         * [theOpenerPatternSeesEveryClientAndNoneOfTheMereMentions].
+         */
+        val OPENS_MICROPHONE =
+            Regex("""(?<!class )(DictationSession|MicCapture|SpeechHelper)\s*\(""")
 
         fun stripComments(src: String): String = src
             .replace(Regex("//.*"), "")

@@ -90,10 +90,19 @@ class MicrophoneOwnershipTest {
                 "whole point of the holder is that this cannot happen",
             MicrophoneOwner.acquire(second),
         )
-        assertTrue(
-            "acquire must be re-entrant for the same owner: start() on an " +
-                "already-recording session is a no-op that still reports success",
+        assertFalse(
+            "acquire must be a plain compare-and-set: a holder asking again " +
+                "gets false. It used to be re-entrant, justified by a case " +
+                "that cannot reach it (start() returns at its recording check " +
+                "BEFORE acquire), so the clause was removed rather than " +
+                "re-justified. Nothing in production asks twice — every opener " +
+                "releases first — and this pins that nobody quietly puts the " +
+                "re-entrancy back and starts relying on it.",
             MicrophoneOwner.acquire(first),
+        )
+        assertTrue(
+            "a refused re-acquire must not have disturbed the holder",
+            MicrophoneOwner.isHeldBy(first),
         )
 
         MicrophoneOwner.release(second)
@@ -113,23 +122,35 @@ class MicrophoneOwnershipTest {
     }
 
     @Test
-    fun isHeldByOtherIsFalseForTheHolderItselfAndForAFreeMicrophone() {
+    fun isHeldByOtherThanIsFalseForEveryTokenTheCallerOwns() {
         val owner = Any()
+        val secondOpener = Any()
         val stranger = Any()
-        assertFalse("a free microphone is held by nobody", MicrophoneOwner.isHeldByOther(owner))
+        assertFalse(
+            "a free microphone is held by nobody",
+            MicrophoneOwner.isHeldByOtherThan(owner),
+        )
         MicrophoneOwner.acquire(owner)
         assertFalse(
             "the holder must not be refused its own microphone, or toggling " +
                 "the card's mic button off and on again would be refused",
-            MicrophoneOwner.isHeldByOther(owner),
+            MicrophoneOwner.isHeldByOtherThan(owner),
+        )
+        assertFalse(
+            "a caller with TWO openers must not be refused by its own second " +
+                "token — DictateActivity passes its session AND itself, and " +
+                "refusing either would make the card unable to restart a " +
+                "dictation it owns",
+            MicrophoneOwner.isHeldByOtherThan(secondOpener, owner),
         )
         assertTrue(
-            "a mic held by someone else must read as taken",
-            MicrophoneOwner.isHeldByOther(stranger),
+            "a mic held by someone else must read as taken, however many of " +
+                "the caller's own tokens are listed",
+            MicrophoneOwner.isHeldByOtherThan(stranger, secondOpener),
         )
         assertTrue(
             "null is not the holder, so an un-started surface must be refused",
-            MicrophoneOwner.isHeldByOther(null),
+            MicrophoneOwner.isHeldByOtherThan(null),
         )
     }
 
@@ -372,8 +393,14 @@ class MicrophoneOwnershipTest {
      * is a real device state and the documented degradation — the card goes
      * straight to `startPhoneOnlyDictation()`, where **SpeechRecognizer opens
      * the microphone itself**. No `DictationSession` exists on that path, so
-     * `MicrophoneOwner` has nothing to refuse and the check has to be at the
-     * call site. This is the case the remote branch's refusal cannot cover.
+     * the check has to be at the call site; this is the case the remote
+     * branch's refusal cannot cover.
+     *
+     * 🔴 This is the *refusing* direction only. That the phone-only path also
+     * **registers**, so an opener elsewhere is refused while it listens, is
+     * the other direction and lives in [MicOpenerSeamTest] — it was missing
+     * entirely, and a note here claiming the holder had "nothing to refuse"
+     * read as though it did not need to exist.
      */
     @Test
     fun withNoSettingsThePhoneRecogniserIsStillRefusedTheHeldMicrophone() {

@@ -146,6 +146,19 @@ class BubbleService : Service() {
     internal var sessionFactory: ((DictationSession.Callbacks) -> SessionHandle)? = null
 
     /**
+     * Swappable foreground promotion.
+     *
+     * The one failure the platform cannot be made to produce here: Robolectric's
+     * `startForeground` records the call and never refuses, so without this seam
+     * `Failure.FOREGROUND_DENIED` is unreachable from a test and the message it
+     * maps to is pinned by nothing — which is exactly how all three causes came
+     * to share one wrong string. `internal` and set before `onCreate`, like
+     * [sessionFactory]; the argument is the `recording` flag, so a test can
+     * refuse the microphone promotion while letting the at-rest one through.
+     */
+    internal var foregroundPromoter: ((Boolean) -> Boolean)? = null
+
+    /**
      * What the service needs from a recording, and nothing more.
      *
      * [submit] and [discard] are separate operations rather than
@@ -347,8 +360,10 @@ class BubbleService : Service() {
                 // 🔴 The one effect whose absence WAS the bug: see
                 // BubbleDictation.Effect.ReportCaptureFailed. A tap that
                 // silently does nothing is indistinguishable from a dead app.
-                BubbleDictation.Effect.ReportCaptureFailed ->
-                    toast(R.string.bubble_capture_failed)
+                // The cause decides the message — one string for all three
+                // named the wrong cause on two of them.
+                is BubbleDictation.Effect.ReportCaptureFailed ->
+                    toast(messageFor(effect.failure))
                 // Nothing on screen, deliberately: the user's second tap landed
                 // inside the debounce window, which means they did not mean to
                 // make two. A toast here would announce their own slip.
@@ -362,6 +377,30 @@ class BubbleService : Service() {
         // nothing on screen refers to and nothing can stop.
         if (machine.state == BubbleDictation.State.IDLE) reclaimSession()
         renderState()
+    }
+
+    /**
+     * The one mapping from a cause to what the user is told.
+     *
+     * 🔴 Exhaustive `when` over [BubbleDictation.Failure] on purpose: a new
+     * cause then cannot compile until somebody decides what it says. The
+     * previous version toasted `bubble_capture_failed` — "the microphone may be
+     * in use by a call or another app" — for every cause, so a user whose own
+     * bubble held the mic was told another app was at fault and given nothing
+     * to act on, and a refused `startForeground` was reported as a microphone
+     * problem. `stt_mic_in_use` already existed, with the accurate copy, and
+     * was never reached from here.
+     *
+     * The alternative considered and rejected: have `applyEffects` prefer the
+     * last [BubbleSessionBus] status. The bus is reset at the start of every
+     * recording and nothing renders it while no card is open — which is the
+     * defect `ReportCaptureFailed` exists to fix — so that would make the
+     * message depend on whether a card happened to be on screen.
+     */
+    private fun messageFor(failure: BubbleDictation.Failure): Int = when (failure) {
+        BubbleDictation.Failure.MIC_IN_USE -> R.string.stt_mic_in_use
+        BubbleDictation.Failure.FOREGROUND_DENIED -> R.string.bubble_foreground_denied
+        BubbleDictation.Failure.CAPTURE_UNAVAILABLE -> R.string.bubble_capture_failed
     }
 
     /**
@@ -396,7 +435,13 @@ class BubbleService : Service() {
         // means a refused promotion costs us the recording rather than the
         // process.
         if (!promoteForeground(recording = true)) {
-            applyEffects(machine.on(BubbleDictation.Event.CaptureFailed))
+            applyEffects(
+                machine.on(
+                    BubbleDictation.Event.CaptureFailed(
+                        BubbleDictation.Failure.FOREGROUND_DENIED
+                    )
+                )
+            )
             return
         }
         // Reclaim the previous recording's executor before opening another.
@@ -410,7 +455,24 @@ class BubbleService : Service() {
         if (handle == null || !handle.start()) {
             runCatching { handle?.destroy() }
             promoteForeground(recording = false)
-            applyEffects(machine.on(BubbleDictation.Event.CaptureFailed))
+            // 🔴 Which of the two failures this was, decided from the state
+            // that distinguishes them rather than from a returned enum nothing
+            // branched on. Our own session cannot be the holder by the time we
+            // get here: a refused acquire never took the mic, a capture failure
+            // releases it, and the `destroy()` above releases it again. So a mic
+            // still held HERE is held by somebody else — the card's session or
+            // its phone-only recogniser — which is exactly MIC_IN_USE. The other
+            // causes (no encoder, an AudioRecord that would not initialise, no
+            // settings store) take nothing, so a free mic means one of those.
+            // If one of those coincides with another opener holding the mic,
+            // MIC_IN_USE wins: both statements are true and that is the one the
+            // user can act on.
+            val failure = if (MicrophoneOwner.isHeld) {
+                BubbleDictation.Failure.MIC_IN_USE
+            } else {
+                BubbleDictation.Failure.CAPTURE_UNAVAILABLE
+            }
+            applyEffects(machine.on(BubbleDictation.Event.CaptureFailed(failure)))
             return
         }
         session = handle
@@ -548,8 +610,11 @@ class BubbleService : Service() {
             // 🔴 Both failure modes — the microphone already held, and capture
             // unable to start — are "no recording" here, and both must reach
             // the user: either way the machine goes back to IDLE via
-            // Event.CaptureFailed, which now emits Effect.ReportCaptureFailed.
-            // The session has already put the specific reason on the bus.
+            // Event.CaptureFailed, and `startRecording` tells the two apart
+            // from MicrophoneOwner so each gets its own message. (It used to
+            // say "the session has already put the specific reason on the bus"
+            // — true, and useless: nothing renders the bus while no card is
+            // open, which is the whole case this report exists for.)
             override fun start(): Boolean = real.start()
 
             override fun submit() = real.stop()
@@ -642,7 +707,10 @@ class BubbleService : Service() {
      * @return false when the platform refused the promotion, which the caller
      *   turns into a failed recording rather than a dead service.
      */
-    private fun promoteForeground(recording: Boolean): Boolean = runCatching {
+    private fun promoteForeground(recording: Boolean): Boolean =
+        foregroundPromoter?.invoke(recording) ?: platformPromoteForeground(recording)
+
+    private fun platformPromoteForeground(recording: Boolean): Boolean = runCatching {
         val notif = buildNotification(
             if (recording) R.string.bubble_recording else R.string.bubble_active
         )

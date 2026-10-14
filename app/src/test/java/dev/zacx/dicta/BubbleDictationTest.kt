@@ -212,25 +212,46 @@ class BubbleDictationTest {
                 "held by a call, or no usable encoder, or startForeground " +
                 "refused, the tap then does NOTHING the user can see, which is " +
                 "indistinguishable from the app being dead.",
-            listOf(BubbleDictation.Effect.ReportCaptureFailed),
-            machine.on(BubbleDictation.Event.CaptureFailed),
+            listOf(
+                BubbleDictation.Effect.ReportCaptureFailed(
+                    BubbleDictation.Failure.CAPTURE_UNAVAILABLE
+                )
+            ),
+            machine.on(
+                BubbleDictation.Event.CaptureFailed(
+                    BubbleDictation.Failure.CAPTURE_UNAVAILABLE
+                )
+            ),
         )
         assertEquals(BubbleDictation.State.IDLE, machine.state)
         // And the bubble is usable again rather than wedged.
         assertEquals(listOf(BubbleDictation.Effect.StartRecording), tap())
     }
 
+    /**
+     * 🔴 The cause must survive the machine unchanged.
+     *
+     * One fixed message was toasted for all three causes, which named the wrong
+     * one twice out of three times. The machine is where the cause could get
+     * flattened — it is the only thing between the shell's knowledge of which
+     * step refused and the shell's choice of what to say — so every value is
+     * driven through, not just the one the first test happened to use. A
+     * handler that returned a constant would pass with one value and fail here.
+     */
     @Test
-    fun aSessionErrorReturnsToIdleAndSaysSo() {
-        tap()
-        clock += 1_000
-        assertEquals(
-            "a terminal session error was as silent as a failed capture used " +
-                "to be",
-            listOf(BubbleDictation.Effect.ReportCaptureFailed),
-            machine.on(BubbleDictation.Event.SessionFailed),
-        )
-        assertEquals(BubbleDictation.State.IDLE, machine.state)
+    fun theFailureCauseIsCarriedThroughUnchangedForEveryCause() {
+        for (failure in BubbleDictation.Failure.values()) {
+            val fresh = BubbleDictation(now = { clock })
+            fresh.on(BubbleDictation.Event.BubbleTapped(micGranted = true))
+            assertEquals(
+                "the machine rewrote or dropped the cause of a failed " +
+                    "capture, so the shell cannot tell the user which of the " +
+                    "three actually happened: $failure",
+                listOf(BubbleDictation.Effect.ReportCaptureFailed(failure)),
+                fresh.on(BubbleDictation.Event.CaptureFailed(failure)),
+            )
+            assertEquals(BubbleDictation.State.IDLE, fresh.state)
+        }
     }
 
     @Test

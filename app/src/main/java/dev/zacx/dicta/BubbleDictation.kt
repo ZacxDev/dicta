@@ -51,6 +51,48 @@ class BubbleDictation(
         TRANSCRIBING,
     }
 
+    /**
+     * 🔴 Why a capture did not start — because the three causes are **three
+     * different messages**, and one fixed string for all of them told the user
+     * the wrong thing twice out of three times.
+     *
+     * The shipped version toasted *"the microphone may be in use by a call or
+     * another app"* whenever a start failed. For [MIC_IN_USE] that blames
+     * another app for something Dicta is doing, and leaves the user with
+     * nothing to act on — the accurate copy (`stt_mic_in_use`, "stop that
+     * recording first") already existed and was not shown. For
+     * [FOREGROUND_DENIED] the microphone is not involved at all.
+     *
+     * 🔴 Not the deleted `StartOutcome` enum coming back: that type was
+     * correctly removed because **nothing branched on it**. This one is
+     * branched on, in exactly one place — `BubbleService.messageFor` — whose
+     * `when` is exhaustive, so a fourth cause cannot be added without choosing
+     * what it says.
+     */
+    enum class Failure {
+        /**
+         * Another capture in this process holds the microphone: the bubble,
+         * the card's own session, or the card's phone-only recogniser. The one
+         * cause the user can fix directly, and the one the old single string
+         * actively misdescribed.
+         */
+        MIC_IN_USE,
+
+        /**
+         * `startForeground(TYPE_MICROPHONE)` was refused, so the recording was
+         * abandoned before the microphone was touched. Nothing to do with the
+         * mic being busy.
+         */
+        FOREGROUND_DENIED,
+
+        /**
+         * The capture itself could not start: no usable encoder, an
+         * `AudioRecord` that would not initialise, or no settings store to
+         * build a session from.
+         */
+        CAPTURE_UNAVAILABLE,
+    }
+
     sealed interface Event {
         /**
          * The user tapped the bubble.
@@ -66,14 +108,15 @@ class BubbleDictation(
         /** The cancel button under the bubble. Aborts; nothing is uploaded. */
         object CancelTapped : Event
 
-        /** Capture could not start at all (no encoder, mic busy, …). */
-        object CaptureFailed : Event
+        /**
+         * Capture could not start at all, and [failure] says why — the shell
+         * knows which of its own steps refused, and the user needs to be told
+         * which.
+         */
+        data class CaptureFailed(val failure: Failure) : Event
 
         /** The runaway cap fired. */
         object MaxDurationReached : Event
-
-        /** The session reported a terminal error. */
-        object SessionFailed : Event
 
         /** A transcript (or a terminal "nothing came back") landed. */
         object TranscriptSettled : Event
@@ -121,8 +164,12 @@ class BubbleDictation(
          * is indistinguishable from the app being dead, so the report is now
          * explicit. [Effect.ReportMaxDuration] already had one; this is the
          * strictly worse case that did not.
+         *
+         * 🔴 [failure] exists because the first version of this effect carried
+         * no cause and the shell toasted one fixed string for all three — which
+         * named the wrong cause on two of them. See [Failure].
          */
-        object ReportCaptureFailed : Effect
+        data class ReportCaptureFailed(val failure: Failure) : Effect
 
         /** A tap arrived too soon after the last one and was swallowed. */
         object IgnoredAsTooFast : Effect
@@ -147,8 +194,7 @@ class BubbleDictation(
     fun on(event: Event): List<Effect> = when (event) {
         is Event.BubbleTapped -> onTap(event.micGranted)
         Event.CancelTapped -> onCancel()
-        Event.CaptureFailed -> onCaptureFailed()
-        Event.SessionFailed -> onCaptureFailed()
+        is Event.CaptureFailed -> onCaptureFailed(event.failure)
         Event.MaxDurationReached -> onMaxDuration()
         Event.TranscriptSettled -> toIdle()
     }
@@ -262,10 +308,16 @@ class BubbleDictation(
      * and a `state == RECORDING` guard here would be a condition that is
      * always true — which is to say untestable, and one refactor away from
      * silently swallowing the only message the user gets.
+     *
+     * The cause is carried through unexamined: the shell knows which of its
+     * own steps refused and this class cannot, so deciding here would be
+     * guessing. There is deliberately no second "the session failed
+     * mid-recording" event — one existed, mapped to this same handler, and was
+     * emitted by nothing at all.
      */
-    private fun onCaptureFailed(): List<Effect> {
+    private fun onCaptureFailed(failure: Failure): List<Effect> {
         state = State.IDLE
-        return listOf(Effect.ReportCaptureFailed)
+        return listOf(Effect.ReportCaptureFailed(failure))
     }
 
     companion object {

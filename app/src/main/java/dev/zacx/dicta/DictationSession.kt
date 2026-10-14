@@ -115,17 +115,51 @@ class DictationSession(
      */
     private val destroyed = AtomicBoolean(false)
 
-    /** True once [destroy] has run. No callback fires after that. */
+    /** True once [destroy] has run. */
     val isDestroyed: Boolean get() = destroyed.get()
 
     /**
-     * Every callback hop to the main thread goes through here, so "a destroyed
-     * session is silent" is a property of the one route rather than of N
-     * remembered checks. Gated at **delivery** time, not post time: the whole
-     * hazard is a message that was posted while alive and runs after death.
+     * Every callback that is *deferred* goes through [postToMain] or
+     * [postToMainDelayed], so "a destroyed session delivers nothing late" is a
+     * property of two routes in this file rather than of N remembered checks.
+     * Gated at **delivery** time, not post time: the whole hazard is a message
+     * that was posted while alive and runs after death.
+     *
+     * 🔴 The precise claim, because an earlier version of this comment
+     * overstated it. Three callbacks are *not* deferred — the `onStatus` calls
+     * in [start] and the `onRecordingStopped` in [stop] — and they are instead
+     * on paths that cannot run after `destroy()`: `start()` returns at its
+     * `destroyed` check before either status, and `stop()`'s is explicitly
+     * guarded. The recogniser's own `onPartial`/`onFinal` used to be a fourth,
+     * calling `callbacks.onTranscript` directly (including `isFinal = true`)
+     * from a route with no gate at all; they are routed through [postToMain]
+     * now, which is what makes the sentence above true for every consumer
+     * rather than only for the ones that keep a generation counter of their
+     * own.
      */
     private fun postToMain(block: () -> Unit) {
         main.post { if (!destroyed.get()) block() }
+    }
+
+    /**
+     * [postToMain] with a delay. Separate only because `Handler.postDelayed`
+     * is a different call; the gate is identical and is at delivery.
+     *
+     * ⚠ **Measured: this gate is pinned by nothing, and cannot honestly be.**
+     * A mutation removing the `destroyed` check here leaves the whole suite
+     * green (336 tests). Its one caller is the watchdog in
+     * `MicListener.onFirstAudio`, and that block is *already* inert after
+     * `destroy()` for a second reason: `destroy()` sets `capture` to null, so
+     * `tierFor` is handed `wroteNonZeroPcm = false` and never decides
+     * `REMOTE_ONLY_AFTER_TIMEOUT`. A test could only observe the check by
+     * re-planting a `capture` on a destroyed session — a state the code makes
+     * unreachable — which would be asserting against a fixture. So the check is
+     * kept as this route's contract, identical to [postToMain]'s, and is NOT
+     * counted as covered. (The open-coded check it replaced was equally
+     * unpinned; this is a measurement, not a regression.)
+     */
+    private fun postToMainDelayed(delayMs: Long, block: () -> Unit) {
+        main.postDelayed({ if (!destroyed.get()) block() }, delayMs)
     }
 
     /**
@@ -221,15 +255,30 @@ class DictationSession(
             object : SpeechHelper.Listener {
                 override fun onReady() {}
 
+                // 🔴 Both forwards go through postToMain, like every other
+                // callback here. They used to call `callbacks` directly — the
+                // one route out of this class with no `destroyed` gate on it,
+                // and the only one that can deliver `isFinal = true`. A
+                // destroyed session's late local final then reached whatever
+                // was listening: BubbleService happens to have a generation
+                // gate of its own, but DictateActivity.SessionCallbacks does
+                // not and writes the card's views.
                 override fun onPartial(text: String) {
                     sawPartial.set(true)
                     setTier(AudioCaptureLogic.Tier.LOCAL_PARTIALS_AND_REMOTE)
-                    callbacks.onTranscript(text, fromRemote = false, isFinal = false)
+                    postToMain {
+                        callbacks.onTranscript(text, fromRemote = false, isFinal = false)
+                    }
                 }
 
                 override fun onFinal(text: String) {
+                    // Not inside the post: this is the session's own state, and
+                    // the fallback ladder reads it from the worker thread when
+                    // the remote path gives up.
                     localTranscript = text
-                    callbacks.onTranscript(text, fromRemote = false, isFinal = true)
+                    postToMain {
+                        callbacks.onTranscript(text, fromRemote = false, isFinal = true)
+                    }
                 }
 
                 override fun onError(message: String) {
@@ -321,8 +370,9 @@ class DictationSession(
          * of the time.
          */
         override fun onFirstAudio() {
-            main.postDelayed({
-                if (destroyed.get()) return@postDelayed
+            // postToMainDelayed, not a second open-coded `destroyed` check:
+            // the gate belongs to the two posting routes, not to each caller.
+            postToMainDelayed(AudioCaptureLogic.FIRST_PARTIAL_TIMEOUT_MS) {
                 val decided = AudioCaptureLogic.tierFor(
                     sdkInt = sdkInt,
                     sawPartial = sawPartial.get(),
@@ -338,7 +388,7 @@ class DictationSession(
                         appContext.getString(R.string.stt_tier_remote_only)
                     )
                 }
-            }, AudioCaptureLogic.FIRST_PARTIAL_TIMEOUT_MS)
+            }
         }
 
         override fun onError(message: String) {
