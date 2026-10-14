@@ -407,7 +407,7 @@ class BubbleService : Service() {
      * defect `ReportCaptureFailed` exists to fix — so that would make the
      * message depend on whether a card happened to be on screen.
      */
-    private fun messageFor(failure: BubbleDictation.Failure): Int = when (failure) {
+    internal fun messageFor(failure: BubbleDictation.Failure): Int = when (failure) {
         BubbleDictation.Failure.MIC_IN_USE -> R.string.stt_mic_in_use
         BubbleDictation.Failure.FOREGROUND_DENIED -> R.string.bubble_foreground_denied
         BubbleDictation.Failure.CAPTURE_UNAVAILABLE -> R.string.bubble_capture_failed
@@ -466,7 +466,12 @@ class BubbleService : Service() {
         // 🔴 `if (factory != null)` rather than `?: realSession()`: the factory
         // is allowed to return null — that is how a test reaches the branch
         // below — and an elvis would silently fall through to the real session
-        // instead, which under Robolectric means a keystore that is not there.
+        // instead. Measured (mutant M21a): the elvis is **pinned**, because
+        // under Robolectric `realSession()` returns a NON-null handle whose
+        // `start()` then fails, so the two no-session tests see a different
+        // message. The earlier note here claimed the opposite — that Robolectric
+        // has no keystore, so the elvis would be unobservable — and that was
+        // wrong; `SttSettings.create` does not throw here.
         val factory = sessionFactory
         val handle =
             if (factory != null) factory(serviceCallbacks()) else realSession()
@@ -506,6 +511,13 @@ class BubbleService : Service() {
             // If one of those coincides with another opener holding the mic,
             // MIC_IN_USE wins: both statements are true and that is the one the
             // user can act on.
+            // 🔴 SETTINGS_UNAVAILABLE is the one exception, and it is decided
+            // above this line rather than here: it wins over MIC_IN_USE even
+            // when another opener holds the mic, because stopping that opener
+            // would not make the bubble work — the keystore refuses every
+            // attempt — so "stop that recording first" is an action that cannot
+            // succeed. Pinned by
+            // `noSettingsStoreOutranksAnotherOpenerHoldingTheMic`.
             val failure = if (MicrophoneOwner.isHeld) {
                 BubbleDictation.Failure.MIC_IN_USE
             } else {

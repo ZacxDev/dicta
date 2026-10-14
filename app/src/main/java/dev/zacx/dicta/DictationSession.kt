@@ -122,8 +122,8 @@ class DictationSession(
      * Every callback that is *deferred* goes through [postToMain] or
      * [postToMainDelayed], so "a destroyed session delivers nothing late" is a
      * property of two routes in this file rather than of N remembered checks.
-     * Gated at **delivery** time, not post time, so a message that was already
-     * queued when [destroy] ran cannot deliver.
+     * Gated at **delivery** time, not post time, so the check reads the
+     * session's state when the block would run rather than when it was posted.
      *
      * 🔴 That is *not* the whole hazard, which this sentence used to claim.
      * [destroy] calls `main.removeCallbacksAndMessages(null)`, so a message
@@ -156,7 +156,7 @@ class DictationSession(
      *
      * ⚠ **Measured: this gate is pinned by nothing, and cannot honestly be.**
      * A mutation removing the `destroyed` check here leaves the whole suite
-     * green. Two independent reasons, and the **stronger one is the handler**:
+     * green. Two independent reasons:
      *
      * 1. [destroy] calls `main.removeCallbacksAndMessages(null)`, which deletes
      *    every message this session has pending — including a delayed one that
@@ -167,11 +167,9 @@ class DictationSession(
      *    `capture` to null, so `tierFor` is handed `wroteNonZeroPcm = false`
      *    and never decides `REMOTE_ONLY_AFTER_TIMEOUT`.
      *
-     * Because of (1), observing this check needs **two** things a test cannot
-     * honestly arrange together: a post made *after* `destroy()` (nothing does
-     * that — every caller runs on a live session), *and* a re-planted
-     * `capture` to make the block's effect visible, which is a state the code
-     * makes unreachable. So the check is kept as this route's contract,
+     * Reason (2) is what makes the mutant survive: even a post that does land
+     * after `destroy()` runs a block that cannot observe anything, because
+     * `capture` is null. So the check is kept as this route's contract,
      * identical to [postToMain]'s, and is NOT counted as covered. (The
      * open-coded check it replaced was equally unpinned; this is a
      * measurement, not a regression.)

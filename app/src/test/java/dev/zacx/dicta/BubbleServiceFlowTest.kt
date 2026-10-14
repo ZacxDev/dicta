@@ -601,7 +601,14 @@ class BubbleServiceFlowTest {
             .grantPermissions(Manifest.permission.RECORD_AUDIO)
         val c = Robolectric.buildService(BubbleService::class.java)
         controller = c
-        c.get().sessionFactory = { null }
+        // 🔴 Counted, not just installed: the previous version of this test
+        // asserted `fake.starts == 0`, which could not fail — `fake` is never
+        // the factory here, so that number was 0 on entry and nothing in
+        // production could move it. This counts the seam instead, so the test
+        // can tell "the no-session branch was reached through the factory" from
+        // "the factory was never consulted at all".
+        var built = 0
+        c.get().sessionFactory = { built++; null }
         // 🔴 Recorded, not just allowed: this branch promotes the service to a
         // microphone-typed FGS *before* it tries to build a session, so it owes
         // a demotion on the way out. Without one, a keystore-less device is
@@ -618,6 +625,16 @@ class BubbleServiceFlowTest {
 
         bubble(service).performClick()
 
+        // Asserted FIRST so its red is attributable: every later assertion in
+        // this test also fails when the seam is bypassed, and JUnit reports
+        // only the first.
+        assertEquals(
+            "the session factory was not consulted exactly once, so this test " +
+                "did not reach the no-session branch through the seam it claims " +
+                "to drive",
+            1,
+            built,
+        )
         assertTrue(
             "the microphone-typed foreground promotion was never demoted " +
                 "after the session could not be built, so the device is left " +
@@ -645,10 +662,47 @@ class BubbleServiceFlowTest {
             app.getString(R.string.bubble_settings_unavailable) ==
                 app.getString(R.string.bubble_capture_failed),
         )
+    }
+
+    /**
+     * 🔴 The tie-break when **both** causes are true at once.
+     *
+     * A keystore-less device whose card has already degraded to phone-only and
+     * holds the microphone is a reachable state, and it satisfies the
+     * `MicrophoneOwner.isHeld` discriminator as well as the no-session one.
+     * `BubbleService` decides SETTINGS_UNAVAILABLE, deliberately: stopping the
+     * other opener would not make the bubble record, so "stop that recording
+     * first" names an action that cannot succeed. This pins that order, which
+     * is otherwise only a property of which `if` comes first.
+     */
+    @Test
+    fun noSettingsStoreOutranksAnotherOpenerHoldingTheMic() {
+        ShadowSettings.setCanDrawOverlays(true)
+        shadowOf(RuntimeEnvironment.getApplication())
+            .grantPermissions(Manifest.permission.RECORD_AUDIO)
+        val c = Robolectric.buildService(BubbleService::class.java)
+        controller = c
+        c.get().sessionFactory = { null }
+        val service = c.create().get()
+        val otherOpener = Any()
+        MicrophoneOwner.acquire(otherOpener)
+        // Without this the test could pass with the mic free, i.e. without the
+        // rival cause being true at all — which is not the tie-break.
+        assertTrue(
+            "the other opener did not get the microphone, so both causes are " +
+                "not true at once and this test pins nothing",
+            MicrophoneOwner.isHeldBy(otherOpener),
+        )
+        ShadowToast.reset()
+
+        bubble(service).performClick()
+
+        val app = RuntimeEnvironment.getApplication()
         assertEquals(
-            "a cause that produced no session must not have opened a capture",
-            0,
-            fake.starts,
+            "a keystore-less device was told to stop another recording, which " +
+                "would not help: the bubble cannot record on this device at all",
+            app.getString(R.string.bubble_settings_unavailable),
+            ShadowToast.getTextOfLatestToast(),
         )
     }
 
@@ -692,30 +746,31 @@ class BubbleServiceFlowTest {
     }
 
     /**
-     * 🔴 Control for the four tests above: the four messages must be
-     * **distinct strings**.
+     * 🔴 Control for the failure-message tests above: every `Failure` must map
+     * to a **distinct string**.
      *
      * Without this they could be asserting identical values and pass whatever
      * `messageFor` does — the same shape as the `MIN_RECORDING_MS = 0` fixture
      * that survived a green suite on this PR.
      *
-     * It is four and not three because `CAPTURE_UNAVAILABLE` was split: the
-     * no-settings cause used to share the capture-unavailable string, and with
-     * only three entries here that sharing was invisible to this control.
+     * 🔴 Enumerated from `Failure.values()` and the real `messageFor`, not from
+     * a hand-written list of string resources. The hand-written version went
+     * blind exactly once already on this PR: `CAPTURE_UNAVAILABLE` was split in
+     * two, the no-settings cause shared the capture-unavailable string, and a
+     * list with only three entries could not see the sharing. Driving the enum
+     * means the next split is caught without anybody remembering to extend a
+     * list.
      */
     @Test
-    fun theFourCaptureFailureMessagesAreDistinct() {
+    fun theCaptureFailureMessagesAreDistinct() {
         val app = RuntimeEnvironment.getApplication()
-        val messages = listOf(
-            app.getString(R.string.bubble_capture_failed),
-            app.getString(R.string.bubble_foreground_denied),
-            app.getString(R.string.bubble_settings_unavailable),
-            app.getString(R.string.stt_mic_in_use),
-        )
+        val service = start()
+        val messages = BubbleDictation.Failure.values()
+            .map { app.getString(service.messageFor(it)) }
         assertEquals(
-            "two of the four capture-failure messages are the same string, so " +
-                "the tests that tell them apart cannot see a wrong mapping",
-            4,
+            "two capture-failure causes map to the same string, so the tests " +
+                "that tell them apart cannot see a wrong mapping",
+            BubbleDictation.Failure.values().size,
             messages.toSet().size,
         )
         assertTrue(
