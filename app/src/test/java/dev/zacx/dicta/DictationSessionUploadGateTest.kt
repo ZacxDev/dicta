@@ -13,13 +13,14 @@ import org.robolectric.annotation.Config
 import java.io.File
 
 /**
- * 🔴 The **other half** of the silence gate.
+ * 🔴 The **other half** of the cancel button.
  *
- * [BubbleDictationTest] proves the state machine *decides* not to upload.
- * That decision is worth nothing if [DictationSession] uploads anyway, and the
- * two were tested in isolation: the machine with no session, the session never
- * at all. The defect would live exactly in the seam — "verified in isolation"
- * on both sides while the combined behaviour is broken.
+ * [BubbleDictationTest] proves the state machine *decides* not to upload — it
+ * emits `DiscardRecording` rather than `SubmitRecording`. That decision is
+ * worth nothing if [DictationSession] uploads anyway, and the two were tested
+ * in isolation: the machine with no session, the session never at all. The
+ * defect would live exactly in the seam — "verified in isolation" on both sides
+ * while the combined behaviour is broken.
  *
  * So this drives the session's real `onFinished` path, the one `MicCapture`
  * calls when a recording is complete, and counts whether the upload ladder was
@@ -122,10 +123,10 @@ class DictationSessionUploadGateTest {
 
         assertEquals(
             "a suppressed recording entered the upload path. This is the " +
-                "cancel button and the silence gate: the machine deciding not " +
-                "to upload is worth nothing if the session uploads anyway, and " +
-                "the near-silent audio the gate exists for comes back as long, " +
-                "confident, invented prose rather than as an error (issue #8).",
+                "cancel button: the machine deciding not to upload is worth " +
+                "nothing if the session uploads anyway, and 'nothing left the " +
+                "phone' is a promise the user acts on when they cancel a " +
+                "recording they did not mean to make.",
             emptyList<String>(),
             settle(counter),
         )

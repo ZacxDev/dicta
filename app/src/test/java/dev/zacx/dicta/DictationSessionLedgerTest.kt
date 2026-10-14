@@ -23,8 +23,6 @@ import java.io.File
  * `startDictation()` would construct exactly that second session. The guard is
  * therefore not "is the count small" but "is the SET what we decided":
  *
- *  * `DictationSession.kt` — its own declaration and, in the same file, nothing
- *    that constructs a second one.
  *  * `BubbleService.kt` — owns the session for the bubble flow.
  *  * `DictateActivity.kt` — still owns one for the tile / notification /
  *    in-app entry points, which open the card *before* any capture exists.
@@ -32,9 +30,15 @@ import java.io.File
  * It fails when that set **grows or shrinks**, so a new recording surface
  * forces a deliberate decision here rather than inheriting a silent zero-fill.
  *
- * Watched red on the pre-change tree, where the set was
- * `[DictateActivity.kt, DictationSession.kt]` — `BubbleService.kt` constructed
- * nothing because the bubble only ever started an activity.
+ * 🔴 `DictationSession.kt` is deliberately **not** a member, even though it
+ * contains the text `DictationSession(`: that occurrence is the type's own
+ * primary-constructor declaration, and [CONSTRUCTS_SESSION]'s `(?<!class )`
+ * lookbehind excludes it. Do not "reconcile" this list by adding the file — the
+ * assertion would go red. Re-measured by running the regex over both trees:
+ * `origin/main` yields `[DictateActivity.kt]` and `HEAD` yields
+ * `[BubbleService.kt, DictateActivity.kt]`. That difference is what the guard
+ * was watched red on: before the bubble flow, `BubbleService.kt` constructed
+ * nothing, because the bubble only ever started an activity.
  */
 class DictationSessionLedgerTest {
 

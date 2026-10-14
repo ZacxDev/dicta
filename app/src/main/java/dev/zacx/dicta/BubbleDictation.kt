@@ -5,13 +5,14 @@ package dev.zacx.dicta
  *
  * ## Why this is factored out
  *
- * The bubble flow is almost entirely decisions — which tap means what, whether
- * a recording is worth uploading, when a runaway recording has to be cut off —
- * and almost none of it can be exercised through the platform. `AudioRecord`,
- * `MediaCodec` and `SpeechRecognizer` have no usable Robolectric
- * implementations, and the bubble's pulse and the window geometry are pixels,
- * which Robolectric measures wrongly (`TextPaint.measureText` returns a flat
- * 1.0 px per character here regardless of text size). So the same split
+ * The bubble flow is almost entirely decisions — which tap means what, when a
+ * tap is too fast to have been meant, when a runaway recording has to be cut
+ * off — and almost none of it can be exercised through the platform.
+ * `AudioRecord`, `MediaCodec` and `SpeechRecognizer` have no usable
+ * Robolectric implementations, and the bubble's pulse and the window geometry
+ * are pixels, which Robolectric measures wrongly (`TextPaint.measureText`
+ * returns a flat 1.0 px per character here regardless of text size). So the
+ * same split
  * [AudioCaptureLogic] and [SttRetryPolicy] already use applies: the decisions
  * live here and are pinned by tests, the platform calls live in
  * [BubbleService] and are device evidence only.
@@ -65,9 +66,6 @@ class BubbleDictation(
         /** The cancel button under the bubble. Aborts; nothing is uploaded. */
         object CancelTapped : Event
 
-        /** A microphone level sample, `[0, 1]`. Drives the pulse AND the gate. */
-        data class LevelSampled(val level: Double) : Event
-
         /** Capture could not start at all (no encoder, mic busy, …). */
         object CaptureFailed : Event
 
@@ -91,8 +89,9 @@ class BubbleDictation(
         /**
          * Stop capture and let the finished recording be **uploaded**.
          *
-         * 🔴 Counted by the silence-gate tests: the number of these emitted is
-         * the number of upload attempts the flow can cause.
+         * Every stop that is not a cancel emits this: the machine does not
+         * inspect the audio, so the only thing that keeps a recording off the
+         * wire is the user asking for that with [DiscardRecording].
          */
         object SubmitRecording : Effect
 
@@ -102,12 +101,6 @@ class BubbleDictation(
         /** Open the card already showing "transcribing…". */
         object OpenOverlayTranscribing : Effect
 
-        /**
-         * The peak level never crossed [SILENCE_PEAK_FLOOR]. Tell the user
-         * plainly that nothing was heard and nothing was sent.
-         */
-        object ReportNothingHeard : Effect
-
         /** The duration cap cut the recording short; say so. */
         object ReportMaxDuration : Effect
 
@@ -116,15 +109,6 @@ class BubbleDictation(
     }
 
     var state: State = State.IDLE
-        private set
-
-    /**
-     * Highest level seen in the current recording. The silence gate reads this
-     * and nothing else — the same [DictationSession.Callbacks.onLevel] samples
-     * that drive the bubble's pulse, deliberately not a second pipeline, so the
-     * animation and the gate can never disagree about what was heard.
-     */
-    var peakLevel: Double = 0.0
         private set
 
     private var startedAtMs: Long = 0L
@@ -143,7 +127,6 @@ class BubbleDictation(
     fun on(event: Event): List<Effect> = when (event) {
         is Event.BubbleTapped -> onTap(event.micGranted)
         Event.CancelTapped -> onCancel()
-        is Event.LevelSampled -> onLevel(event.level)
         Event.CaptureFailed -> toIdle()
         Event.SessionFailed -> toIdle()
         Event.MaxDurationReached -> onMaxDuration()
@@ -157,7 +140,6 @@ class BubbleDictation(
             } else {
                 state = State.RECORDING
                 startedAtMs = now()
-                peakLevel = 0.0
                 listOf(Effect.StartRecording)
             }
         }
@@ -206,14 +188,6 @@ class BubbleDictation(
             emptyList()
         }
 
-    private fun onLevel(level: Double): List<Effect> {
-        // 🔴 A level sample must never move the state machine. It arrives on
-        // every capture buffer — tens of times a second — so a transition here
-        // would fire continuously.
-        if (state == State.RECORDING && level > peakLevel) peakLevel = level
-        return emptyList()
-    }
-
     private fun onMaxDuration(): List<Effect> =
         if (state == State.RECORDING) {
             // Deliberately NOT debounced: the cap is two minutes and the
@@ -226,18 +200,31 @@ class BubbleDictation(
         }
 
     /**
-     * The shared tail of "stop recording": the silence gate, then either submit
-     * and open the card, or discard and say nothing was heard.
+     * The shared tail of "stop recording": submit, and open the card already in
+     * its transcribing state.
+     *
+     * 🔴 Unconditional, and that is a decision rather than an omission. A
+     * client-side silence gate stood here — it discarded a recording whose peak
+     * normalised RMS never crossed `0.002` — and it was removed because the
+     * premise it rested on was measured false, not because its constant was
+     * mistuned. Measured against the real service at 16 kHz mono: room tone with
+     * no speech at a peak of **0.002023 hallucinated** fluent invented prose,
+     * while clean speech at a peak of **0.001825 transcribed verbatim**. The two
+     * populations overlap and are *inverted* — the hallucinating silence is
+     * LOUDER than the good quiet speech — so no peak-RMS floor can separate
+     * them, and the one chosen was wrong in both directions at once. Nor can
+     * [AudioCaptureLogic.isAllZero] stand in: every hallucinating case measured
+     * was non-zero audio.
+     *
+     * The hallucination (issue #8) is therefore **still open and not handled
+     * here**. It needs a signal this class does not have — the local engine's
+     * own transcript to cross-check against — so do not reintroduce a level
+     * threshold in this spot.
      */
     private fun finishRecording(): List<Effect> {
-        return if (peakLevel < SILENCE_PEAK_FLOOR) {
-            state = State.IDLE
-            listOf(Effect.DiscardRecording, Effect.ReportNothingHeard)
-        } else {
-            state = State.TRANSCRIBING
-            submittedAtMs = now()
-            listOf(Effect.SubmitRecording, Effect.OpenOverlayTranscribing)
-        }
+        state = State.TRANSCRIBING
+        submittedAtMs = now()
+        return listOf(Effect.SubmitRecording, Effect.OpenOverlayTranscribing)
     }
 
     private fun toIdle(): List<Effect> {
@@ -247,54 +234,15 @@ class BubbleDictation(
 
     companion object {
         /**
-         * 🔴 The silence gate's floor, as a peak normalised-RMS level.
-         *
-         * ## Why a gate exists at all
-         *
-         * Fed near-silent audio the transcription service does not return an
-         * empty string — it returns long, fluent, completely invented prose,
-         * including verbatim repetition loops, and the card then labels it
-         * "Transcribed by the server ✓" (issue #8). Under the old flow the user
-         * at least watched the level meter while recording and could see that
-         * nothing was going in. The bubble flow removes that: there is no card
-         * on screen, so a recording made with the mic muted, or with another app
-         * holding it, submits silently and the invention arrives looking
-         * authoritative. The gate is the replacement for the feedback the
-         * redesign takes away.
-         *
-         * ## Why this number, and what is NOT known about it
-         *
-         * **Provisional, and chosen to be too permissive rather than too
-         * strict.** No recording of this device's noise floor has been measured,
-         * so the honest position is that the right threshold is unknown. What is
-         * known is the shape of the pathological case: Android enforces its
-         * concurrent-capture policy by feeding the loser *bit-exact zeros*
-         * ([AudioCaptureLogic.isAllZero]), and an OS-level mic mute looks much
-         * the same, so the input that triggers the hallucination is
-         * all-but-zero rather than merely quiet. A peak normalised RMS of 0.002
-         * is roughly 65 LSB of a 16-bit full scale — below anything a live
-         * microphone in a quiet room produces, and far below speech, which
-         * peaks one to two orders of magnitude higher.
-         *
-         * The deliberate consequence of erring low: this gate will **not** catch
-         * a recording of a quiet room with real room tone and no speech. That
-         * case still reaches the service and can still hallucinate. Raising the
-         * floor is the fix, and it should be done from a measurement of the
-         * level the pulse actually reports on the target device during real
-         * silence — not from a guess. A too-high floor silently refuses genuine
-         * soft speech, which is the worse failure of the two, hence this
-         * direction.
-         */
-        const val SILENCE_PEAK_FLOOR: Double = 0.002
-
-        /**
          * Minimum recording length. A second tap inside this window is
          * swallowed rather than treated as "stop".
          *
          * The bubble's tap target is 60 dp and start/stop are the *same* tap on
          * the *same* control, so an accidental double-tap is a normal thing for
-         * a thumb to do — and it would otherwise produce a sub-100 ms recording,
-         * the exact silent input the gate above exists for.
+         * a thumb to do — and it would otherwise produce a sub-100 ms recording:
+         * a wasted upload, and near-empty audio, which is the input the service
+         * answers with invented prose (issue #8). This is a guard on the *tap*,
+         * not on the audio — nothing here inspects what was recorded.
          */
         const val MIN_RECORDING_MS: Long = 500L
 

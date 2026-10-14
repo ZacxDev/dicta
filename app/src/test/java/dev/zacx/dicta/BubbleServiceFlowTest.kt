@@ -120,8 +120,10 @@ class BubbleServiceFlowTest {
         // so the recording has to actually be old enough — advancing
         // Robolectric's scheduler does not move System.currentTimeMillis.
         Thread.sleep(BubbleDictation.MIN_RECORDING_MS + 50)
-        // Levels are what the silence gate reads; without one above the floor
-        // tap 2 would (correctly) be gated and open nothing.
+        // A level sample on the way through. It no longer influences anything
+        // the machine decides — it drives the pulse and the card's meter — but
+        // feeding one keeps that path exercised, and pins that a sample arriving
+        // mid-recording cannot disturb the tap sequencing asserted below.
         feedLevel(service, 0.37)
 
         bubble(service).performClick()
@@ -154,9 +156,8 @@ class BubbleServiceFlowTest {
 
         assertEquals("cancel must discard the recording", 1, fake.discards)
         assertEquals(
-            "cancel must NOT submit — the level fed above is well over the " +
-                "silence floor, so this is the case where an upload would " +
-                "otherwise have happened",
+            "cancel must NOT submit — a stop tap here would have submitted, so " +
+                "this is the case where an upload would otherwise have happened",
             0,
             fake.submits,
         )
@@ -343,9 +344,9 @@ class BubbleServiceFlowTest {
 
     /**
      * Pushes a level sample in through the session callbacks the service hands
-     * the session — the same route a real [DictationSession] uses, so the gate
-     * and the pulse are being fed from the one source rather than from a
-     * fixture invented here.
+     * the session — the same route a real [DictationSession] uses, rather than
+     * a fixture invented here. The sample reaches the bus and the pulse and
+     * nothing else; [BubbleDictation] is deliberately not told about levels.
      */
     private fun feedLevel(service: BubbleService, level: Double) {
         callbacksOf(service).onLevel(level)

@@ -2,7 +2,6 @@ package dev.zacx.dicta
 
 import org.junit.After
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -105,25 +104,26 @@ class BubbleSessionBusTest {
     }
 
     @Test
-    fun theBufferIsBoundedAndKeepsTheMostRecentEvents() {
-        // A session whose card is never opened must not grow the queue without
-        // bound; and when it overflows, the events worth keeping are the LAST
-        // ones — the transcript arrives at the end, the early chatter does not.
+    fun everyBufferedEventIsReplayedInOrderRatherThanDropped() {
+        // The bound that used to live here (MAX_PENDING = 64) was removed as
+        // unreachable: reset() clears the queue at the start of every recording,
+        // so one recording's events are all the queue can ever hold. This pins
+        // the replacement contract — nothing is dropped, and the order is the
+        // order the session spoke in, which is what makes the card's status line
+        // and engine badge honest.
         BubbleSessionBus.clearForTest()
         repeat(500) { BubbleSessionBus.sink.onStatus("s$it") }
 
         val card = Recorder()
         BubbleSessionBus.attach(card)
 
-        assertTrue(
-            "the buffer is unbounded (${card.events.size} events replayed)",
-            card.events.size < 200,
-        )
         assertEquals(
-            "the buffer dropped the newest events instead of the oldest",
-            "status:s499",
-            card.events.last(),
+            "a buffered event was dropped before the card attached",
+            500,
+            card.events.size,
         )
+        assertEquals("the replay lost the oldest event", "status:s0", card.events.first())
+        assertEquals("the replay lost the newest event", "status:s499", card.events.last())
     }
 
     @Test

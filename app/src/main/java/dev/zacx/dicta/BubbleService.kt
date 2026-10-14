@@ -123,8 +123,8 @@ class BubbleService : Service() {
      *
      * [submit] and [discard] are separate operations rather than
      * `stop(upload: Boolean)` because the difference between them is the one
-     * thing the silence gate and the cancel button exist to decide, and a
-     * boolean argument at a call site is easy to get backwards.
+     * thing the cancel button exists to decide, and a boolean argument at a
+     * call site is easy to get backwards.
      */
     internal interface SessionHandle {
         fun start(): Boolean
@@ -315,8 +315,6 @@ class BubbleService : Service() {
                 BubbleDictation.Effect.SubmitRecording -> stopRecording(submit = true)
                 BubbleDictation.Effect.DiscardRecording -> stopRecording(submit = false)
                 BubbleDictation.Effect.OpenOverlayTranscribing -> openCard()
-                BubbleDictation.Effect.ReportNothingHeard ->
-                    toast(R.string.stt_nothing_heard)
                 BubbleDictation.Effect.ReportMaxDuration ->
                     toast(R.string.stt_max_duration)
                 // Nothing on screen, deliberately: the user's second tap landed
@@ -399,9 +397,10 @@ class BubbleService : Service() {
      * The service's own view of the session, layered under
      * [BubbleSessionBus.sink] so the card sees everything too.
      *
-     * [DictationSession.Callbacks.onLevel] is the single source for both the
-     * pulse and the silence gate — deliberately not two pipelines, so the
-     * animation and the gate cannot disagree about what was heard.
+     * [DictationSession.Callbacks.onLevel] feeds two things and no more: the
+     * card, through the bus, and the bubble's own pulse. It deliberately does
+     * NOT reach [BubbleDictation] — the machine makes no decision from a level,
+     * so routing samples (tens per second) into it would be pure churn.
      */
     private fun serviceCallbacks(): DictationSession.Callbacks =
         object : DictationSession.Callbacks {
@@ -425,7 +424,6 @@ class BubbleService : Service() {
 
             override fun onLevel(level: Double) {
                 bus.onLevel(level)
-                applyEffects(machine.on(BubbleDictation.Event.LevelSampled(level)))
                 renderPulse(level)
             }
 

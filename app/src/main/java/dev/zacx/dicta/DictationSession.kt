@@ -102,9 +102,9 @@ class DictationSession(
      * capture, and `MicCapture.stop()` calls `onFinished`, which hands the file
      * to the worker — so the upload is already submitted by the time `destroy()`
      * reaches `worker.shutdownNow()`. Whether the POST actually goes out is then
-     * a race, which is not a basis for either of the two features that need this
-     * to be certain: the cancel button, and the silence gate that exists because
-     * the service answers near-silent audio with confident invention (issue #8).
+     * a race, which is not a basis for the feature that needs this to be
+     * certain: the cancel button. "Nothing was uploaded" has to be a promise the
+     * user can rely on, not the likely outcome of a shutdown race.
      *
      * Checked in `onFinished` *before* anything is enqueued, so "nothing was
      * uploaded" is a property of the control flow and not of a timing window.
@@ -276,7 +276,7 @@ class DictationSession(
         override fun onFinished(file: File?, audioSeconds: Double) {
             // 🔴 Before the null/duration check and before anything is enqueued:
             // the caller asked for this recording NOT to be transcribed (the
-            // cancel button, or the silence gate), so it must not reach the
+            // cancel button, or a service teardown), so it must not reach the
             // service and must not announce a status it will never deliver.
             if (uploadSuppressed.get()) {
                 file?.let { if (it.exists()) it.delete() }

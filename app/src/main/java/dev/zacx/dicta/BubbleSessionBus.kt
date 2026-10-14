@@ -40,14 +40,6 @@ object BubbleSessionBus {
     private val sinks = CopyOnWriteArrayList<DictationSession.Callbacks>()
     private val pending = ArrayDeque<(DictationSession.Callbacks) -> Unit>()
 
-    /**
-     * Bound so a session whose card is never opened — the user cancelled, or
-     * dismissed, or the upload ladder retried for a while — cannot grow the
-     * queue without bound. Generous relative to what one recording emits
-     * (a handful of status lines, a tier, a transcript).
-     */
-    private const val MAX_PENDING = 64
-
     /** The session's end of the bus. Call from the session's callbacks. */
     val sink: DictationSession.Callbacks = object : DictationSession.Callbacks {
 
@@ -71,7 +63,15 @@ object BubbleSessionBus {
 
     private fun deliver(action: (DictationSession.Callbacks) -> Unit) {
         if (sinks.isEmpty()) {
-            if (pending.size >= MAX_PENDING) pending.pollFirst()
+            // Deliberately unbounded. A `MAX_PENDING = 64` ring buffer stood
+            // here and was removed as dead code, not relaxed: [reset] clears the
+            // queue at the start of every recording, on the discard path and on
+            // service destroy, so `pending` can only ever hold ONE recording's
+            // events — a handful of status lines, a tier and a transcript. The
+            // scenario the bound was justified by (a session whose card is never
+            // opened, accumulating) is exactly what those `reset` calls make
+            // unreachable. Add the bound back only together with a path that
+            // can buffer across recordings.
             pending.addLast(action)
             return
         }
@@ -95,8 +95,8 @@ object BubbleSessionBus {
 
     /**
      * Drops anything buffered. Called when a recording is **discarded** — a
-     * cancelled or silence-gated recording must not have its status lines
-     * replayed into the next card the user opens.
+     * cancelled recording must not have its status lines replayed into the next
+     * card the user opens — and at the start of every new recording.
      */
     fun reset() {
         pending.clear()

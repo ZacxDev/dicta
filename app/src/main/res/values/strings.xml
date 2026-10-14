@@ -89,12 +89,6 @@
          toggle in the dictation card. -->
     <string name="bubble_cancel">Cancel recording — discard it, send nothing</string>
 
-    <!-- 🔴 Issue #8. Fed near-silent audio the service returns long, fluent,
-         invented prose rather than an empty string, and the card labels it
-         "Transcribed by the server ✓". The client-side gate refuses to upload
-         such a recording, and this is what it says instead. It names BOTH facts
-         the user needs: nothing was heard, and nothing left the phone. -->
-    <string name="stt_nothing_heard">Nothing was heard — the recording was discarded and nothing was sent.</string>
     <!-- The runaway cap. Says what happened to the audio, not just that a limit
          was hit: the recording is submitted, not thrown away. -->
     <string name="stt_max_duration">Two-minute limit reached — transcribing what was recorded.</string>
