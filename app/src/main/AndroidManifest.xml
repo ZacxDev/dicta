@@ -11,6 +11,11 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+    <!-- 🔴 BubbleService records inline (tap the bubble, speak, tap again), so on
+         targetSdk 34 it must hold this as well as declare the microphone FGS
+         type. Neither omission is a build error; the service simply throws out
+         of startForeground the first time the user taps the bubble. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <!-- icon/roundIcon point at the adaptive icon in mipmap-anydpi-v26, NOT at a
@@ -95,11 +100,28 @@
                 android:value="true" />
         </service>
 
-        <!-- Floating bubble host. specialUse: user-toggled overlay widget. -->
+        <!--
+          Floating bubble host, and — since the inline-dictation redesign — the
+          owner of the microphone session.
+
+          🔴 BOTH types are declared, and the service promotes to the SPECIFIC
+          one at runtime: microphone while recording, specialUse at rest. The
+          obvious edit (replace specialUse with microphone) is wrong and is
+          pinned against by MicrophoneFgsManifestTest. Android 14 throws
+          SecurityException out of startForeground when a microphone-typed FGS
+          is promoted without RECORD_AUDIO, and this service MUST keep running
+          when the microphone is denied: that is exactly the state in which a
+          tap falls back to opening DictateActivity, which is the only place an
+          app can call requestPermissions from and the only place the
+          mic-denied fallback copy lives. A microphone-only type would kill the
+          bubble for precisely the users who have not granted the mic.
+
+          specialUse also remains the type the PROPERTY below describes.
+        -->
         <service
             android:name=".BubbleService"
             android:exported="false"
-            android:foregroundServiceType="specialUse">
+            android:foregroundServiceType="microphone|specialUse">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="User-toggled floating mic bubble that opens voice dictation from anywhere on the device." />

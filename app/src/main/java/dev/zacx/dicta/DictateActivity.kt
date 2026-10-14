@@ -107,22 +107,67 @@ class DictateActivity : Activity() {
 
         wireOnDemandActions()
 
-        if (hasMicPermission()) {
+        // 🔴 THE auto-start, and the single highest-risk line in the bubble
+        // redesign. It used to be unconditional, because opening this card and
+        // starting to record were the same event. They are not any more: when
+        // the bubble opens the card, capture has ALREADY happened and the
+        // upload is already in flight, so starting again here would construct a
+        // second DictationSession — a second AudioRecord — while the first
+        // one's file is being POSTed.
+        //
+        // That failure is silent. Android resolves concurrent capture by
+        // feeding the loser bit-exact zeros: startRecording() succeeds, read()
+        // returns the full byte count, and the only observable is a transcript
+        // that comes back empty or hallucinated. It reads as a server bug and
+        // gets investigated as one. DictationSessionLedgerTest is the ledger
+        // that keeps the set of session owners honest.
+        if (intent?.getBooleanExtra(DictateLaunch.EXTRA_ATTACH_SESSION, false) == true) {
+            attachToBubbleSession()
+        } else if (hasMicPermission()) {
             startDictation()
         } else {
             requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), REQ_MIC)
         }
     }
 
+    /**
+     * Binds the card to the recording the bubble already made.
+     *
+     * The status line is set up front rather than waiting for the session's own
+     * first message: by the time this activity is on screen the upload may
+     * already be several hundred milliseconds old, and a card that opens blank
+     * reads as a card that did nothing.
+     *
+     * [BubbleSessionBus] then replays anything said while nothing was attached
+     * — which can include the transcript itself on a short recording — so the
+     * engine badge and the status line stay honest about which engine produced
+     * what is on screen.
+     */
+    private fun attachToBubbleSession() {
+        statusText.text = getString(R.string.stt_uploading)
+        micButton.text = getString(R.string.start_dictation)
+        levelMeter.visibility = View.INVISIBLE
+        val sink = uiCallbacks()
+        busSink = sink
+        BubbleSessionBus.attach(sink)
+    }
+
+    /** Non-null only while this card is attached to a bubble session. */
+    private var busSink: DictationSession.Callbacks? = null
+
     override fun onDestroy() {
+        busSink?.let { BubbleSessionBus.detach(it) }
+        busSink = null
         // Before speech: the session owns the microphone and the recogniser's
         // pipe, and closing the pipe's write end is what ends the recognition
         // session. Tearing the recogniser down first leaves a writer with
         // nowhere to write.
         session?.destroy()
         session = null
-        speech?.destroy()
-        speech = null
+        // Releases the microphone if the phone-only recogniser held it: a card
+        // torn down mid-dictation must not leave ownership stranded, or every
+        // later recording in the process is refused.
+        destroyPhoneRecogniser()
         captureWorker?.shutdown()
         captureWorker = null
         // If we are torn down mid-capture the bubble must not stay hidden.
@@ -254,7 +299,7 @@ class DictateActivity : Activity() {
         }
         val helper = speech
         if (helper != null && helper.isListening) {
-            helper.stop()
+            stopPhoneRecogniser()
             micButton.text = getString(R.string.start_dictation)
             statusText.text = getString(R.string.dictate_hint)
             return
@@ -278,19 +323,93 @@ class DictateActivity : Activity() {
      */
     private fun startDictation() {
         haveRemoteTranscript = false
+        // 🔴 The path this method has to refuse: the bubble is RECORDING and
+        // by design nothing is on screen. The user pulls down the shade and
+        // taps the QS tile (or the notification's Dictate action, or the
+        // launcher icon → "Try dictation now"). All three go through
+        // DictateLaunch.intent(), which carries no EXTRA_ATTACH_SESSION — so
+        // `singleTop` creates a card, `onCreate` finds no extra,
+        // `hasMicPermission()` is true, and a second capture starts against a
+        // live one. Same for the attached card's own mic button, which
+        // `attachToBubbleSession` leaves fully enabled. Android does not error
+        // on either: it feeds one of the two captures exact zeros.
+        //
+        // 🔴 ONE check, up front, covering BOTH of this method's two
+        // microphone openers:
+        //
+        //  * `startRemoteSession` → `DictationSession` → `AudioRecord`, which
+        //    `MicrophoneOwner` would refuse on its own; and
+        //  * `startPhoneOnlyDictation` → `SpeechHelper` with no shared source,
+        //    where **SpeechRecognizer opens the microphone itself**. It is
+        //    reached whenever `settings` is unavailable (no AndroidKeyStore) or
+        //    capture failed — i.e. by the error path, which is exactly how a
+        //    guard placed only on the remote branch would be walked around.
+        //
+        // 🔴 That second opener now REGISTERS as well as being checked, with
+        // the activity as the token — see `startPhoneOnlyDictation`. Until it
+        // did, this check was the only thing on that path, and it was one-way:
+        // the card refused when somebody else held the mic, but while the
+        // card's own recogniser was listening `MicrophoneOwner.isHeld` was
+        // FALSE, so the bubble (or the tile, or the notification) opened an
+        // `AudioRecord` straight into a live `SpeechRecognizer` — the exact
+        // double capture, with the exact silent symptom. So the two statements
+        // this comment has to keep apart are: this check stops a capture from
+        // starting HERE, and the acquire below stops one starting ELSEWHERE.
+        // Both directions are needed; neither implies the other.
+        //
+        // Both of this card's tokens are passed, because both are "mine": the
+        // session for the remote path, `this` for the phone-only one. Being
+        // refused by our own recogniser would mean the mic button could never
+        // restart a dictation the card itself owns.
+        //
+        // Deliberately NOT also branched on inside the remote arm. That was the
+        // first version: two guards, each one a complete backstop for the
+        // other, so each killed the other's mutant and NEITHER was pinned by
+        // any test. One rule, one place, one reachable case per branch below.
+        //
+        // Check-then-act, but not a race: this and
+        // `BubbleService.startRecording()` both run on the main thread.
+        if (MicrophoneOwner.isHeldByOtherThan(session, this)) {
+            reportMicBusy()
+            return
+        }
         val config = settings
         if (config != null && startRemoteSession(config)) return
         startPhoneOnlyDictation()
     }
 
+    /** The one place the "another session holds the mic" refusal is rendered. */
+    private fun reportMicBusy() {
+        statusText.text = getString(R.string.stt_mic_in_use)
+        micButton.text = getString(R.string.start_dictation)
+        levelMeter.visibility = View.INVISIBLE
+    }
+
     private fun startRemoteSession(config: SttSettings): Boolean {
+        // 🔴 The previous session is destroyed only once the NEW one is
+        // recording. `destroy()` deletes the audio file and silences the
+        // callbacks, so destroying it before knowing the replacement can start
+        // threw away a transcript the user was waiting for: on a failed
+        // `start()` this method returns false, `startDictation` falls through
+        // to the phone-only recogniser, and the in-flight upload of the
+        // previous recording is gone — unrecoverably, the bytes with it.
+        //
+        // There is no acquire race in this order. `MicrophoneOwner.release` is
+        // owner-scoped (a `compareAndSet(owner, null)`), so the old session's
+        // late `destroy()` cannot take the mic away from the new one, and the
+        // old session holds nothing anyway by the time we get here: `stop()`
+        // releases as its first statement, and a session that never started
+        // either never took the mic (a refused acquire) or released what it
+        // took (a capture failure). (The previous rationale here claimed the
+        // opposite and was the reason the destroy was moved up; it was unsound.)
+        val previous = session
         val started = DictationSession(
             context = this,
             settings = config,
             callbacks = uiCallbacks(),
         )
         return if (started.start()) {
-            session?.destroy()
+            previous?.destroy()
             session = started
             micButton.text = getString(R.string.stop_dictation)
             levelMeter.visibility = View.VISIBLE
@@ -301,7 +420,17 @@ class DictateActivity : Activity() {
         }
     }
 
-    /** The original behaviour: the phone's recogniser, opening its own mic. */
+    /**
+     * The original behaviour: the phone's recogniser, opening its own mic.
+     *
+     * 🔴 Registers with [MicrophoneOwner] for the duration, with the activity
+     * as the token. `SpeechRecognizer` is a microphone client like any other —
+     * it just is not one this process can see — so while it listens, ownership
+     * has to read as taken or a `DictationSession` started from the bubble, the
+     * QS tile or the notification opens an `AudioRecord` against it. Android
+     * does not refuse that: it feeds one of the two bit-exact zeros, and the
+     * user sees an empty or invented transcript.
+     */
     private fun startPhoneOnlyDictation() {
         val helper = SpeechHelper(this, object : SpeechHelper.Listener {
             override fun onReady() {
@@ -314,6 +443,9 @@ class DictateActivity : Activity() {
             }
 
             override fun onFinal(text: String) {
+                // The recogniser closed the microphone on its own; ownership
+                // must end with it, not with the activity.
+                releasePhoneMic()
                 appendFinal(text)
                 showEngine(fromRemote = false)
                 micButton.text = getString(R.string.start_dictation)
@@ -321,6 +453,7 @@ class DictateActivity : Activity() {
             }
 
             override fun onError(message: String) {
+                releasePhoneMic()
                 lastPartial = ""
                 renderPreview()
                 micButton.text = getString(R.string.start_dictation)
@@ -328,13 +461,74 @@ class DictateActivity : Activity() {
             }
         })
         if (!helper.isAvailable) {
+            // Nothing was opened, so nothing is acquired here: the acquire
+            // belongs to the line that actually starts listening, below.
             statusText.text = getString(R.string.no_recognizer)
             return
         }
-        speech?.destroy()
+        // 🔴 Before the acquire, not after: `destroyPhoneRecogniser()` calls
+        // `releasePhoneMic()` **unconditionally**, and that release is scoped to
+        // the activity's own token — the same token the acquire below takes. So
+        // reversed, the teardown would release the token the acquire had just
+        // taken, and `helper.start()` would leave the recogniser **listening
+        // while MicrophoneOwner says the mic is free** — which lets a
+        // concurrent DictationSession open a second capture, and Android
+        // answers two captures by feeding one of them exact zeros.
+        //
+        // 🔴 MEASURED, not reasoned: mutant M20 reverses exactly these two
+        // statements and `MicOpenerSeamTest`
+        // .aPhoneOnlyDictationHoldsTheMicrophoneSoAConcurrentSessionIsRefused
+        // goes red — its positive control still shows the recogniser listening,
+        // and the intruder session's `start()` then *succeeds*. That is this
+        // hazard, observed.
+        //
+        // ⚠ An audit asked for this comment to be rewritten on the grounds that
+        // the hazard "was the behaviour of the re-entrant `acquire` that
+        // 60a363c removed", and that reversed the order would instead refuse
+        // itself (`holder === this` ⇒ `compareAndSet` false ⇒ `reportMicBusy`).
+        // **That is wrong and the rewrite was reverted.** The mechanism named
+        // here is release-on-teardown, not re-entrancy, and it needs none: on a
+        // start with no previous recogniser the holder is `null`, so the
+        // reversed acquire succeeds on a plain compare-and-set and the teardown
+        // then frees it. The self-refusal the audit describes is a real but
+        // *second* consequence, reachable only when a previous recogniser is
+        // still live; it is not what the suite catches, and it is not why the
+        // order is this way round.
+        destroyPhoneRecogniser()
+        if (!MicrophoneOwner.acquire(this)) {
+            // Only reachable if something took the mic between
+            // `startDictation`'s check and here. Same refusal, one renderer.
+            reportMicBusy()
+            return
+        }
         speech = helper
         helper.start()
         micButton.text = getString(R.string.stop_dictation)
+    }
+
+    /**
+     * Gives the microphone back if this card's phone-only recogniser holds it.
+     *
+     * The one place the phone-only release is spelled. Owner-scoped, so it is a
+     * no-op when the holder is the card's [DictationSession] or the bubble's —
+     * which is what makes it safe to call from every teardown route rather than
+     * only from the ones that can prove the recogniser was listening.
+     */
+    private fun releasePhoneMic() {
+        MicrophoneOwner.release(this)
+    }
+
+    /** Stops the phone-only recogniser, keeping its final result. */
+    private fun stopPhoneRecogniser() {
+        speech?.stop()
+        releasePhoneMic()
+    }
+
+    /** Tears the phone-only recogniser down, abandoning any result. */
+    private fun destroyPhoneRecogniser() {
+        speech?.destroy()
+        speech = null
+        releasePhoneMic()
     }
 
     /**
@@ -501,7 +695,7 @@ class DictateActivity : Activity() {
             micButton.text = getString(R.string.start_dictation)
         }
         speech?.takeIf { it.isListening }?.let {
-            it.stop()
+            stopPhoneRecogniser()
             micButton.text = getString(R.string.start_dictation)
         }
         val mpm = getSystemService(MediaProjectionManager::class.java)

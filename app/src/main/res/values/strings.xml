@@ -73,6 +73,67 @@
     <string name="no_recognizer">No speech recognizer available on this device.</string>
     <string name="no_voice_input">No voice input available.</string>
 
+    <!-- ===== the bubble's own states =====
+         🔴 These are contentDescriptions, and they are the non-colour half of
+         the recording indicator. The bubble's visual difference between idle
+         and recording is a ring pulsing in @color/dicta_live — motion and hue
+         and nothing else — so without a label that changes, "the microphone is
+         open right now" would be a colour-only signal (1.4.1), and for a mic
+         that is a privacy problem rather than a styling one. BubbleChromeTest
+         requires the three to be mutually distinct and non-blank, asserted as a
+         set so rewording is free. -->
+    <string name="bubble_idle">Dictate — tap to start recording</string>
+    <string name="bubble_recording">Recording — tap to stop and transcribe</string>
+    <string name="bubble_transcribing">Transcribing — the card is open</string>
+    <!-- Used as BOTH contentDescription and tooltipText, following the overflow
+         toggle in the dictation card. -->
+    <string name="bubble_cancel">Cancel recording — discard it, send nothing</string>
+
+    <!-- The runaway cap. Says what happened to the audio, not just that a limit
+         was hit: the recording is submitted, not thrown away. -->
+    <string name="stt_max_duration">Two-minute limit reached — transcribing what was recorded.</string>
+
+    <!-- 🔴 The report a failed capture never had. Without it the tap did
+         NOTHING observable: no toast, no notification change, and since tap 1
+         no longer opens the card, no status line either — indistinguishable
+         from the app being dead.
+
+         🔴 ONE arm of several, not all of them. This string used to be
+         toasted for every cause and claimed in this comment to "name the
+         three real causes" — it named one, and the wrong one twice: a mic held
+         by Dicta itself blamed another app (and hid @string/stt_mic_in_use,
+         which says what to do about it), and a refused startForeground has
+         nothing to do with the microphone. The mapping now lives in
+         BubbleService.messageFor, one arm per BubbleDictation.Failure. THIS
+         arm is CAPTURE_UNAVAILABLE: the device would not give us a capture —
+         no usable encoder, or an AudioRecord that would not initialise.
+         "Try again" because a transient platform refusal is the common case
+         and retrying is the only move the user has.
+
+         Both halves of this sentence hold on every cause that now reaches it.
+         A separate @string/bubble_settings_unavailable once stood here for a
+         SttSettings.create() that threw, where neither half held; that cause
+         was deleted as unreachable (BubbleService.realSession), so it is not
+         bundled back in here — it no longer exists. -->
+    <string name="bubble_capture_failed">Could not start recording — this device would not open the microphone. Try again.</string>
+
+    <!-- BubbleDictation.Failure.FOREGROUND_DENIED: Android refused to promote
+         the service to a microphone foreground service, so the recording was
+         abandoned before the mic was touched. Deliberately does NOT mention
+         the microphone being busy — it is not. Names the notification,
+         because that is the setting the user can actually go and change. -->
+    <string name="bubble_foreground_denied">Could not start recording — Android refused Dicta\'s recording notification. Check that notifications are allowed for Dicta, then try again.</string>
+
+    <!-- Refusal shown when a SECOND dictation is attempted while one already
+         holds the microphone (the QS tile or the notification tapped while the
+         bubble is recording — or, the other direction, the bubble tapped while
+         the card's own recogniser is listening). Loud on purpose: the
+         alternative is Android feeding one of the two captures bit-exact
+         zeros, which surfaces as an empty or invented transcript and gets
+         blamed on the server. Shown on BOTH surfaces: the card's status line
+         and, as BubbleDictation.Failure.MIC_IN_USE, the bubble's toast. -->
+    <string name="stt_mic_in_use">Dicta is already recording — stop that recording first.</string>
+
     <string name="bubble_channel">Dicta bubble</string>
     <string name="bubble_active">Floating mic bubble is active</string>
     <string name="hide_bubble">Hide bubble</string>

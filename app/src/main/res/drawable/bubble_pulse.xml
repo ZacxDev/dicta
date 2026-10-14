@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The recording ring: an unfilled circle drawn BEHIND the bubble, scaled and
+  faded by BubbleService from the live microphone level.
+
+  @color/dicta_live rather than @color/dicta_accent, and that is the point of
+  having a second token at all — the accent is the dictation *affordance* (the
+  bubble's own ring, the mic pill, a focused field), so a pulse in the accent
+  would read as "this button is emphasised" rather than "you are being
+  recorded". dicta_live is reserved for the live state and is measured at
+  5.67:1 on surface_2.
+
+  🔴 It is never the only signal. The bubble's contentDescription changes with
+  the state (@string/bubble_recording) and a labelled cancel button appears
+  beneath it, because a pulsing hue on its own is a colour-and-motion-only
+  state indicator — see the "State is never carried by colour alone" section
+  in res/values/colors.xml.
+
+  Unfilled: the bubble sits on top of this at full opacity, so a solid fill
+  would be invisible under it and would only show as a hard edge where it grows
+  past the bubble's rim.
+-->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="oval">
+    <solid android:color="@android:color/transparent" />
+    <stroke
+        android:width="3dp"
+        android:color="@color/dicta_live" />
+</shape>
