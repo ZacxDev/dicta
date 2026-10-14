@@ -97,7 +97,12 @@ class MicrophoneOwnershipTest {
                 "BEFORE acquire), so the clause was removed rather than " +
                 "re-justified. Nothing in production asks twice — every opener " +
                 "releases first — and this pins that nobody quietly puts the " +
-                "re-entrancy back and starts relying on it.",
+                "re-entrancy back and starts relying on it. 🔴 It is NOT what " +
+                "makes DictateActivity's destroy-then-acquire order load " +
+                "bearing — that order is about release-on-teardown freeing the " +
+                "token the acquire took, needs no re-entrancy, and is pinned " +
+                "by MicOpenerSeamTest instead (mutant M20). An audit claimed " +
+                "the two were the same thing; they are not.",
             MicrophoneOwner.acquire(first),
         )
         assertTrue(

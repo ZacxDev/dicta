@@ -98,18 +98,38 @@
          no longer opens the card, no status line either — indistinguishable
          from the app being dead.
 
-         🔴 ONE of three, not all three. This string used to be toasted for
-         every cause and claimed in this comment to "name the three real
-         causes" — it named one, and the wrong one twice: a mic held by Dicta
-         itself blamed another app (and hid @string/stt_mic_in_use, which says
-         what to do about it), and a refused startForeground has nothing to do
-         with the microphone. The mapping now lives in
+         🔴 ONE arm of several, not all of them. This string used to be
+         toasted for every cause and claimed in this comment to "name the
+         three real causes" — it named one, and the wrong one twice: a mic held
+         by Dicta itself blamed another app (and hid @string/stt_mic_in_use,
+         which says what to do about it), and a refused startForeground has
+         nothing to do with the microphone. The mapping now lives in
          BubbleService.messageFor, one arm per BubbleDictation.Failure. THIS
-         arm is CAPTURE_UNAVAILABLE: the device would not give us a capture at
-         all — no usable encoder, an AudioRecord that would not initialise, or
-         no settings store. "Try again" because a transient platform refusal is
-         the common case and retrying is the only move the user has. -->
+         arm is CAPTURE_UNAVAILABLE: the device would not give us a capture —
+         no usable encoder, or an AudioRecord that would not initialise.
+         "Try again" because a transient platform refusal is the common case
+         and retrying is the only move the user has.
+
+         🔴 It no longer covers "no settings store" — see
+         @string/bubble_settings_unavailable. That cause was bundled in here,
+         and on it BOTH halves of this sentence are false: the microphone is
+         untouched, and the keystore will refuse every retry. -->
     <string name="bubble_capture_failed">Could not start recording — this device would not open the microphone. Try again.</string>
+
+    <!-- BubbleDictation.Failure.SETTINGS_UNAVAILABLE: SttSettings.create()
+         threw, so there is no settings store to build a session from — in
+         practice a device with no usable AndroidKeyStore.
+
+         Deliberately does NOT mention the microphone (it was never opened)
+         and deliberately does NOT say "try again" (the keystore refuses
+         again, so the retry this used to ask for cannot ever succeed).
+
+         It points at the dictation card because the card genuinely still
+         works on such a device: with no settings the remote path reports "not
+         configured" and the phone's own recogniser is used. ⚠ That asymmetry
+         is a real behaviour gap — the bubble refuses where the card degrades
+         — and it is NOT fixed. See BubbleDictation.Failure.SETTINGS_UNAVAILABLE. -->
+    <string name="bubble_settings_unavailable">Could not start recording — Dicta cannot open its saved settings on this device. Open Dicta and dictate from the card instead.</string>
 
     <!-- BubbleDictation.Failure.FOREGROUND_DENIED: Android refused to promote
          the service to a microphone foreground service, so the recording was

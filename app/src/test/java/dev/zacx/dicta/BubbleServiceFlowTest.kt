@@ -573,6 +573,86 @@ class BubbleServiceFlowTest {
     }
 
     /**
+     * 🔴 **No settings store is its own cause, and must not borrow the
+     * microphone's message.**
+     *
+     * `realSession()` returns null when `SttSettings.create()` throws — a
+     * device with no usable `AndroidKeyStore`. That was bundled into
+     * `CAPTURE_UNAVAILABLE`, whose string says *"this device would not open the
+     * microphone. Try again."* On this cause the microphone was never opened
+     * and the keystore will refuse every retry, so **both halves of that
+     * sentence are false**. This asserts which message the user actually gets,
+     * not that an enum member exists.
+     *
+     * The seam: `sessionFactory` returning null stands in for `realSession()`
+     * returning null, since a keystore cannot be made to refuse under
+     * Robolectric. So this pins the **classification** —
+     * "no session ⇒ SETTINGS_UNAVAILABLE ⇒ this string" — and is *not* evidence
+     * that `SttSettings.create` throws on any real device.
+     *
+     * ⚠ The behaviour gap underneath is NOT fixed and not asserted here: the
+     * card degrades to the phone recogniser on such a device while the bubble
+     * refuses outright. See [BubbleDictation.Failure.SETTINGS_UNAVAILABLE].
+     */
+    @Test
+    fun aCaptureRefusedForWantOfSettingsDoesNotBlameTheMicrophone() {
+        ShadowSettings.setCanDrawOverlays(true)
+        shadowOf(RuntimeEnvironment.getApplication())
+            .grantPermissions(Manifest.permission.RECORD_AUDIO)
+        val c = Robolectric.buildService(BubbleService::class.java)
+        controller = c
+        c.get().sessionFactory = { null }
+        // 🔴 Recorded, not just allowed: this branch promotes the service to a
+        // microphone-typed FGS *before* it tries to build a session, so it owes
+        // a demotion on the way out. Without one, a keystore-less device is
+        // left with a microphone-typed foreground service and no capture —
+        // which is the policy violation the promote-first ordering exists to
+        // avoid, arrived at from the other side.
+        val promotions = mutableListOf<Boolean>()
+        c.get().foregroundPromoter = { recording ->
+            promotions += recording
+            true
+        }
+        val service = c.create().get()
+        ShadowToast.reset()
+
+        bubble(service).performClick()
+
+        assertTrue(
+            "the microphone-typed foreground promotion was never demoted " +
+                "after the session could not be built, so the device is left " +
+                "an FGS claiming the mic with nothing capturing: $promotions",
+            promotions.contains(true) && promotions.last() == false,
+        )
+        val app = RuntimeEnvironment.getApplication()
+        assertEquals(
+            "a device with no settings store was told it would not open the " +
+                "microphone and to try again. The mic was never touched and " +
+                "the retry cannot succeed.",
+            app.getString(R.string.bubble_settings_unavailable),
+            ShadowToast.getTextOfLatestToast(),
+        )
+        assertTrue(
+            "the no-settings message still mentions the microphone, which is " +
+                "the wrong cause named all over again",
+            !app.getString(R.string.bubble_settings_unavailable)
+                .contains("microphone", ignoreCase = true),
+        )
+        assertEquals(
+            "the no-settings cause reused the capture-unavailable string, so " +
+                "the two causes are still one message",
+            false,
+            app.getString(R.string.bubble_settings_unavailable) ==
+                app.getString(R.string.bubble_capture_failed),
+        )
+        assertEquals(
+            "a cause that produced no session must not have opened a capture",
+            0,
+            fake.starts,
+        )
+    }
+
+    /**
      * 🔴 A refused `startForeground(TYPE_MICROPHONE)` must not be reported as a
      * microphone problem: the microphone was never touched. Driven through
      * [BubbleService.foregroundPromoter] because Robolectric's
@@ -612,25 +692,30 @@ class BubbleServiceFlowTest {
     }
 
     /**
-     * 🔴 Control for the three tests above: the three messages must be
+     * 🔴 Control for the four tests above: the four messages must be
      * **distinct strings**.
      *
-     * Without this they could be asserting three identical values and pass
-     * whatever `messageFor` does — the same shape as the `MIN_RECORDING_MS = 0`
-     * fixture that survived a green suite on this PR.
+     * Without this they could be asserting identical values and pass whatever
+     * `messageFor` does — the same shape as the `MIN_RECORDING_MS = 0` fixture
+     * that survived a green suite on this PR.
+     *
+     * It is four and not three because `CAPTURE_UNAVAILABLE` was split: the
+     * no-settings cause used to share the capture-unavailable string, and with
+     * only three entries here that sharing was invisible to this control.
      */
     @Test
-    fun theThreeCaptureFailureMessagesAreDistinct() {
+    fun theFourCaptureFailureMessagesAreDistinct() {
         val app = RuntimeEnvironment.getApplication()
         val messages = listOf(
             app.getString(R.string.bubble_capture_failed),
             app.getString(R.string.bubble_foreground_denied),
+            app.getString(R.string.bubble_settings_unavailable),
             app.getString(R.string.stt_mic_in_use),
         )
         assertEquals(
-            "two of the three capture-failure messages are the same string, so " +
+            "two of the four capture-failure messages are the same string, so " +
                 "the tests that tell them apart cannot see a wrong mapping",
-            3,
+            4,
             messages.toSet().size,
         )
         assertTrue(

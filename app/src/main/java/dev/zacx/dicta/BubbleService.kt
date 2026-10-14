@@ -142,8 +142,18 @@ class BubbleService : Service() {
      * only testable tap is the first one — the service would fail to start
      * capture, fall back to idle, and a "second tap" would be indistinguishable
      * from another first tap. `internal` and set before `onCreate`.
+     *
+     * 🔴 The **return** type is nullable as well as the field, and the two
+     * nulls mean different things. A null *field* means "use [realSession]". A
+     * null *return* stands in for [realSession] itself returning null — the
+     * no-settings case — which is otherwise unreachable under Robolectric,
+     * since it needs a keystore that refuses. That is a seam for the
+     * *classification*, exactly like [foregroundPromoter]: it makes
+     * "no session ⇒ `SETTINGS_UNAVAILABLE`" observable. It does **not**
+     * reproduce a keystore failure, and no test here is evidence that
+     * `SttSettings.create` throws on any real device.
      */
-    internal var sessionFactory: ((DictationSession.Callbacks) -> SessionHandle)? = null
+    internal var sessionFactory: ((DictationSession.Callbacks) -> SessionHandle?)? = null
 
     /**
      * Swappable foreground promotion.
@@ -401,6 +411,8 @@ class BubbleService : Service() {
         BubbleDictation.Failure.MIC_IN_USE -> R.string.stt_mic_in_use
         BubbleDictation.Failure.FOREGROUND_DENIED -> R.string.bubble_foreground_denied
         BubbleDictation.Failure.CAPTURE_UNAVAILABLE -> R.string.bubble_capture_failed
+        BubbleDictation.Failure.SETTINGS_UNAVAILABLE ->
+            R.string.bubble_settings_unavailable
     }
 
     /**
@@ -451,9 +463,34 @@ class BubbleService : Service() {
         // Everything the previous recording's callbacks could still say is now
         // stale — see `generation`.
         generation++
-        val handle = sessionFactory?.invoke(serviceCallbacks()) ?: realSession()
-        if (handle == null || !handle.start()) {
-            runCatching { handle?.destroy() }
+        // 🔴 `if (factory != null)` rather than `?: realSession()`: the factory
+        // is allowed to return null — that is how a test reaches the branch
+        // below — and an elvis would silently fall through to the real session
+        // instead, which under Robolectric means a keystore that is not there.
+        val factory = sessionFactory
+        val handle =
+            if (factory != null) factory(serviceCallbacks()) else realSession()
+        // 🔴 No session at all is its OWN cause, decided structurally rather
+        // than by asking MicrophoneOwner. `realSession()` returns null for
+        // exactly one reason — `SttSettings.create()` threw, i.e. no usable
+        // keystore — and that reason never touches the microphone, so routing
+        // it through the `isHeld` discriminator below classified it
+        // CAPTURE_UNAVAILABLE and told the user the device "would not open the
+        // microphone" and to "try again". Both false. The mic was never
+        // opened; the keystore will refuse every retry.
+        if (handle == null) {
+            promoteForeground(recording = false)
+            applyEffects(
+                machine.on(
+                    BubbleDictation.Event.CaptureFailed(
+                        BubbleDictation.Failure.SETTINGS_UNAVAILABLE
+                    )
+                )
+            )
+            return
+        }
+        if (!handle.start()) {
+            runCatching { handle.destroy() }
             promoteForeground(recording = false)
             // 🔴 Which of the two failures this was, decided from the state
             // that distinguishes them rather than from a returned enum nothing
@@ -462,8 +499,10 @@ class BubbleService : Service() {
             // releases it, and the `destroy()` above releases it again. So a mic
             // still held HERE is held by somebody else — the card's session or
             // its phone-only recogniser — which is exactly MIC_IN_USE. The other
-            // causes (no encoder, an AudioRecord that would not initialise, no
-            // settings store) take nothing, so a free mic means one of those.
+            // causes (no encoder, an AudioRecord that would not initialise)
+            // take nothing, so a free mic means one of those. The no-settings
+            // cause cannot arrive here at all: it produces no handle, and is
+            // classified SETTINGS_UNAVAILABLE above.
             // If one of those coincides with another opener holding the mic,
             // MIC_IN_USE wins: both statements are true and that is the one the
             // user can act on.
@@ -592,15 +631,33 @@ class BubbleService : Service() {
             }
         }
 
+    /**
+     * The production session, or **null for exactly one reason**: the settings
+     * store could not be built.
+     *
+     * 🔴 That single null path is load-bearing — `startRecording` reads a null
+     * handle as `Failure.SETTINGS_UNAVAILABLE` without asking why. A second
+     * null path added here would silently be reported as a keystore problem,
+     * so return a handle whose `start()` fails instead.
+     *
+     * ⚠ **This refusal is a known behaviour gap, not the intended end state.**
+     * The comment here used to read *"Same degradation the card documents …
+     * It is NOT a reason to refuse to record"* — and then refused to record,
+     * one line later, with `?: return null`. The card really does degrade on a
+     * keystore-less device (no settings ⇒ the remote path reports "not
+     * configured" ⇒ the phone's own recogniser is used); the bubble does not.
+     * Making it degrade the same way means giving the bubble a phone-only
+     * capture path, which is a larger change and deliberately out of scope
+     * here. What was fixed is the *message*: the user is no longer told the
+     * microphone failed and to retry. See
+     * [BubbleDictation.Failure.SETTINGS_UNAVAILABLE].
+     */
     private fun realSession(): SessionHandle? {
         val settings = try {
             SttSettings.create(this)
         } catch (_: Throwable) {
-            // Same degradation the card documents: with no settings the remote
-            // path reports "not configured" and the phone's recogniser is used.
-            // It is NOT a reason to refuse to record.
-            null
-        } ?: return null
+            return null
+        }
         val real = DictationSession(
             context = this,
             settings = settings,

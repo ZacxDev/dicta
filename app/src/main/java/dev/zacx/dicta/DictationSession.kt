@@ -122,8 +122,17 @@ class DictationSession(
      * Every callback that is *deferred* goes through [postToMain] or
      * [postToMainDelayed], so "a destroyed session delivers nothing late" is a
      * property of two routes in this file rather than of N remembered checks.
-     * Gated at **delivery** time, not post time: the whole hazard is a message
-     * that was posted while alive and runs after death.
+     * Gated at **delivery** time, not post time, so a message that was already
+     * queued when [destroy] ran cannot deliver.
+     *
+     * 🔴 That is *not* the whole hazard, which this sentence used to claim.
+     * [destroy] calls `main.removeCallbacksAndMessages(null)`, so a message
+     * posted while alive and still pending at death is **deleted**, not merely
+     * gated — the gate never sees it. What the gate actually covers is the case
+     * `removeCallbacksAndMessages` cannot: a `post` that lands *after*
+     * `destroy()` has already swept the queue, i.e. a worker or recogniser
+     * callback thread that raced the teardown. Narrower than the old wording,
+     * and the only reading under which these two routes earn their keep.
      *
      * 🔴 The precise claim, because an earlier version of this comment
      * overstated it. Three callbacks are *not* deferred — the `onStatus` calls
@@ -147,16 +156,32 @@ class DictationSession(
      *
      * ⚠ **Measured: this gate is pinned by nothing, and cannot honestly be.**
      * A mutation removing the `destroyed` check here leaves the whole suite
-     * green (336 tests). Its one caller is the watchdog in
-     * `MicListener.onFirstAudio`, and that block is *already* inert after
-     * `destroy()` for a second reason: `destroy()` sets `capture` to null, so
-     * `tierFor` is handed `wroteNonZeroPcm = false` and never decides
-     * `REMOTE_ONLY_AFTER_TIMEOUT`. A test could only observe the check by
-     * re-planting a `capture` on a destroyed session — a state the code makes
-     * unreachable — which would be asserting against a fixture. So the check is
-     * kept as this route's contract, identical to [postToMain]'s, and is NOT
-     * counted as covered. (The open-coded check it replaced was equally
-     * unpinned; this is a measurement, not a regression.)
+     * green. Two independent reasons, and the **stronger one is the handler**:
+     *
+     * 1. [destroy] calls `main.removeCallbacksAndMessages(null)`, which deletes
+     *    every message this session has pending — including a delayed one that
+     *    has not fired. So a message posted *while alive* is not merely gated
+     *    after `destroy()`, it is **gone**, and the gate never runs at all.
+     * 2. Even if it did run, the one caller — the watchdog in
+     *    `MicListener.onFirstAudio` — is already inert: `destroy()` sets
+     *    `capture` to null, so `tierFor` is handed `wroteNonZeroPcm = false`
+     *    and never decides `REMOTE_ONLY_AFTER_TIMEOUT`.
+     *
+     * Because of (1), observing this check needs **two** things a test cannot
+     * honestly arrange together: a post made *after* `destroy()` (nothing does
+     * that — every caller runs on a live session), *and* a re-planted
+     * `capture` to make the block's effect visible, which is a state the code
+     * makes unreachable. So the check is kept as this route's contract,
+     * identical to [postToMain]'s, and is NOT counted as covered. (The
+     * open-coded check it replaced was equally unpinned; this is a
+     * measurement, not a regression.)
+     *
+     * 🔴 And therefore the residual hazard for [postToMain] and this route is
+     * **a post made after death, not one that outlives it** — the earlier
+     * reading of this note ("a message that was posted while alive and runs
+     * after death") named a hazard `removeCallbacksAndMessages` already
+     * closes. The gate's real value is covering a `post` from a thread that
+     * raced `destroy()`, which is why it stays despite being unpinned.
      */
     private fun postToMainDelayed(delayMs: Long, block: () -> Unit) {
         main.postDelayed({ if (!destroyed.get()) block() }, delayMs)

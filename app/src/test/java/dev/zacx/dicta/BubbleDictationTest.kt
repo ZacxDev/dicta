@@ -231,8 +231,8 @@ class BubbleDictationTest {
     /**
      * 🔴 The cause must survive the machine unchanged.
      *
-     * One fixed message was toasted for all three causes, which named the wrong
-     * one twice out of three times. The machine is where the cause could get
+     * One fixed message was toasted for every cause, which named the wrong one
+     * more often than the right one. The machine is where the cause could get
      * flattened — it is the only thing between the shell's knowledge of which
      * step refused and the shell's choice of what to say — so every value is
      * driven through, not just the one the first test happened to use. A
@@ -245,8 +245,8 @@ class BubbleDictationTest {
             fresh.on(BubbleDictation.Event.BubbleTapped(micGranted = true))
             assertEquals(
                 "the machine rewrote or dropped the cause of a failed " +
-                    "capture, so the shell cannot tell the user which of the " +
-                    "three actually happened: $failure",
+                    "capture, so the shell cannot tell the user which one " +
+                    "actually happened: $failure",
                 listOf(BubbleDictation.Effect.ReportCaptureFailed(failure)),
                 fresh.on(BubbleDictation.Event.CaptureFailed(failure)),
             )

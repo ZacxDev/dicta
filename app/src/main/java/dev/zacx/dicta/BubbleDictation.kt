@@ -52,22 +52,24 @@ class BubbleDictation(
     }
 
     /**
-     * 🔴 Why a capture did not start — because the three causes are **three
-     * different messages**, and one fixed string for all of them told the user
-     * the wrong thing twice out of three times.
+     * 🔴 Why a capture did not start — because each cause is a **different
+     * message**, and one fixed string for all of them told the user the wrong
+     * thing more often than the right one.
      *
      * The shipped version toasted *"the microphone may be in use by a call or
      * another app"* whenever a start failed. For [MIC_IN_USE] that blames
      * another app for something Dicta is doing, and leaves the user with
      * nothing to act on — the accurate copy (`stt_mic_in_use`, "stop that
      * recording first") already existed and was not shown. For
-     * [FOREGROUND_DENIED] the microphone is not involved at all.
+     * [FOREGROUND_DENIED] the microphone is not involved at all. For
+     * [SETTINGS_UNAVAILABLE] it is not involved either, and "try again" names
+     * a retry that can never succeed.
      *
      * 🔴 Not the deleted `StartOutcome` enum coming back: that type was
      * correctly removed because **nothing branched on it**. This one is
      * branched on, in exactly one place — `BubbleService.messageFor` — whose
-     * `when` is exhaustive, so a fourth cause cannot be added without choosing
-     * what it says.
+     * `when` is exhaustive, so a further cause cannot be added without
+     * choosing what it says.
      */
     enum class Failure {
         /**
@@ -86,11 +88,40 @@ class BubbleDictation(
         FOREGROUND_DENIED,
 
         /**
-         * The capture itself could not start: no usable encoder, an
-         * `AudioRecord` that would not initialise, or no settings store to
-         * build a session from.
+         * The capture itself could not start: no usable encoder, or an
+         * `AudioRecord` that would not initialise. A platform refusal, and
+         * often a transient one, so the message may fairly say "try again".
+         *
+         * 🔴 No longer covers "no settings store" — that is
+         * [SETTINGS_UNAVAILABLE]. The two were one member, and the message
+         * they shared blamed the microphone and asked for a retry; on the
+         * settings cause the microphone is fine and no number of retries can
+         * change the outcome.
          */
         CAPTURE_UNAVAILABLE,
+
+        /**
+         * No session could be built because [SttSettings.create] threw — in
+         * practice a device with no usable `AndroidKeyStore`, so the
+         * encrypted settings store cannot be opened.
+         *
+         * The microphone is **untouched and fine**, and retrying is futile:
+         * the keystore will refuse again. Split out of [CAPTURE_UNAVAILABLE]
+         * because sharing its string told the user the device "would not open
+         * the microphone" and to "try again", and both halves of that were
+         * false.
+         *
+         * ⚠ **A behaviour gap sits under this message and is NOT fixed.** The
+         * dictation card degrades on such a device — with no settings the
+         * remote path reports "not configured" and the phone's own recogniser
+         * is used — while the bubble refuses to record at all. Making the
+         * bubble degrade the same way is a larger change than renaming the
+         * failure, and was deliberately left out of the change that added this
+         * member. So the honest message points at the card rather than at a
+         * retry, and this member exists to describe a refusal that *should*
+         * eventually become a degradation.
+         */
+        SETTINGS_UNAVAILABLE,
     }
 
     sealed interface Event {

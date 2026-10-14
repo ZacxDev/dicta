@@ -466,10 +466,34 @@ class DictateActivity : Activity() {
             statusText.text = getString(R.string.no_recognizer)
             return
         }
-        // Before the acquire, not after: the previous recogniser holds the mic
-        // under the SAME token (the activity), and tearing it down releases
-        // that token. Acquiring first and destroying second would therefore
-        // hand the microphone back while the new recogniser was listening.
+        // 🔴 Before the acquire, not after: `destroyPhoneRecogniser()` calls
+        // `releasePhoneMic()` **unconditionally**, and that release is scoped to
+        // the activity's own token — the same token the acquire below takes. So
+        // reversed, the teardown would release the token the acquire had just
+        // taken, and `helper.start()` would leave the recogniser **listening
+        // while MicrophoneOwner says the mic is free** — which lets a
+        // concurrent DictationSession open a second capture, and Android
+        // answers two captures by feeding one of them exact zeros.
+        //
+        // 🔴 MEASURED, not reasoned: mutant M20 reverses exactly these two
+        // statements and `MicOpenerSeamTest`
+        // .aPhoneOnlyDictationHoldsTheMicrophoneSoAConcurrentSessionIsRefused
+        // goes red — its positive control still shows the recogniser listening,
+        // and the intruder session's `start()` then *succeeds*. That is this
+        // hazard, observed.
+        //
+        // ⚠ An audit asked for this comment to be rewritten on the grounds that
+        // the hazard "was the behaviour of the re-entrant `acquire` that
+        // 60a363c removed", and that reversed the order would instead refuse
+        // itself (`holder === this` ⇒ `compareAndSet` false ⇒ `reportMicBusy`).
+        // **That is wrong and the rewrite was reverted.** The mechanism named
+        // here is release-on-teardown, not re-entrancy, and it needs none: on a
+        // start with no previous recogniser the holder is `null`, so the
+        // reversed acquire succeeds on a plain compare-and-set and the teardown
+        // then frees it. The self-refusal the audit describes is a real but
+        // *second* consequence, reachable only when a previous recogniser is
+        // still live; it is not what the suite catches, and it is not why the
+        // order is this way round.
         destroyPhoneRecogniser()
         if (!MicrophoneOwner.acquire(this)) {
             // Only reachable if something took the mic between

@@ -251,6 +251,42 @@ class DictationSessionLedgerTest {
          * paren would be — and the `private val listener: MicCapture.Listener`
          * shape by the same token. Both are pinned in
          * [theOpenerPatternSeesEveryClientAndNoneOfTheMereMentions].
+         *
+         * 🔴 **SCOPE — read this before trusting the ledger.** This pattern is
+         * a list of three *names*, so the ledger only sees an opener that goes
+         * through one of them. **If you add a microphone opener that does not,
+         * this guard will not catch you.** Specifically invisible to it:
+         *
+         * - a bare `AudioRecord(...)`, `AudioRecord.Builder()`,
+         *   `MediaRecorder(...)` or
+         *   `SpeechRecognizer.createSpeechRecognizer(...)` anywhere in the
+         *   tree — in a new file, or in one already on the ledger;
+         * - anything inside `MicCapture.kt` itself, which the `(?<!class )`
+         *   lookbehind makes *structurally unmemberable*: the only
+         *   `MicCapture(` occurrence in that file is its own class
+         *   declaration, so the file can never join the ledger however many
+         *   microphones it opens;
+         * - an opener reached through a new wrapper type, a factory or a
+         *   lambda — the ledger matches the three names, not the behaviour.
+         *
+         * 🔴 Not hypothetical. Measured over every `.kt` file in
+         * `app/src/main/java/dev/zacx/dicta`: the only two real platform
+         * openers in the tree are `AudioRecord.Builder` in **`MicCapture.kt`**
+         * and `createSpeechRecognizer` in **`SpeechHelper.kt`**, and *neither
+         * file is a ledger member*. The ledger's three members
+         * (`BubbleService.kt`, `DictateActivity.kt`, `DictationSession.kt`) are
+         * the files that construct those two wrappers, not the files that touch
+         * the microphone. So the guard tracks the *call sites of our own
+         * abstractions* — which is what it is for — and says nothing about where
+         * a microphone is actually opened.
+         *
+         * That blind spot is the same shape as the second mic opener this PR
+         * missed: one nothing structural was watching. Widening the pattern to
+         * the platform types is the real fix and is **not done here** — it
+         * needs its own positive and negative controls, and a decision about
+         * `MicCapture.kt`. Until then: if you open a microphone, register the
+         * opener with [MicrophoneOwner] by hand and do not expect a red test
+         * to remind you.
          */
         val OPENS_MICROPHONE =
             Regex("""(?<!class )(DictationSession|MicCapture|SpeechHelper)\s*\(""")
