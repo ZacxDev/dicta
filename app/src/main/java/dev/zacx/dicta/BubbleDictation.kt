@@ -104,6 +104,26 @@ class BubbleDictation(
         /** The duration cap cut the recording short; say so. */
         object ReportMaxDuration : Effect
 
+        /**
+         * 🔴 Capture could not start; **say so on screen**.
+         *
+         * `CaptureFailed` used to emit no effects at all, which made the whole
+         * failure silent in the new flow. With no usable encoder, with the
+         * microphone held exclusively (an in-progress call), or when
+         * `startForeground(TYPE_MICROPHONE)` is refused, the tap produced
+         * nothing whatsoever: no toast, no notification change, and — because
+         * the bubble no longer opens the card on tap 1 — no card either. The
+         * error text `MicCapture` produces went to [BubbleSessionBus] and was
+         * cleared by the next `reset()` without ever being shown.
+         *
+         * Pre-redesign this was visible by accident, in the card's status line,
+         * because every tap opened the card. A tap that silently does nothing
+         * is indistinguishable from the app being dead, so the report is now
+         * explicit. [Effect.ReportMaxDuration] already had one; this is the
+         * strictly worse case that did not.
+         */
+        object ReportCaptureFailed : Effect
+
         /** A tap arrived too soon after the last one and was swallowed. */
         object IgnoredAsTooFast : Effect
     }
@@ -127,8 +147,8 @@ class BubbleDictation(
     fun on(event: Event): List<Effect> = when (event) {
         is Event.BubbleTapped -> onTap(event.micGranted)
         Event.CancelTapped -> onCancel()
-        Event.CaptureFailed -> toIdle()
-        Event.SessionFailed -> toIdle()
+        Event.CaptureFailed -> onCaptureFailed()
+        Event.SessionFailed -> onCaptureFailed()
         Event.MaxDurationReached -> onMaxDuration()
         Event.TranscriptSettled -> toIdle()
     }
@@ -230,6 +250,22 @@ class BubbleDictation(
     private fun toIdle(): List<Effect> {
         state = State.IDLE
         return emptyList()
+    }
+
+    /**
+     * Back to idle **with a report**. See [Effect.ReportCaptureFailed] for why
+     * the silent version was a defect rather than a tidy no-op.
+     *
+     * Emitted unconditionally rather than only from RECORDING: capture failure
+     * is reached from the IDLE→RECORDING transition itself (the shell has
+     * already moved the machine to RECORDING when it tries to open the mic),
+     * and a `state == RECORDING` guard here would be a condition that is
+     * always true — which is to say untestable, and one refactor away from
+     * silently swallowing the only message the user gets.
+     */
+    private fun onCaptureFailed(): List<Effect> {
+        state = State.IDLE
+        return listOf(Effect.ReportCaptureFailed)
     }
 
     companion object {

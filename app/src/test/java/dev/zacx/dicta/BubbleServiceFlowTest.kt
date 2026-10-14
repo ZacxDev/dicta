@@ -16,6 +16,7 @@ import org.robolectric.Shadows.shadowOf
 import org.robolectric.android.controller.ServiceController
 import org.robolectric.annotation.Config
 import org.robolectric.shadows.ShadowSettings
+import org.robolectric.shadows.ShadowToast
 
 /**
  * The bubble's two-tap flow driven through the real [BubbleService].
@@ -73,6 +74,7 @@ class BubbleServiceFlowTest {
         runCatching { controller?.destroy() }
         OverlayVisibility.clearForTest()
         BubbleSessionBus.clearForTest()
+        MicrophoneOwner.clearForTest()
     }
 
     private fun start(micGranted: Boolean = true): BubbleService {
@@ -332,6 +334,256 @@ class BubbleServiceFlowTest {
             2,
             fake.starts,
         )
+    }
+
+    // --- finding 2: a dead session must not drive the live machine ----------
+
+    /**
+     * 🔴 The defect this PR shipped with, and the test it lacked.
+     *
+     * `serviceCallbacks()` carried no notion of which recording it belonged to,
+     * and `DictationSession.destroy()` only drops messages **already queued** —
+     * a worker blocked in `http.transcribe()` is blocked in a socket read,
+     * which `shutdownNow`'s interrupt does not unblock. So:
+     *
+     * record #1 → stop (TRANSCRIBING, upload in flight) → wait past the 1.5 s
+     * grace → tap (the documented wedge recovery) → `startRecording()` destroys
+     * #1 and starts #2 → **#1's late transcript lands** → `TranscriptSettled` →
+     * `toIdle()`.
+     *
+     * The machine is then IDLE while the microphone is open, and every
+     * observable is wrong at once: the bubble announces `bubble_idle`, the pulse
+     * ring and the cancel button are hidden (recording with no indicator and no
+     * way to abort), the FGS is never demoted, and `onMaxDuration()` returns
+     * `emptyList()` in IDLE so the two-minute cap is inert and the recording
+     * never stops.
+     *
+     * Asserted through observables rather than by reading `machine.state`: the
+     * cancel button stays on screen, and the next tap **submits** recording #2
+     * instead of starting a third.
+     */
+    @Test
+    fun aLateTranscriptFromADestroyedSessionDoesNotIdleTheLiveRecording() {
+        val first = FakeSession()
+        val second = FakeSession()
+        val service = startWithSessions(first, second)
+
+        // Recording #1, submitted.
+        bubble(service).performClick()
+        Thread.sleep(BubbleDictation.MIN_RECORDING_MS + 50)
+        bubble(service).performClick()
+        assertEquals(1, first.submits)
+
+        // The callbacks object recording #1 was handed. Captured BEFORE the
+        // next recording starts, which is exactly what a session whose upload
+        // is still in flight is holding.
+        val stale = callbacksOf(service)
+
+        // Past the grace window: the documented wedge recovery. Recording #2.
+        Thread.sleep(BubbleDictation.TRANSCRIBE_GRACE_MS + 50)
+        bubble(service).performClick()
+        assertEquals("recording #2 must have started", 1, second.starts)
+        assertEquals(
+            "the mic indicator must be up for recording #2",
+            View.VISIBLE,
+            cancel(service).visibility,
+        )
+
+        // #1's upload finally returns, long after it was destroyed.
+        stale.onTranscript("the late transcript", fromRemote = true, isFinal = true)
+        shadowOf(android.os.Looper.getMainLooper()).idle()
+
+        assertEquals(
+            "a destroyed session's late transcript hid the cancel button of a " +
+                "LIVE recording. The microphone is open with no indicator on " +
+                "screen and no way to abort.",
+            View.VISIBLE,
+            cancel(service).visibility,
+        )
+        assertNotNull(
+            "the live session was dropped while its AudioRecord is open — the " +
+                "next tap then opens a SECOND capture and Android feeds one of " +
+                "them exact zeros",
+            sessionFieldOf(service),
+        )
+
+        // And the machine is still RECORDING: the next tap STOPS #2 rather
+        // than starting a third capture.
+        Thread.sleep(BubbleDictation.MIN_RECORDING_MS + 50)
+        bubble(service).performClick()
+        assertEquals(
+            "the machine had gone IDLE, so the next tap started a THIRD " +
+                "capture on top of the live one instead of stopping it",
+            1,
+            second.submits,
+        )
+        assertEquals("no third capture may be started", 1, second.starts)
+    }
+
+    /**
+     * The same gate must not silence the session the open card is waiting for.
+     *
+     * A submitted recording's callbacks stay current until the *next* recording
+     * starts — its transcript is the one thing the card exists to show. A
+     * generation gate that cut it off would pass the test above and break every
+     * transcript on the happy path.
+     */
+    @Test
+    fun aSubmittedSessionsTranscriptStillSettlesTheBubble() {
+        val service = start()
+        bubble(service).performClick()
+        Thread.sleep(BubbleDictation.MIN_RECORDING_MS + 50)
+        bubble(service).performClick()
+        assertEquals(1, fake.submits)
+
+        callbacksOf(service).onTranscript("the real one", fromRemote = true, isFinal = true)
+        shadowOf(android.os.Looper.getMainLooper()).idle()
+
+        // Observable: the bubble is idle, so the very next tap STARTS a
+        // recording rather than being swallowed as a transcribing-state tap.
+        bubble(service).performClick()
+        assertEquals(
+            "the submitted recording's own transcript was ignored as stale, so " +
+                "the bubble never leaves TRANSCRIBING and the card never fills",
+            2,
+            fake.starts,
+        )
+    }
+
+    /**
+     * 🔴 `state == IDLE ⇒ session == null` — relied on by `startRecording()`
+     * and previously enforced nowhere.
+     *
+     * A session still assigned in IDLE is one nothing on screen refers to and
+     * nothing can stop: no pulse, no cancel, and the duration cap inert. The
+     * state is injected here because the gate above makes it unreachable
+     * through the public flow — which is the point: the invariant has to hold
+     * even when something else has gone wrong.
+     */
+    @Test
+    fun aSessionLeftAssignedWhileIdleIsReclaimed() {
+        val service = start()
+        val orphan = FakeSession()
+        setSessionField(service, orphan)
+
+        // Any event at all re-runs the invariant. CancelTapped in IDLE is a
+        // no-op decision, so nothing but the invariant can explain the result.
+        cancel(service).performClick()
+
+        assertEquals(
+            "a session was left assigned while the machine is IDLE. Its " +
+                "AudioRecord is open, nothing on screen says so, and the " +
+                "two-minute cap is inert because onMaxDuration() returns " +
+                "emptyList() in IDLE — the recording never stops.",
+            1,
+            orphan.destroys,
+        )
+        assertNull(
+            "the orphaned session is still assigned",
+            sessionFieldOf(service),
+        )
+    }
+
+    /**
+     * 🔴 `startRecording()` must reclaim any existing `session` before
+     * assigning. It used to overwrite it outright, losing the reference while
+     * the `AudioRecord` was still open — two live captures, one leaked
+     * non-daemon executor, and no error anywhere.
+     */
+    @Test
+    fun startingARecordingReclaimsAnyStillAssignedSession() {
+        val service = start()
+        val orphan = FakeSession()
+        setSessionField(service, orphan)
+
+        bubble(service).performClick()
+
+        assertEquals(
+            "startRecording() overwrote a live session instead of reclaiming " +
+                "it: two concurrent AudioRecords, which Android answers by " +
+                "feeding one of them exact zeros",
+            1,
+            orphan.destroys,
+        )
+        assertEquals(
+            "a reclaimed session must be DISCARDED, not submitted — nothing " +
+                "on screen refers to it, so its transcript would have no card",
+            1,
+            orphan.discards,
+        )
+        assertEquals("the new recording must have started", 1, fake.starts)
+    }
+
+    // --- finding 3: a failed capture must be visible -------------------------
+
+    /**
+     * 🔴 `CaptureFailed` emitted no effects, so the failure was completely
+     * silent: no toast, no notification change, and — because tap 1 no longer
+     * opens the card — no status line either. With no usable encoder, with the
+     * microphone held exclusively by a call, or when
+     * `startForeground(TYPE_MICROPHONE)` is refused, the tap did **nothing at
+     * all**, which is indistinguishable from the app being dead. Pre-redesign
+     * it showed up in the card's status line by accident, because every tap
+     * opened the card.
+     */
+    @Test
+    fun aCaptureThatCannotStartIsReportedToTheUser() {
+        fake.startResult = false
+        val service = start()
+        ShadowToast.reset()
+
+        bubble(service).performClick()
+
+        assertEquals(
+            "a failed capture produced no user-visible report. The tap did " +
+                "nothing observable whatsoever, which reads as a dead app.",
+            RuntimeEnvironment.getApplication()
+                .getString(R.string.bubble_capture_failed),
+            ShadowToast.getTextOfLatestToast(),
+        )
+    }
+
+    /**
+     * Positive control for the toast harness: a *successful* capture must NOT
+     * report a failure. Without this, the assertion above could be reading a
+     * toast the service shows unconditionally.
+     */
+    @Test
+    fun aCaptureThatStartsReportsNothing() {
+        val service = start()
+        ShadowToast.reset()
+
+        bubble(service).performClick()
+
+        assertNull(
+            "a successful capture showed the failure toast, so the report is " +
+                "unconditional and says nothing about the failure path",
+            ShadowToast.getTextOfLatestToast(),
+        )
+    }
+
+    // --- harness ------------------------------------------------------------
+
+    private fun startWithSessions(vararg sessions: FakeSession): BubbleService {
+        ShadowSettings.setCanDrawOverlays(true)
+        shadowOf(RuntimeEnvironment.getApplication())
+            .grantPermissions(Manifest.permission.RECORD_AUDIO)
+        val queue = sessions.toMutableList()
+        val c = Robolectric.buildService(BubbleService::class.java)
+        controller = c
+        c.get().sessionFactory = { queue.removeFirst() }
+        return c.create().get()
+    }
+
+    private fun sessionField() = BubbleService::class.java
+        .getDeclaredField("session")
+        .apply { isAccessible = true }
+
+    private fun sessionFieldOf(service: BubbleService): Any? =
+        sessionField().get(service)
+
+    private fun setSessionField(service: BubbleService, handle: BubbleService.SessionHandle?) {
+        sessionField().set(service, handle)
     }
 
     /** The session callbacks the service hands a real [DictationSession]. */

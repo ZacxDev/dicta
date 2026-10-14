@@ -103,6 +103,33 @@ class BubbleService : Service() {
      */
     private var submitted: SessionHandle? = null
 
+    /**
+     * 🔴 Which recording the callbacks belong to.
+     *
+     * `serviceCallbacks()` used to carry no notion of identity, and
+     * `DictationSession` has no post-`destroy()` gate of its own that the
+     * *service* can see — so a dead session's late callback drove the **live**
+     * state machine. The sequence: record #1 → stop (TRANSCRIBING, upload in
+     * flight) → wait past the grace window → tap (the documented wedge
+     * recovery) → `startRecording()` destroys #1 and starts #2 → #1's late
+     * transcript lands → `TranscriptSettled` → `toIdle()`.
+     *
+     * The machine is then IDLE while `session` is non-null **and the microphone
+     * is open**, and every observable is wrong at once: `renderState()`
+     * announces `bubble_idle`, hides the pulse ring and hides the cancel
+     * button (recording with no indicator and no way to abort); the FGS is
+     * never demoted; `onMaxDuration()` returns `emptyList()` in IDLE so the
+     * two-minute cap is **inert and the recording never stops**; and the next
+     * tap overwrites `session` without destroying the old one — two live
+     * `AudioRecord`s plus a leaked non-daemon executor.
+     *
+     * Incremented in [startRecording]; each callbacks object captures the value
+     * it was built with and ignores everything once it is stale. The *submitted*
+     * session deliberately keeps its generation — its transcript is the one the
+     * open card is waiting for — and only loses it when a new recording starts.
+     */
+    private var generation = 0
+
     private var bubbleSizePx = 0
     private var haloSizePx = 0
     private var cancelBlockPx = 0
@@ -317,16 +344,53 @@ class BubbleService : Service() {
                 BubbleDictation.Effect.OpenOverlayTranscribing -> openCard()
                 BubbleDictation.Effect.ReportMaxDuration ->
                     toast(R.string.stt_max_duration)
+                // 🔴 The one effect whose absence WAS the bug: see
+                // BubbleDictation.Effect.ReportCaptureFailed. A tap that
+                // silently does nothing is indistinguishable from a dead app.
+                BubbleDictation.Effect.ReportCaptureFailed ->
+                    toast(R.string.bubble_capture_failed)
                 // Nothing on screen, deliberately: the user's second tap landed
                 // inside the debounce window, which means they did not mean to
                 // make two. A toast here would announce their own slip.
                 BubbleDictation.Effect.IgnoredAsTooFast -> Unit
             }
         }
+        // 🔴 `state == IDLE ⇒ session == null` is relied on by startRecording()
+        // and was enforced nowhere. Enforced here rather than asserted in a
+        // comment, because the consequence of it not holding is an open
+        // microphone with no indicator: a session still alive in IDLE is one
+        // nothing on screen refers to and nothing can stop.
+        if (machine.state == BubbleDictation.State.IDLE) reclaimSession()
         renderState()
     }
 
+    /**
+     * Tears down [session] if there is one, and clears it.
+     *
+     * Discard, not submit: a session being reclaimed is one no state on screen
+     * refers to any more, so uploading it would produce a transcript for a card
+     * that will never open.
+     */
+    private fun reclaimSession() {
+        val handle = session ?: return
+        session = null
+        main.removeCallbacks(maxDurationGuard)
+        runCatching { handle.discard() }
+        runCatching { handle.destroy() }
+        BubbleSessionBus.reset()
+        promoteForeground(recording = false)
+    }
+
     private fun startRecording() {
+        // 🔴 Unconditionally reclaim any session still assigned. This used to
+        // be absent, and `session = handle` below simply overwrote it: a
+        // reference lost while its `AudioRecord` was still open, so the next
+        // recording ran with TWO live captures — and Android resolves that by
+        // feeding one of them exact zeros, with no error anywhere. The
+        // `state == IDLE ⇒ session == null` invariant is supposed to make this
+        // unreachable; doing it anyway is what makes a violation harmless
+        // instead of silent.
+        reclaimSession()
         // 🔴 Promote BEFORE opening the microphone. An FGS that is capturing
         // without the microphone type is the violation; doing it in this order
         // means a refused promotion costs us the recording rather than the
@@ -339,6 +403,9 @@ class BubbleService : Service() {
         submitted?.let { runCatching { it.destroy() } }
         submitted = null
         BubbleSessionBus.reset()
+        // Everything the previous recording's callbacks could still say is now
+        // stale — see `generation`.
+        generation++
         val handle = sessionFactory?.invoke(serviceCallbacks()) ?: realSession()
         if (handle == null || !handle.start()) {
             runCatching { handle?.destroy() }
@@ -406,7 +473,21 @@ class BubbleService : Service() {
         object : DictationSession.Callbacks {
             private val bus = BubbleSessionBus.sink
 
+            /**
+             * The recording this object belongs to, captured at construction.
+             * [startRecording] bumps [generation] before building these, so
+             * everything a previous recording still has to say is stale — and
+             * stale events are **dropped**, not applied. See [generation].
+             */
+            private val mine = generation
+
+            private fun isCurrent(): Boolean = mine == generation
+
             override fun onTranscript(text: String, fromRemote: Boolean, isFinal: Boolean) {
+                // 🔴 Dropped, not forwarded: a dead session's late transcript
+                // reaching the bus would also overwrite the card belonging to
+                // the recording that replaced it.
+                if (!isCurrent()) return
                 bus.onTranscript(text, fromRemote, isFinal)
                 // 🔴 Any FINAL transcript settles the bubble, not only a remote
                 // one. The fallback ladder hands over the PHONE's transcript
@@ -420,19 +501,33 @@ class BubbleService : Service() {
                 }
             }
 
-            override fun onStatus(text: String) = bus.onStatus(text)
+            override fun onStatus(text: String) {
+                if (!isCurrent()) return
+                bus.onStatus(text)
+            }
 
             override fun onLevel(level: Double) {
+                // A dead session's level would animate the live recording's
+                // pulse ring with audio from a recording that is over.
+                if (!isCurrent()) return
                 bus.onLevel(level)
                 renderPulse(level)
             }
 
-            override fun onTier(tier: AudioCaptureLogic.Tier) = bus.onTier(tier)
+            override fun onTier(tier: AudioCaptureLogic.Tier) {
+                if (!isCurrent()) return
+                bus.onTier(tier)
+            }
 
-            override fun onClientSilenced(silenced: Boolean) =
+            override fun onClientSilenced(silenced: Boolean) {
+                if (!isCurrent()) return
                 bus.onClientSilenced(silenced)
+            }
 
-            override fun onRecordingStopped() = bus.onRecordingStopped()
+            override fun onRecordingStopped() {
+                if (!isCurrent()) return
+                bus.onRecordingStopped()
+            }
         }
 
     private fun realSession(): SessionHandle? {
@@ -450,6 +545,11 @@ class BubbleService : Service() {
             callbacks = serviceCallbacks(),
         )
         return object : SessionHandle {
+            // 🔴 Both failure modes — the microphone already held, and capture
+            // unable to start — are "no recording" here, and both must reach
+            // the user: either way the machine goes back to IDLE via
+            // Event.CaptureFailed, which now emits Effect.ReportCaptureFailed.
+            // The session has already put the specific reason on the bus.
             override fun start(): Boolean = real.start()
 
             override fun submit() = real.stop()

@@ -93,6 +93,21 @@
          was hit: the recording is submitted, not thrown away. -->
     <string name="stt_max_duration">Two-minute limit reached — transcribing what was recorded.</string>
 
+    <!-- 🔴 The report a failed capture never had. Without it the tap did
+         NOTHING observable: no toast, no notification change, and since tap 1
+         no longer opens the card, no status line either — indistinguishable
+         from the app being dead. Names the three real causes rather than
+         "something went wrong", because all three are things the user can act
+         on (end the call, free the mic, retry). -->
+    <string name="bubble_capture_failed">Could not start recording — the microphone may be in use by a call or another app. Try again.</string>
+
+    <!-- Refusal shown when a SECOND dictation is attempted while one already
+         holds the microphone (the QS tile or the notification tapped while the
+         bubble is recording). Loud on purpose: the alternative is Android
+         feeding one of the two captures bit-exact zeros, which surfaces as an
+         empty or invented transcript and gets blamed on the server. -->
+    <string name="stt_mic_in_use">Dicta is already recording — stop that recording first.</string>
+
     <string name="bubble_channel">Dicta bubble</string>
     <string name="bubble_active">Floating mic bubble is active</string>
     <string name="hide_bubble">Hide bubble</string>

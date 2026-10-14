@@ -321,19 +321,67 @@ class DictateActivity : Activity() {
      */
     private fun startDictation() {
         haveRemoteTranscript = false
+        // 🔴 The path this method has to refuse: the bubble is RECORDING and
+        // by design nothing is on screen. The user pulls down the shade and
+        // taps the QS tile (or the notification's Dictate action, or the
+        // launcher icon → "Try dictation now"). All three go through
+        // DictateLaunch.intent(), which carries no EXTRA_ATTACH_SESSION — so
+        // `singleTop` creates a card, `onCreate` finds no extra,
+        // `hasMicPermission()` is true, and a second capture starts against a
+        // live one. Same for the attached card's own mic button, which
+        // `attachToBubbleSession` leaves fully enabled. Android does not error
+        // on either: it feeds one of the two captures exact zeros.
+        //
+        // 🔴 ONE check, up front, covering BOTH of this method's two
+        // microphone openers:
+        //
+        //  * `startRemoteSession` → `DictationSession` → `AudioRecord`, which
+        //    `MicrophoneOwner` would refuse on its own; and
+        //  * `startPhoneOnlyDictation` → `SpeechHelper` with no shared source,
+        //    where **SpeechRecognizer opens the microphone itself**. There is
+        //    no `DictationSession` on that path, so the holder has nothing to
+        //    refuse and only a check at the call site can stop it. It is
+        //    reached whenever `settings` is unavailable (no AndroidKeyStore) or
+        //    capture failed — i.e. by the error path, which is exactly how a
+        //    guard placed only on the remote branch would be walked around.
+        //
+        // Deliberately NOT also branched on inside the remote arm. That was the
+        // first version: two guards, each one a complete backstop for the
+        // other, so each killed the other's mutant and NEITHER was pinned by
+        // any test. One rule, one place, one reachable case per branch below.
+        //
+        // Check-then-act, but not a race: this and
+        // `BubbleService.startRecording()` both run on the main thread.
+        if (MicrophoneOwner.isHeldByOther(session)) {
+            reportMicBusy()
+            return
+        }
         val config = settings
         if (config != null && startRemoteSession(config)) return
         startPhoneOnlyDictation()
     }
 
+    /** The one place the "another session holds the mic" refusal is rendered. */
+    private fun reportMicBusy() {
+        statusText.text = getString(R.string.stt_mic_in_use)
+        micButton.text = getString(R.string.start_dictation)
+        levelMeter.visibility = View.INVISIBLE
+    }
+
     private fun startRemoteSession(config: SttSettings): Boolean {
+        // 🔴 The previous session goes first, not last. It is already stopped
+        // by every route that reaches here, but destroying it afterwards meant
+        // the new session's `MicrophoneOwner.acquire` could race a holder that
+        // was about to be released — "the mic is busy", caused by our own dead
+        // session.
+        session?.destroy()
+        session = null
         val started = DictationSession(
             context = this,
             settings = config,
             callbacks = uiCallbacks(),
         )
         return if (started.start()) {
-            session?.destroy()
             session = started
             micButton.text = getString(R.string.stop_dictation)
             levelMeter.visibility = View.VISIBLE

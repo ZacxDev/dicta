@@ -30,6 +30,17 @@ import java.io.File
  * It fails when that set **grows or shrinks**, so a new recording surface
  * forces a deliberate decision here rather than inheriting a silent zero-fill.
  *
+ * 🔴 The precondition in the failure message below — "make sure it cannot run
+ * while another session holds the mic" — used to be a *request to the reader*
+ * and nothing more: the ledger was updated when `BubbleService` was added, and
+ * the mutual exclusion it asks for was never built. It now exists, as
+ * [MicrophoneOwner]: `DictationSession.start()` acquires it and **fails** if it
+ * is already held, so a surface added later is refused rather than silently
+ * fed zeros, whether or not whoever added it read this file.
+ * `MicrophoneOwnershipTest` is where that is pinned. This ledger remains the
+ * place a new owner is declared deliberately; it is no longer the only thing
+ * standing between a new owner and a corrupted recording.
+ *
  * 🔴 `DictationSession.kt` is deliberately **not** a member, even though it
  * contains the text `DictationSession(`: that occurrence is the type's own
  * primary-constructor declaration, and [CONSTRUCTS_SESSION]'s `(?<!class )`
@@ -55,8 +66,10 @@ class DictationSessionLedgerTest {
                 "session is one AudioRecord, and two concurrent sessions do NOT " +
                 "error — Android feeds one of them exact zeros, which surfaces " +
                 "as an empty transcript and gets blamed on the server. If you " +
-                "added a recording surface, make sure it cannot run while " +
-                "another session holds the mic, then add it here deliberately.",
+                "added a recording surface, it is refused at runtime by " +
+                "MicrophoneOwner if another session already holds the mic — " +
+                "check that its start() failure is REPORTED to the user, then " +
+                "add it here deliberately.",
             listOf("BubbleService.kt", "DictateActivity.kt"),
             constructors,
         )

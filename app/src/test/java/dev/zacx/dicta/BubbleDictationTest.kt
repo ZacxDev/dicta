@@ -203,10 +203,16 @@ class BubbleDictationTest {
     // --- errors and the transcribing state ----------------------------------
 
     @Test
-    fun captureThatFailsToStartReturnsToIdle() {
+    fun captureThatFailsToStartReturnsToIdleAndSaysSo() {
         tap()
         assertEquals(
-            emptyList<BubbleDictation.Effect>(),
+            "a failed capture emitted no effects, so the failure is completely " +
+                "silent: no toast, no notification change, and — because tap 1 " +
+                "no longer opens the card — no status line either. With the mic " +
+                "held by a call, or no usable encoder, or startForeground " +
+                "refused, the tap then does NOTHING the user can see, which is " +
+                "indistinguishable from the app being dead.",
+            listOf(BubbleDictation.Effect.ReportCaptureFailed),
             machine.on(BubbleDictation.Event.CaptureFailed),
         )
         assertEquals(BubbleDictation.State.IDLE, machine.state)
@@ -215,10 +221,15 @@ class BubbleDictationTest {
     }
 
     @Test
-    fun aSessionErrorReturnsToIdle() {
+    fun aSessionErrorReturnsToIdleAndSaysSo() {
         tap()
         clock += 1_000
-        machine.on(BubbleDictation.Event.SessionFailed)
+        assertEquals(
+            "a terminal session error was as silent as a failed capture used " +
+                "to be",
+            listOf(BubbleDictation.Effect.ReportCaptureFailed),
+            machine.on(BubbleDictation.Event.SessionFailed),
+        )
         assertEquals(BubbleDictation.State.IDLE, machine.state)
     }
 
