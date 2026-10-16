@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  One chip in the bubble's long-press history reveal.
+
+  Filled rather than outlined, unlike @drawable/outline_button_bg: these chips
+  float over an arbitrary wallpaper, not over a Dicta surface, so a transparent
+  fill would leave the label legible against whatever happens to be behind it
+  and illegible against anything else. @color/dicta_surface_2 is the same step
+  @drawable/popup_bg uses for a sheet floating over the window, and
+  @color/dicta_on_surface is the text colour the chip pairs it with.
+
+  The 1dp @color/dicta_outline ring is not decoration either: over a light
+  wallpaper the surface fill alone can be close enough in luminance that the
+  chip's bounds disappear, and a tappable control whose edges cannot be seen is
+  a target the user has to guess at.
+
+  Radius 22dp = half the 44dp chip height, so the chip is a true pill and reads
+  as the same family as the mic pill and the bubble.
+-->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:state_pressed="true">
+        <shape android:shape="rectangle">
+            <solid android:color="@color/dicta_surface_3" />
+            <corners android:radius="22dp" />
+            <stroke android:width="1dp" android:color="@color/dicta_accent" />
+        </shape>
+    </item>
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="@color/dicta_surface_2" />
+            <corners android:radius="22dp" />
+            <stroke android:width="1dp" android:color="@color/dicta_outline" />
+        </shape>
+    </item>
+</selector>

@@ -39,6 +39,32 @@ class DictateActivity : Activity() {
     private lateinit var levelMeter: android.widget.ProgressBar
     private lateinit var engineBadge: TextView
 
+    /**
+     * Shown only on a history card, where [micButton] is hidden. See the
+     * layout's comment on why this is a second control and not the mic pill
+     * wearing a different label.
+     */
+    private lateinit var retranscribeButton: Button
+
+    /**
+     * The stored dictation this card is showing, or null when it is showing a
+     * live one. Written on the main thread only (the worker hands its result
+     * back through `runOnUiThread`).
+     */
+    private var historyItem: DictationHistoryStore.Item? = null
+
+    /**
+     * Reads and re-uploads of stored dictations.
+     *
+     * Separate from [captureWorker], which is created on demand for a single
+     * blocking screenshot round trip and shut down with it. A re-transcribe
+     * can be minutes long (the ladder sleeps between retries and polls
+     * `/healthz`), so sharing one executor would mean a screenshot queued
+     * behind an upload.
+     */
+    private val historyWorker: java.util.concurrent.ExecutorService =
+        Executors.newSingleThreadExecutor()
+
     private var speech: SpeechHelper? = null
     private val finalText = StringBuilder()
     private var lastPartial = ""
@@ -83,6 +109,7 @@ class DictateActivity : Activity() {
         attachmentNote = findViewById(R.id.attachment_note)
         levelMeter = findViewById(R.id.level_meter)
         engineBadge = findViewById(R.id.engine_badge)
+        retranscribeButton = findViewById(R.id.retranscribe_button)
 
         // Robolectric can create the real Activity but cannot provide an
         // AndroidKeyStore, so settings construction is allowed to fail here
@@ -96,6 +123,7 @@ class DictateActivity : Activity() {
         }
 
         micButton.setOnClickListener { toggleDictation() }
+        retranscribeButton.setOnClickListener { retranscribe() }
         // Copy/Screenshot/Send/Close are ImageButtons (ImageView subclasses, NOT
         // Buttons) — findViewById<Button> on them would throw
         // ClassCastException. Pinned by DictateActionViewTypesTest.
@@ -107,27 +135,84 @@ class DictateActivity : Activity() {
 
         wireOnDemandActions()
 
-        // 🔴 THE auto-start, and the single highest-risk line in the bubble
-        // redesign. It used to be unconditional, because opening this card and
-        // starting to record were the same event. They are not any more: when
-        // the bubble opens the card, capture has ALREADY happened and the
-        // upload is already in flight, so starting again here would construct a
-        // second DictationSession — a second AudioRecord — while the first
-        // one's file is being POSTed.
-        //
-        // That failure is silent. Android resolves concurrent capture by
-        // feeding the loser bit-exact zeros: startRecording() succeeds, read()
-        // returns the full byte count, and the only observable is a transcript
-        // that comes back empty or hallucinated. It reads as a server bug and
-        // gets investigated as one. DictationSessionLedgerTest is the ledger
-        // that keeps the set of session owners honest.
-        if (intent?.getBooleanExtra(DictateLaunch.EXTRA_ATTACH_SESSION, false) == true) {
+        // Which of the three launch modes this is — see applyLaunchIntent,
+        // which holds the reasoning that used to sit here.
+        applyLaunchIntent(intent)
+    }
+
+    /**
+     * The three ways this card can be opened, in one place.
+     *
+     * 🔴 **The auto-start in the last arm is the single highest-risk line in
+     * the bubble redesign.** It used to be unconditional, because opening this
+     * card and starting to record were the same event. They are not any more:
+     * when the bubble opens the card, capture has ALREADY happened and the
+     * upload is already in flight, so starting again would construct a second
+     * `DictationSession` — a second `AudioRecord` — while the first one's file
+     * is being POSTed.
+     *
+     * That failure is silent. Android resolves concurrent capture by feeding
+     * the loser bit-exact zeros: `startRecording()` succeeds, `read()` returns
+     * the full byte count, no exception, no error callback. What reaches the
+     * user is an empty or invented transcript, which reads as a broken server
+     * and gets investigated as one. `DictationSessionLedgerTest` is the ledger
+     * that keeps the set of session owners honest.
+     *
+     * 🔴 **The history arm is a third route to that same hazard**, so it must
+     * not reach [startDictation] either. A history card has no capture of its
+     * own to protect, but the bubble's may well be running — the bubble stays
+     * reachable while this card is up.
+     *
+     * @param launch the intent to read. Passed rather than read from
+     *   `getIntent()` so that [onNewIntent] cannot accidentally branch on the
+     *   *original* intent — which is precisely the bug `setIntent` exists to
+     *   prevent, and writing it this way means forgetting `setIntent` cannot
+     *   silently change what this function sees.
+     */
+    private fun applyLaunchIntent(launch: Intent?) {
+        val historyId = launch?.getStringExtra(DictateLaunch.EXTRA_HISTORY_ID)
+        if (launch?.getBooleanExtra(DictateLaunch.EXTRA_ATTACH_SESSION, false) == true) {
             attachToBubbleSession()
+        } else if (historyId != null) {
+            populateFromHistory(historyId)
         } else if (hasMicPermission()) {
             startDictation()
         } else {
             requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), REQ_MIC)
         }
+    }
+
+    /**
+     * 🔴 A second intent arriving at a card that is already on top.
+     *
+     * This activity is `launchMode="singleTop"` and **overrode this nowhere**.
+     * So with the card open, picking a history chip never reached `onCreate`,
+     * the new extra was silently discarded, and the card went on showing
+     * whatever it already had: the user picks item 3 and sees item 1, with no
+     * error anywhere. The reveal makes that a routine sequence rather than an
+     * exotic one, because the bubble is reachable while the card is up.
+     *
+     * 🔴 **[setIntent] is half the fix and is not optional.** Without it
+     * `getIntent()` keeps returning the *original* intent for the rest of this
+     * activity's life, so every later read of an extra — here or in any code
+     * added afterwards — answers for a launch that is two taps stale.
+     *
+     * ## Why only the history arm is re-run
+     *
+     * Deliberately narrower than [applyLaunchIntent]. Re-running the whole
+     * branch would mean a Quick Settings tap (or the notification action) on
+     * an already-open card now starts a dictation where today it does nothing
+     * — a behaviour change to three entry points, in a change about a fourth.
+     * The attach arm is likewise left alone: it survives a dropped extra today
+     * only because `busSink` stays registered with [BubbleSessionBus] from the
+     * first attach, which is luck rather than design, is adjacent to `#14`
+     * item 1, and is **not** fixed here.
+     */
+    override fun onNewIntent(intent: Intent?) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        val historyId = intent?.getStringExtra(DictateLaunch.EXTRA_HISTORY_ID) ?: return
+        populateFromHistory(historyId)
     }
 
     /**
@@ -155,6 +240,173 @@ class DictateActivity : Activity() {
     /** Non-null only while this card is attached to a bubble session. */
     private var busSink: DictationSession.Callbacks? = null
 
+    // --- the history card ----------------------------------------------------
+
+    /**
+     * Shows a **stored** dictation: its transcript, which engine produced it,
+     * and an offer to send the audio again.
+     *
+     * 🔴 Constructs no [DictationSession] and touches no microphone — not even
+     * to check it. [micButton] is hidden rather than left enabled, because the
+     * one thing this screen must not do is open a capture, and a mic button
+     * that is on screen and wired to `toggleDictation()` is exactly that, one
+     * tap away. `DictateHistoryCardTest` asserts both the hidden button and
+     * that [MicrophoneOwner] is still free afterwards.
+     *
+     * The read is on [historyWorker]: it hits `index.json`, and
+     * [DictationHistoryStore.recent] rewrites that index when an audio file
+     * has gone missing. The card therefore fills in a moment after it opens,
+     * which is the same shape `SettingsActivity`'s usage line uses.
+     */
+    private fun populateFromHistory(id: String) {
+        historyItem = null
+        levelMeter.visibility = View.INVISIBLE
+        micButton.visibility = View.GONE
+        retranscribeButton.visibility = View.VISIBLE
+        retranscribeButton.isEnabled = false
+        statusText.text = getString(R.string.history_saved)
+        historyWorker.execute {
+            // 🔴 `recent` with no practical limit, not a lookup by id, because
+            // the store offers none — and adding one is a change to the
+            // storage layer from the PR that consumes it. The index is bounded
+            // by HistoryRetention.MAX_ITEMS, so this is a bounded read.
+            val item = runCatching {
+                historyStore().recent(Int.MAX_VALUE).firstOrNull { it.id == id }
+            }.getOrNull()
+            runOnUiThread { renderHistoryItem(item) }
+        }
+    }
+
+    private fun renderHistoryItem(item: DictationHistoryStore.Item?) {
+        historyItem = item
+        if (item == null) {
+            // Not an error state: retention is allowed to remove things, and
+            // the chip the user tapped may have been evicted or cleared since
+            // the row was drawn.
+            statusText.text = getString(R.string.history_missing)
+            retranscribeButton.isEnabled = false
+            return
+        }
+        finalText.setLength(0)
+        finalText.append(item.text)
+        lastPartial = ""
+        renderPreview()
+        showEngine(item.fromRemote)
+        statusText.text = getString(R.string.history_saved)
+        retranscribeButton.isEnabled = true
+    }
+
+    /**
+     * Sends a stored recording to the service again.
+     *
+     * 🔴 Through [RemoteTranscriber], which structurally **cannot** open a
+     * microphone: it holds no `MicCapture`, no `SpeechHelper` and no
+     * [MicrophoneOwner] token, and it does not delete the file it is handed —
+     * that file is the user's data. The near-miss design (a `DictationSession`
+     * with `start()` skipped) would delete it in `destroy()`.
+     *
+     * 🔴 The result's status line is whatever [RemoteTranscriber] hands back,
+     * which it derives with `statusLabel(truncated, unreliable)`. **No second
+     * derivation here.** That predicate decides when the server's own
+     * "possibly fabricated" / "cut off" verdicts are surfaced, and a copy of
+     * it at this call site is a copy that can disagree — including by
+     * reassuring the user on a `null`, which means the server could not check
+     * at all.
+     *
+     * The button disables itself for the duration. Nothing serialises two
+     * re-transcribes (a fresh `SingleFlightUploader` per call means two
+     * genuinely concurrent uploads), and this is the accepted mitigation: a
+     * UI guard, device-verified, rather than an architectural one.
+     */
+    private fun retranscribe() {
+        val item = historyItem ?: return
+        val config = settings
+        if (config == null) {
+            statusText.text = getString(R.string.stt_not_configured)
+            return
+        }
+        retranscribeButton.isEnabled = false
+        statusText.text = getString(R.string.stt_uploading)
+        historyWorker.execute {
+            val audio = runCatching { historyStore().audioFor(item.id) }.getOrNull()
+            if (audio == null) {
+                runOnUiThread {
+                    statusText.text = getString(R.string.history_audio_missing)
+                    retranscribeButton.isEnabled = false
+                }
+                return@execute
+            }
+            runCatching {
+                RemoteTranscriber(this, config).transcribe(
+                    audio = audio,
+                    audioSeconds = item.audioSeconds,
+                    // The stored transcript IS the local fallback: if the
+                    // server cannot be reached, what the user already had is
+                    // the best text available, and blanking the box would be
+                    // a re-transcribe that destroyed the transcript it was
+                    // asked to improve.
+                    localTranscript = { item.text },
+                    events = historyEvents(item.id),
+                )
+            }
+            runOnUiThread { retranscribeButton.isEnabled = true }
+        }
+    }
+
+    /**
+     * [RemoteTranscriber.Events] bound to this card.
+     *
+     * Delivered on [historyWorker] — the transcriber documents that events
+     * arrive on the caller's thread — so every view touch marshals, and the
+     * store write deliberately does **not**: it is file IO and belongs off the
+     * main thread.
+     */
+    private fun historyEvents(id: String): RemoteTranscriber.Events =
+        object : RemoteTranscriber.Events {
+            override fun onStatus(text: String) {
+                runOnUiThread { statusText.text = text }
+            }
+
+            override fun onRemoteTranscript(text: String, status: String) {
+                // Persisted so the chip label and a later re-open show the
+                // text the user actually ended up with, rather than the first
+                // guess this re-transcribe was run to replace.
+                runCatching { historyStore().updateText(id, text, fromRemote = true) }
+                runOnUiThread {
+                    haveRemoteTranscript = true
+                    finalText.setLength(0)
+                    finalText.append(text.trim())
+                    lastPartial = ""
+                    renderPreview()
+                    showEngine(fromRemote = true)
+                    statusText.text = status
+                }
+            }
+
+            override fun onFellBack(status: String, localTranscript: String) {
+                runOnUiThread {
+                    statusText.text = status
+                    if (localTranscript.isNotBlank()) {
+                        finalText.setLength(0)
+                        finalText.append(localTranscript.trim())
+                        lastPartial = ""
+                        renderPreview()
+                        showEngine(fromRemote = false)
+                    }
+                }
+            }
+        }
+
+    /**
+     * The store, built on demand.
+     *
+     * Not a field initialised in `onCreate`: the constructor resolves
+     * `noBackupFilesDir`, and every caller here is already on
+     * [historyWorker], so there is nothing to gain by moving that to the main
+     * thread and one more thing to tear down.
+     */
+    private fun historyStore(): DictationHistoryStore = DictationHistoryStore(this)
+
     override fun onDestroy() {
         busSink?.let { BubbleSessionBus.detach(it) }
         busSink = null
@@ -170,6 +422,10 @@ class DictateActivity : Activity() {
         destroyPhoneRecogniser()
         captureWorker?.shutdown()
         captureWorker = null
+        // shutdownNow: a re-transcribe in flight is sleeping between retries,
+        // and the card it would render into is going away. The executor is
+        // non-daemon, so leaving it running leaks a thread per card.
+        runCatching { historyWorker.shutdownNow() }
         // If we are torn down mid-capture the bubble must not stay hidden.
         OverlayVisibility.setVisible(true)
         super.onDestroy()

@@ -65,4 +65,59 @@ object BubbleChrome {
         blockHeightPx: Int,
         screenHeightPx: Int,
     ): Boolean = bubbleTopPx + bubbleHeightPx + blockHeightPx <= screenHeightPx
+
+    /**
+     * Keeps the overlay window's top edge inside the display (issue #14,
+     * item 5).
+     *
+     * ## The defect this closes, which is worse than "the bubble looks wrong"
+     *
+     * The drag was unbounded: `ACTION_MOVE` assigned `params.y = downY + dy`
+     * with no limit at all, so the window could be parked below the bottom of
+     * the screen. Three call sites feed this function, and the third is the one
+     * that actually hurts:
+     *
+     *  1. the drag itself, which is how the window gets out of bounds;
+     *  2. showing the cancel button, whose `y -= blockHeight` compensation can
+     *     push `y` negative on its own when the bubble is near the top;
+     *  3. **a configuration change.** Park the bubble at the portrait bottom
+     *     edge and rotate to landscape: the display is suddenly ~900 px
+     *     shorter, and the whole window — bubble *and* cancel — is below the
+     *     visible area. That is an open microphone that can be neither stopped
+     *     nor cancelled, which is the same privacy failure
+     *     [cancelFitsBelow] exists to prevent, arrived at by a different route.
+     *
+     * ## The degenerate case, which is a real one
+     *
+     * When the window is **taller than the screen** there is no position that
+     * satisfies the bound, and the honest answer is `0` — show the top of the
+     * window, since the bubble is its anchor and the controls hang off it. The
+     * obvious `wantedY.coerceIn(0, screenHeightPx - windowHeightPx)` does not
+     * return `0` there: it throws `IllegalArgumentException` on an empty range,
+     * from a touch handler, on a device with a short display and a large font
+     * scale. Hence the explicit branch rather than a one-liner.
+     *
+     * @param windowHeightPx the window's height **including whatever is
+     *   currently shown inside it** — the cancel button, the history reveal, or
+     *   neither. Passing only the bubble's own height is the mutation that
+     *   re-opens the unreachable-control defect for the bottom-most control.
+     */
+    fun clampY(wantedY: Int, windowHeightPx: Int, screenHeightPx: Int): Int {
+        val maxY = screenHeightPx - windowHeightPx
+        return if (maxY <= 0) 0 else wantedY.coerceIn(0, maxY)
+    }
+
+    /**
+     * The horizontal twin of [clampY].
+     *
+     * The bubble's window uses `Gravity.TOP or Gravity.END`, so `x` is measured
+     * **from the right edge and grows leftward** — which changes nothing about
+     * the arithmetic (the valid band is still `0..screen - window`) and
+     * everything about reading the call site, so it is said here once rather
+     * than guessed at there.
+     */
+    fun clampX(wantedX: Int, windowWidthPx: Int, screenWidthPx: Int): Int {
+        val maxX = screenWidthPx - windowWidthPx
+        return if (maxX <= 0) 0 else wantedX.coerceIn(0, maxX)
+    }
 }

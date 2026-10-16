@@ -82,6 +82,28 @@ class BubbleService : Service() {
     private var ring: View? = null
     private var cancel: ImageButton? = null
 
+    /**
+     * The box holding the bubble and its pulse ring.
+     *
+     * Kept as a field for one reason: both the cancel button and the history
+     * row are positioned *relative to the bubble* inside the root, and
+     * `indexOfChild(halo)` is the only spelling of "above the bubble" that
+     * stays correct as the number of optional children changes. The previous
+     * `addView(abort, 0)` meant "above the bubble" only while the bubble was
+     * the first child, which the history row ends.
+     */
+    private var halo: View? = null
+
+    /**
+     * The recent-dictations row, revealed by a long press. 🔴 A child of the
+     * existing window, **never a second window** — see the class header and
+     * [OverlayWindowLedgerTest]. A second overlay window would need its own
+     * `params`, its own alpha, its own add/remove lifecycle, its own clamp and
+     * its own [OverlayVisibility] sink; forgetting the last of those is PR #4's
+     * bug, which put Dicta's own UI inside the user's screenshots.
+     */
+    private var historyRow: LinearLayout? = null
+
     private val main = Handler(Looper.getMainLooper())
     private val machine = BubbleDictation()
     private var session: SessionHandle? = null
@@ -135,6 +157,27 @@ class BubbleService : Service() {
     private var cancelBlockPx = 0
 
     /**
+     * How much taller the window is while the history row is shown — the sum
+     * of the chips actually rendered, not of [REVEAL_SLOTS].
+     *
+     * 🔴 Feeds [BubbleChrome.clampY]. Leaving it out of the clamp is the
+     * mutation that re-opens the unreachable-control defect from the other
+     * end: long-press with the bubble near the bottom edge and the chips land
+     * off-screen, which is a row of controls the user can see the top pixel of
+     * and cannot tap.
+     */
+    private var revealBlockPx = 0
+
+    /** The history row's fixed width, and therefore the window's when shown. */
+    private var revealWidthPx = 0
+
+    /** One chip plus the gap under it. */
+    private var chipBlockPx = 0
+
+    /** Off-main-thread reads of the history index. See [loadRecentHistory]. */
+    private val worker = java.util.concurrent.Executors.newSingleThreadExecutor()
+
+    /**
      * Swappable session construction.
      *
      * The real one needs an `AudioRecord`, which has no usable Robolectric
@@ -169,6 +212,27 @@ class BubbleService : Service() {
      * refuse the microphone promotion while letting the at-rest one through.
      */
     internal var foregroundPromoter: ((Boolean) -> Boolean)? = null
+
+    /**
+     * Where the reveal's chips come from. `null` means the real
+     * [DictationHistoryStore].
+     *
+     * A seam rather than a direct call because the production read touches the
+     * filesystem and, when an audio file has gone missing, **rewrites the
+     * index** — so a test driving the reveal would otherwise be a test of the
+     * store as well as of the gesture, and would be at the mercy of whatever
+     * the previous test left in `noBackupFilesDir`.
+     */
+    internal var historyProvider: ((Int) -> List<DictationHistoryStore.Item>)? = null
+
+    /**
+     * Where [historyProvider] runs. `null` means [worker].
+     *
+     * Separate from the provider seam on purpose: a test wants a *synchronous*
+     * executor so that "long press, then assert" has no race in it, and that
+     * is an orthogonal choice from where the items come from.
+     */
+    internal var historyExecutor: java.util.concurrent.Executor? = null
 
     /**
      * What the service needs from a recording, and nothing more.
@@ -214,6 +278,8 @@ class BubbleService : Service() {
         bubbleSizePx = (BUBBLE_DP * density).toInt()
         haloSizePx = (HALO_DP * density).toInt()
         cancelBlockPx = ((CANCEL_DP + CANCEL_GAP_DP) * density).toInt()
+        revealWidthPx = (REVEAL_WIDTH_DP * density).toInt()
+        chipBlockPx = ((CHIP_DP + CHIP_GAP_DP) * density).toInt()
 
         params = WindowManager.LayoutParams(
             // 🔴 WRAP_CONTENT, not the old fixed 60 dp square. The window has
@@ -235,7 +301,7 @@ class BubbleService : Service() {
 
         // The ring grows past the bubble's rim, so it needs room inside the
         // window or the pulse is clipped to a square.
-        val halo = FrameLayout(this).apply {
+        val bubbleBox = FrameLayout(this).apply {
             layoutParams = LinearLayout.LayoutParams(haloSizePx, haloSizePx)
         }
         val pulse = View(this).apply {
@@ -266,8 +332,8 @@ class BubbleService : Service() {
             setOnClickListener { tapped() }
             setOnTouchListener(DragListener())
         }
-        halo.addView(pulse)
-        halo.addView(button)
+        bubbleBox.addView(pulse)
+        bubbleBox.addView(button)
 
         val abort = ImageButton(this).apply {
             layoutParams = LinearLayout.LayoutParams(
@@ -290,10 +356,30 @@ class BubbleService : Service() {
             }
         }
 
+        // 🔴 A VERTICAL stack of chips, not the horizontal strip the design
+        // sketch proposed. Four chips side by side, each carrying a relative
+        // timestamp plus the opening words of a transcript, is ~600 dp of row
+        // — wider than any phone — so a horizontal strip would have to cut
+        // each label to a handful of characters and the labels are the whole
+        // point of the feature. Stacked, each chip gets the full width the
+        // window can afford and the row reads as a menu rising out of the
+        // bubble.
+        val recents = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.END
+            layoutParams = LinearLayout.LayoutParams(
+                revealWidthPx,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+            ).apply { bottomMargin = (CHIP_GAP_DP * density).toInt() }
+            visibility = View.GONE
+        }
+
         val container = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
-            addView(halo)
+            // The reveal sits ABOVE the bubble at index 0; see showReveal.
+            addView(recents)
+            addView(bubbleBox)
             addView(abort)
         }
 
@@ -302,6 +388,8 @@ class BubbleService : Service() {
         ring = pulse
         cancel = abort
         bubble = button
+        halo = bubbleBox
+        historyRow = recents
     }
 
     /**
@@ -347,6 +435,12 @@ class BubbleService : Service() {
         bubble = null
         ring = null
         cancel = null
+        halo = null
+        historyRow = null
+        // shutdownNow, like SettingsActivity: a history read in flight is
+        // worth nothing once the window it was going to fill is gone, and the
+        // executor is non-daemon.
+        runCatching { worker.shutdownNow() }
         super.onDestroy()
     }
 
@@ -380,6 +474,8 @@ class BubbleService : Service() {
                 // inside the debounce window, which means they did not mean to
                 // make two. A toast here would announce their own slip.
                 BubbleDictation.Effect.IgnoredAsTooFast -> Unit
+                BubbleDictation.Effect.RevealHistory -> revealHistory()
+                BubbleDictation.Effect.HideHistory -> showReveal(false)
             }
         }
         // 🔴 `state == IDLE ⇒ session == null` is relied on by startRecording()
@@ -694,6 +790,7 @@ class BubbleService : Service() {
     private fun showCancel(show: Boolean) {
         val container = root ?: return
         val abort = cancel ?: return
+        val box = halo ?: return
         if ((abort.visibility == View.VISIBLE) == show) return
 
         if (show) {
@@ -703,20 +800,218 @@ class BubbleService : Service() {
                 blockHeightPx = cancelBlockPx,
                 screenHeightPx = resources.displayMetrics.heightPixels,
             )
-            val wanted = if (below) container.childCount - 1 else 0
-            if (container.indexOfChild(abort) != wanted) {
-                container.removeView(abort)
-                container.addView(abort, wanted)
-            }
+            container.removeView(abort)
+            // 🔴 "Above the bubble" is the bubble's own index, not 0. It was 0
+            // while the bubble was the first child; the history row is now
+            // index 0, and an unchanged `0` here would have put cancel ABOVE
+            // the chips — a cancel button that is not adjacent to the control
+            // it cancels, and on the far side of four tappable items.
+            val wanted = if (below) container.childCount else container.indexOfChild(box)
+            container.addView(abort, wanted)
             abort.visibility = View.VISIBLE
             if (!below) params.y -= cancelBlockPx
         } else {
-            val wasAbove = container.indexOfChild(abort) == 0
+            val wasAbove = container.indexOfChild(abort) < container.indexOfChild(box)
             abort.visibility = View.GONE
             if (wasAbove) params.y += cancelBlockPx
         }
+        // 🔴 Call site 2 of 3 for the clamp. `params.y -= cancelBlockPx` above
+        // can take y negative on its own, with the bubble near the top edge
+        // and nothing else involved — no drag, no rotation.
+        clampWindow()
+    }
+
+    // --- the history reveal --------------------------------------------------
+
+    /**
+     * Loads the newest items off the main thread and shows the row.
+     *
+     * Off the main thread because [DictationHistoryStore.recent] reads
+     * `index.json` and, when an audio file has gone missing, rewrites it —
+     * file IO either way, on the gesture that is supposed to feel immediate.
+     * The row is shown when the items land, which is the same shape
+     * `SettingsActivity` uses for its usage line.
+     */
+    private fun revealHistory() {
+        loadRecentHistory { items ->
+            renderReveal(items)
+            showReveal(true)
+        }
+    }
+
+    private fun loadRecentHistory(then: (List<DictationHistoryStore.Item>) -> Unit) {
+        val provider = historyProvider
+            ?: { limit -> DictationHistoryStore(this).recent(limit) }
+        val executor = historyExecutor ?: worker
+        runCatching {
+            executor.execute {
+                // An unreadable store is "no history", never a crash in a
+                // foreground service: the reveal degrades to its empty state,
+                // which already has copy for exactly this.
+                val items = runCatching { provider(REVEAL_SLOTS) }.getOrDefault(emptyList())
+                main.post { if (root != null) then(items) }
+            }
+        }
+    }
+
+    /**
+     * Fills the row with one chip per item, newest first, and records the
+     * height that creates for [clampWindow].
+     *
+     * The empty case is a chip-shaped label rather than an empty row: a
+     * gesture that produces a window the user cannot distinguish from "nothing
+     * happened" is indistinguishable from a broken gesture.
+     */
+    private fun renderReveal(items: List<DictationHistoryStore.Item>) {
+        val row = historyRow ?: return
+        row.removeAllViews()
+        val nowMs = System.currentTimeMillis()
+        if (items.isEmpty()) {
+            row.addView(chip(getString(R.string.bubble_history_empty), null, null))
+        } else {
+            for (item in items) {
+                val label = HistoryLabel.shortLabel(item.text, item.createdAtMs, nowMs)
+                row.addView(
+                    chip(label, getString(R.string.bubble_history_chip, label), item.id)
+                )
+            }
+        }
+        revealBlockPx = row.childCount * chipBlockPx
+    }
+
+    /**
+     * One chip. A [android.widget.TextView] rather than a `Button` so the
+     * label is not force-uppercased and not lifted by the platform's
+     * `stateListAnimator`, both of which are the stock look the rest of the
+     * app is styled away from.
+     *
+     * @param id the history item to open, or `null` for the inert empty-state
+     *   label — which must not be clickable, because a control that accepts a
+     *   tap and does nothing is worse than a caption.
+     */
+    private fun chip(label: String, describedAs: String?, id: String?): View {
+        val density = resources.displayMetrics.density
+        return android.widget.TextView(this).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                (CHIP_DP * density).toInt(),
+            ).apply { topMargin = (CHIP_GAP_DP * density).toInt() }
+            text = label
+            maxLines = 1
+            // A backstop only. The label is short BY CONSTRUCTION — see
+            // HistoryLabel, and the measured reason the JVM cannot assert
+            // anything about rendered width.
+            ellipsize = android.text.TextUtils.TruncateAt.END
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding((14 * density).toInt(), 0, (14 * density).toInt(), 0)
+            textSize = 13f
+            setTextColor(getColor(R.color.dicta_on_surface))
+            background = getDrawable(R.drawable.history_chip_bg)
+            if (id == null) {
+                isClickable = false
+            } else {
+                contentDescription = describedAs
+                tooltipText = describedAs
+                setOnClickListener { openHistoryItem(id) }
+            }
+        }
+    }
+
+    /**
+     * Opens the card on a stored dictation.
+     *
+     * 🔴 Through [DictateLaunch], never a hand-built `Intent`. Same mechanism
+     * as [requestMicPermission] above and the same bug (#11) if it is skipped:
+     * the overlay must land in its OWN task or the translucent card renders
+     * over Dicta's own UI. `DictateLaunchTest`'s construction ledger is what
+     * makes that a red test rather than a code review.
+     */
+    private fun openHistoryItem(id: String) {
+        showReveal(false)
+        runCatching { startActivity(DictateLaunch.historyIntent(this, id)) }
+    }
+
+    /**
+     * Shows or hides the chip row, compensating `y` so the **bubble** stays
+     * put while the window grows upward — the same arithmetic [showCancel]
+     * does, for the same reason: with `Gravity.TOP` the window's top edge is
+     * pinned at `y`, so a child added above the bubble would otherwise shove
+     * the bubble down by the row's height.
+     *
+     * Idempotent. The machine clears its own reveal flag on the next event, so
+     * a chip tap (which hides the row directly, outside the machine) is
+     * followed by a [BubbleDictation.Effect.HideHistory] for a row that is
+     * already away. That is a no-op here rather than a second `y` shift.
+     */
+    private fun showReveal(show: Boolean) {
+        if (root == null) return
+        val row = historyRow ?: return
+        if ((row.visibility == View.VISIBLE) == show) return
+        if (show) {
+            row.visibility = View.VISIBLE
+            params.y -= revealBlockPx
+        } else {
+            row.visibility = View.GONE
+            params.y += revealBlockPx
+            revealBlockPx = 0
+            row.removeAllViews()
+        }
+        clampWindow()
+    }
+
+    // --- keeping the window on screen ----------------------------------------
+
+    /**
+     * 🔴 Call site 3 of 3 for the clamp, and the one that is an actual bug
+     * rather than a hardening.
+     *
+     * `Service` implements `ComponentCallbacks2`, so this is delivered for
+     * free and no manifest `configChanges` is involved. Park the bubble at the
+     * bottom of a portrait display and rotate: the usable height drops by
+     * roughly the difference between the two dimensions, and the whole window
+     * — bubble *and* cancel button — is now below the visible area. If a
+     * recording is running at that moment it can be neither stopped nor
+     * cancelled, which is an open microphone with no reachable control. That
+     * is `#14` item 5's closing condition, and it is a device observation by
+     * construction; what is pinned off-device is the arithmetic and that this
+     * hook calls it.
+     */
+    override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
+        super.onConfigurationChanged(newConfig)
+        clampWindow()
+    }
+
+    /** Applies [BubbleChrome.clampY]/[BubbleChrome.clampX] and lays out. */
+    private fun clampWindow() {
+        val container = root ?: return
+        val metrics = resources.displayMetrics
+        params.y = BubbleChrome.clampY(params.y, windowHeightPx(), metrics.heightPixels)
+        params.x = BubbleChrome.clampX(params.x, windowWidthPx(), metrics.widthPixels)
         runCatching { wm.updateViewLayout(container, params) }
     }
+
+    /**
+     * The window's height **as it is right now**, derived from the dp
+     * constants rather than from `root.height`.
+     *
+     * 🔴 Derived, because a measured height is 0 until layout has run: the
+     * clamp has to be correct on the *first* `ACTION_MOVE` and on a rotation
+     * the view tree has not been laid out for yet, and a 0 there means
+     * "clamp to the whole screen", i.e. no clamp at all in exactly the two
+     * moments it is needed.
+     */
+    private fun windowHeightPx(): Int =
+        haloSizePx +
+            (if (cancel?.visibility == View.VISIBLE) cancelBlockPx else 0) +
+            (if (historyRow?.visibility == View.VISIBLE) revealBlockPx else 0)
+
+    /** As [windowHeightPx]: the row is wider than the bubble when shown. */
+    private fun windowWidthPx(): Int =
+        if (historyRow?.visibility == View.VISIBLE) {
+            maxOf(haloSizePx, revealWidthPx)
+        } else {
+            haloSizePx
+        }
 
     /** The ring, scaled and faded from the live level. */
     private fun renderPulse(level: Double) {
@@ -813,13 +1108,37 @@ class BubbleService : Service() {
             .build()
     }
 
-    /** Distinguishes a tap (start/stop dictation) from a drag (reposition). */
+    /**
+     * Tap vs. long press vs. drag.
+     *
+     * The *decision* is [BubbleGesture]'s and is pure; what is left here is
+     * the timer, the pixels and the window move — device evidence only. The
+     * `moved` boolean this replaced held the same information in a form that
+     * no test could reach and that `ACTION_CANCEL` left stale.
+     */
     private inner class DragListener : View.OnTouchListener {
         private var downRawX = 0f
         private var downRawY = 0f
         private var downX = 0
         private var downY = 0
-        private var moved = false
+        private val gesture = BubbleGesture()
+
+        /**
+         * The pending long press.
+         *
+         * Posted on `ACTION_DOWN` and removed on up, cancel and the move that
+         * becomes a drag. It still asks [BubbleGesture] whether the timeout
+         * counts — removing a `Handler` callback is best-effort (one already
+         * dispatched cannot be recalled), so "the shell removed it" is not a
+         * guarantee that it will not run.
+         */
+        private val longPress = Runnable {
+            if (gesture.onTimeout(android.os.SystemClock.uptimeMillis()) ==
+                BubbleGesture.Decision.LONG_PRESS
+            ) {
+                applyEffects(machine.on(BubbleDictation.Event.BubbleLongPressed))
+            }
+        }
 
         override fun onTouch(v: View, event: MotionEvent): Boolean {
             val slop = (12 * v.resources.displayMetrics.density).toInt()
@@ -829,22 +1148,58 @@ class BubbleService : Service() {
                     downRawY = event.rawY
                     downX = params.x
                     downY = params.y
-                    moved = false
+                    gesture.onDown(event.rawX, event.rawY, event.eventTime)
+                    main.removeCallbacks(longPress)
+                    main.postDelayed(longPress, BubbleGesture.LONG_PRESS_MS)
                     return true
                 }
                 MotionEvent.ACTION_MOVE -> {
-                    val dx = (event.rawX - downRawX).toInt()
-                    val dy = (event.rawY - downRawY).toInt()
-                    if (abs(dx) + abs(dy) > slop) {
-                        moved = true
-                        params.x = downX - dx // END gravity: x grows leftward
-                        params.y = downY + dy
-                        (root as? ViewGroup)?.let { wm.updateViewLayout(it, params) }
+                    val decision = gesture.onMove(
+                        event.rawX, event.rawY, slop
+                    )
+                    if (decision == BubbleGesture.Decision.DRAG) {
+                        // Travel past slop means this is a reposition, so the
+                        // pending reveal is abandoned: a drag that also opened
+                        // the history row would be two actions for one gesture.
+                        main.removeCallbacks(longPress)
+                        val dx = (event.rawX - downRawX).toInt()
+                        val dy = (event.rawY - downRawY).toInt()
+                        val metrics = v.resources.displayMetrics
+                        // 🔴 Call site 1 of 3 for the clamp. Unbounded before:
+                        // the window could be dragged clean off the bottom of
+                        // the display and taken with it the only control that
+                        // can stop a recording.
+                        params.x = BubbleChrome.clampX(
+                            downX - dx, // END gravity: x grows leftward
+                            windowWidthPx(),
+                            metrics.widthPixels,
+                        )
+                        params.y = BubbleChrome.clampY(
+                            downY + dy,
+                            windowHeightPx(),
+                            metrics.heightPixels,
+                        )
+                        (root as? ViewGroup)?.let {
+                            runCatching { wm.updateViewLayout(it, params) }
+                        }
                     }
                     return true
                 }
                 MotionEvent.ACTION_UP -> {
-                    if (!moved) v.performClick()
+                    main.removeCallbacks(longPress)
+                    if (gesture.onUp() == BubbleGesture.Decision.TAP) {
+                        v.performClick()
+                    }
+                    return true
+                }
+                // 🔴 Previously fell through to `return false`, which left
+                // `moved` stale AND — once there is a timer — left a reveal
+                // armed to appear after the finger is gone. The window manager
+                // takes a gesture away for reasons the app does not control:
+                // another window taking focus, the shade coming down.
+                MotionEvent.ACTION_CANCEL -> {
+                    main.removeCallbacks(longPress)
+                    gesture.onCancel()
                     return true
                 }
             }
@@ -870,6 +1225,29 @@ class BubbleService : Service() {
 
         private const val CANCEL_DP = 44
         private const val CANCEL_GAP_DP = 6
+
+        /**
+         * How many recent dictations the reveal offers.
+         *
+         * Deliberately separate from `HistoryRetention.MAX_ITEMS` — how much
+         * is *kept* and how much is reachable from a thumb-sized gesture are
+         * different questions, and tying them would put fifty chips on screen.
+         * A full history screen is a separate feature and is not this one.
+         */
+        private const val REVEAL_SLOTS = 4
+
+        /** One chip's height. 44 dp is the cancel button's, and the floor. */
+        private const val CHIP_DP = 44
+        private const val CHIP_GAP_DP = 6
+
+        /**
+         * The chip row's width. Wide enough for
+         * [HistoryLabel.MAX_CHARS] at the chip's text size with margin, narrow
+         * enough that the window still fits a short display in landscape —
+         * both of which are claims only a device can settle, which is why the
+         * reveal is on the device checklist rather than asserted here.
+         */
+        private const val REVEAL_WIDTH_DP = 220
 
         /** The ring grows to 1.4× at full level. */
         private const val PULSE_SCALE = 0.4f

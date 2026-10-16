@@ -163,4 +163,88 @@ class BubbleChromeTest {
         assertFalse("moving only screenHeightPx did not change the answer",
             fits(1000, 170, 130, 1100))
     }
+
+    // --- keeping the window on screen (#14 item 5) --------------------------
+
+    @Test
+    fun aPositionInsideTheDisplayIsLeftAlone() {
+        assertEquals(900, BubbleChrome.clampY(900, 250, 2400))
+        assertEquals(300, BubbleChrome.clampX(300, 230, 1080))
+    }
+
+    @Test
+    fun aPositionPastTheBottomEdgeIsPulledBackSoTheWholeWindowIsVisible() {
+        // The defect: the drag was unbounded, so the window — bubble AND
+        // cancel button — could be parked below the display. With a recording
+        // running that is an open microphone with no reachable control.
+        assertEquals(
+            "the clamped position must leave the window's BOTTOM on screen, " +
+                "not merely its top",
+            2150,
+            BubbleChrome.clampY(5000, 250, 2400),
+        )
+        assertEquals(850, BubbleChrome.clampX(5000, 230, 1080))
+    }
+
+    @Test
+    fun aNegativePositionIsPulledBackToTheTopEdge() {
+        // Reachable with no drag at all: showCancel's `y -= cancelBlockPx`
+        // compensation takes y negative on its own when the bubble is near the
+        // top, and so does revealing the history row.
+        assertEquals(0, BubbleChrome.clampY(-400, 250, 2400))
+        assertEquals(0, BubbleChrome.clampX(-400, 230, 1080))
+    }
+
+    @Test
+    fun aWindowTallerThanTheScreenIsPinnedToTheTopRatherThanThrowing() {
+        // 🔴 The degenerate case, and a real one: a short display in landscape
+        // with the history row shown at a large font scale. There is no
+        // position satisfying the bound, and the honest answer is 0 — show the
+        // top of the window, since the bubble is its anchor.
+        //
+        // The obvious one-liner, `wantedY.coerceIn(0, screen - window)`, does
+        // not return 0 here: it throws IllegalArgumentException on an empty
+        // range, out of a touch handler.
+        assertEquals(0, BubbleChrome.clampY(500, 3000, 2400))
+        assertEquals(0, BubbleChrome.clampY(-500, 3000, 2400))
+        assertEquals(0, BubbleChrome.clampX(500, 1400, 1080))
+    }
+
+    @Test
+    fun aWindowExactlyTheHeightOfTheScreenHasOneLegalPosition() {
+        // The boundary between the ordinary branch and the degenerate one. A
+        // `<` instead of `<=` on the guard leaves `coerceIn(0, 0)` — which
+        // happens to work — so this pins the ANSWER rather than the branch.
+        assertEquals(0, BubbleChrome.clampY(900, 2400, 2400))
+        assertEquals(0, BubbleChrome.clampX(900, 1080, 1080))
+    }
+
+    @Test
+    fun theClampReadsEveryDimensionItIsGiven() {
+        // 🔴 The narrowest real mutation: an implementation that drops one of
+        // its three inputs. Each case moves exactly ONE dimension from the
+        // same unclamped baseline, and the baseline deliberately overshoots
+        // rather than sitting on any boundary — a baseline sitting ON its
+        // bound makes the clamped branch unreachable and the mutant survives
+        // for the wrong reason.
+        assertEquals(
+            "baseline must be inside the display and therefore untouched",
+            900, BubbleChrome.clampY(900, 250, 2400),
+        )
+        assertEquals(
+            "a larger wantedY did not change the result, so wantedY is ignored",
+            2150, BubbleChrome.clampY(3000, 250, 2400),
+        )
+        assertEquals(
+            "a taller window did not change the result, so windowHeightPx is " +
+                "ignored — which is the mutation that drops the history row's " +
+                "height and pushes the chips off the bottom of the display",
+            700, BubbleChrome.clampY(900, 1700, 2400),
+        )
+        assertEquals(
+            "a shorter screen did not change the result, so screenHeightPx is " +
+                "ignored — which is the rotation case",
+            850, BubbleChrome.clampY(900, 250, 1100),
+        )
+    }
 }

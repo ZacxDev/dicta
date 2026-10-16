@@ -114,6 +114,16 @@ class BubbleDictation(
         object CancelTapped : Event
 
         /**
+         * The user held the bubble past the long-press threshold.
+         *
+         * Recognised entirely outside this class, by [BubbleGesture] — which
+         * owns the milliseconds and the pixels, neither of which belongs here.
+         * By the time this arrives the shell has already decided the gesture
+         * was a press and not a drag.
+         */
+        object BubbleLongPressed : Event
+
+        /**
          * Capture could not start at all, and [failure] says why — the shell
          * knows which of its own steps refused, and the user needs to be told
          * which.
@@ -178,6 +188,30 @@ class BubbleDictation(
 
         /** A tap arrived too soon after the last one and was swallowed. */
         object IgnoredAsTooFast : Effect
+
+        /**
+         * Show the recent-dictations row attached to the bubble.
+         *
+         * 🔴 **Not a state.** There is deliberately no `HISTORY_REVEALED`
+         * member in [State]: the reveal is a surface, not a phase of a
+         * dictation, and adding a member would force every existing transition
+         * to decide about it *and* would drag the reveal inside the
+         * `state == IDLE ⇒ session == null` invariant that
+         * `BubbleService.applyEffects` enforces — an invariant about the
+         * microphone, which the reveal has nothing to do with.
+         */
+        object RevealHistory : Effect
+
+        /**
+         * Put the recent-dictations row away.
+         *
+         * Emitted **before** whatever else the triggering event produces, so a
+         * tap on a revealed bubble reads as "the row goes away, then recording
+         * starts" rather than leaving a row of history chips floating over a
+         * live recording. The ordering is the assertion; membership alone
+         * would pass with the row still on screen.
+         */
+        object HideHistory : Effect
     }
 
     var state: State = State.IDLE
@@ -193,15 +227,64 @@ class BubbleDictation(
         get() = if (state == State.RECORDING) now() - startedAtMs else 0L
 
     /**
+     * Whether the history row is currently on screen.
+     *
+     * 🔴 A private flag rather than a [State] member, and the distinction is
+     * the whole of the design decision recorded on [Effect.RevealHistory]. It
+     * exists only so that the *next* event can emit [Effect.HideHistory] —
+     * which has to be decided here, in the one place that sees every event, or
+     * the shell ends up spelling "hide the row unless this was a long press"
+     * at each call site, which is the N-sites predicate this repo has already
+     * been bitten by twice.
+     */
+    private var historyRevealed = false
+
+    /**
      * Applies [event] and returns the effects the shell must carry out, in
      * order. Pure with respect to the platform: nothing here touches Android.
+     *
+     * Every event other than [Event.BubbleLongPressed] dismisses an open
+     * history row, and the [Effect.HideHistory] that does so is **prefixed**
+     * to that event's own effects — see [Effect.HideHistory].
      */
-    fun on(event: Event): List<Effect> = when (event) {
-        is Event.BubbleTapped -> onTap(event.micGranted)
-        Event.CancelTapped -> onCancel()
-        is Event.CaptureFailed -> onCaptureFailed(event.failure)
-        Event.MaxDurationReached -> onMaxDuration()
-        Event.TranscriptSettled -> toIdle()
+    fun on(event: Event): List<Effect> {
+        if (event is Event.BubbleLongPressed) return onLongPress()
+        val dismiss = if (historyRevealed) listOf(Effect.HideHistory) else emptyList()
+        historyRevealed = false
+        return dismiss + when (event) {
+            is Event.BubbleTapped -> onTap(event.micGranted)
+            Event.CancelTapped -> onCancel()
+            is Event.CaptureFailed -> onCaptureFailed(event.failure)
+            Event.MaxDurationReached -> onMaxDuration()
+            Event.TranscriptSettled -> toIdle()
+            // Unreachable: handled above, before `historyRevealed` is cleared.
+            Event.BubbleLongPressed -> emptyList()
+        }
+    }
+
+    /**
+     * 🔴 The long press is honoured **only while idle**, and the two refusals
+     * are not symmetry for its own sake:
+     *
+     *  * **RECORDING.** Tap 2 on this same control is stop-and-submit, so a
+     *    press that is already in progress is ambiguous to the thumb before
+     *    anything is drawn. Revealing there puts a row of buttons under a
+     *    finger that is in the middle of a stop gesture, and the nearest
+     *    control to that finger is `cancel` — which is how an accidental
+     *    discard of a recording the user wanted ships. Silence is the right
+     *    answer: their next action is a tap, and a tap means stop.
+     *  * **TRANSCRIBING.** Nothing to escape from. The grace window in [onTap]
+     *    exists because a transcript that never arrives would otherwise leave
+     *    the bubble permanently dead; a long press cannot wedge anything, so
+     *    it needs no equivalent and gets none.
+     *
+     * The state is left exactly as it was in all three cases.
+     */
+    private fun onLongPress(): List<Effect> = if (state == State.IDLE) {
+        historyRevealed = true
+        listOf(Effect.RevealHistory)
+    } else {
+        emptyList()
     }
 
     private fun onTap(micGranted: Boolean): List<Effect> = when (state) {

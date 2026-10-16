@@ -392,4 +392,150 @@ class BubbleDictationTest {
         clock += 1_234
         assertEquals(1_234L, machine.elapsedMs)
     }
+
+    // --- the long press and the history reveal ------------------------------
+
+    private fun longPress() =
+        machine.on(BubbleDictation.Event.BubbleLongPressed)
+
+    @Test
+    fun aLongPressWhileIdleRevealsTheHistoryAndChangesNoState() {
+        assertEquals(
+            listOf(BubbleDictation.Effect.RevealHistory),
+            longPress(),
+        )
+        assertEquals(
+            "the long press moved the machine out of IDLE. The reveal is a " +
+                "surface, not a phase of a dictation — a state change here " +
+                "would put it inside the `IDLE implies no session` invariant " +
+                "that applyEffects enforces, which is about the microphone",
+            BubbleDictation.State.IDLE,
+            machine.state,
+        )
+    }
+
+    @Test
+    fun aLongPressWhileRecordingDoesNothingAtAll() {
+        // 🔴 THE accidental-cancel guard. Tap 2 on this same control is
+        // stop-and-submit, so a mid-recording press is already ambiguous to
+        // the thumb; a reveal there puts a row of buttons under a finger in
+        // the middle of a stop gesture, and the nearest control to it is
+        // cancel.
+        tap()
+        assertEquals(
+            "a long press while RECORDING produced effects. Silence is the " +
+                "right answer: the user's next action is a tap, and a tap " +
+                "means stop",
+            emptyList<BubbleDictation.Effect>(),
+            longPress(),
+        )
+        assertEquals(BubbleDictation.State.RECORDING, machine.state)
+    }
+
+    @Test
+    fun aLongPressWhileTranscribingDoesNothingAtAll() {
+        tap()
+        clock += BubbleDictation.MIN_RECORDING_MS
+        tap()
+        assertEquals(
+            emptyList<BubbleDictation.Effect>(),
+            longPress(),
+        )
+        assertEquals(BubbleDictation.State.TRANSCRIBING, machine.state)
+    }
+
+    @Test
+    fun aLongPressWhileRecordingDoesNotConsumeTheStopTap() {
+        // The device checklist's G6, as far as the JVM can speak for it: after
+        // an ignored long press the next tap must still stop and submit.
+        tap()
+        clock += BubbleDictation.MIN_RECORDING_MS
+        longPress()
+        assertEquals(
+            listOf(
+                BubbleDictation.Effect.SubmitRecording,
+                BubbleDictation.Effect.OpenOverlayTranscribing,
+            ),
+            tap(),
+        )
+    }
+
+    @Test
+    fun aTapAfterARevealHidesTheRowBeforeItStartsRecording() {
+        // 🔴 ORDER, not membership. The reverse order leaves a row of history
+        // chips on screen over a live recording, and `containsAll` would be
+        // green for it.
+        longPress()
+        assertEquals(
+            listOf(
+                BubbleDictation.Effect.HideHistory,
+                BubbleDictation.Effect.StartRecording,
+            ),
+            tap(),
+        )
+    }
+
+    @Test
+    fun everyOtherEventAlsoDismissesAnOpenReveal() {
+        // The rule is "any event other than the long press", expressed once,
+        // rather than a hide spelled at each call site in the shell — which is
+        // the N-sites predicate this repo has been bitten by twice.
+        for (event in listOf(
+            BubbleDictation.Event.CancelTapped,
+            BubbleDictation.Event.MaxDurationReached,
+            BubbleDictation.Event.TranscriptSettled,
+            BubbleDictation.Event.CaptureFailed(BubbleDictation.Failure.MIC_IN_USE),
+        )) {
+            val fresh = BubbleDictation(now = { clock })
+            fresh.on(BubbleDictation.Event.BubbleLongPressed)
+            assertEquals(
+                "$event did not dismiss the open history row, so the chips " +
+                    "stay on screen over whatever happens next",
+                BubbleDictation.Effect.HideHistory,
+                fresh.on(event).firstOrNull(),
+            )
+        }
+    }
+
+    @Test
+    fun aTapWithNoRevealOpenEmitsNoHide() {
+        // 🔴 The other direction, and the one that makes the test above about
+        // the FLAG rather than about the event type: an unconditional
+        // `HideHistory` prefix would satisfy every assertion above and would
+        // put a spurious effect in front of every single tap.
+        assertEquals(
+            listOf(BubbleDictation.Effect.StartRecording),
+            tap(),
+        )
+    }
+
+    @Test
+    fun theRevealIsDismissedOnceAndNotAgain() {
+        longPress()
+        assertEquals(
+            BubbleDictation.Effect.HideHistory,
+            machine.on(BubbleDictation.Event.CancelTapped).firstOrNull(),
+        )
+        assertEquals(
+            "the reveal flag survived the event that dismissed it, so every " +
+                "later event hides a row that is already away",
+            emptyList<BubbleDictation.Effect>(),
+            machine.on(BubbleDictation.Event.CancelTapped),
+        )
+    }
+
+    @Test
+    fun aSecondLongPressDoesNotStackHides() {
+        // Two long presses in IDLE are two reveals of the same row; the next
+        // event dismisses it exactly once.
+        longPress()
+        assertEquals(listOf(BubbleDictation.Effect.RevealHistory), longPress())
+        assertEquals(
+            listOf(
+                BubbleDictation.Effect.HideHistory,
+                BubbleDictation.Effect.StartRecording,
+            ),
+            tap(),
+        )
+    }
 }
