@@ -148,6 +148,13 @@
     <string name="stt_section_remote">Self-hosted transcription</string>
     <string name="stt_section_remote_blurb">Dicta uploads each recording to your own speech service and uses its transcript. If the service cannot be reached, the phone\'s built-in recognizer is used instead and you are told.</string>
     <string name="stt_remote_enabled_label">Use the self-hosted service</string>
+    <!-- Issue #10. The three group labels on the settings screen, rendered
+         through @style/Text.Dicta.SectionHeading — so they are written in
+         sentence case here and uppercased by the style, exactly as
+         @string/section_permissions and @string/section_triggers are. -->
+    <string name="stt_section_service">Service</string>
+    <string name="stt_section_language">Language</string>
+    <string name="stt_section_connection">Connection</string>
     <!-- Issue #7. "Follow device language" is the first entry and the default;
          the rest are built from SttLanguage.DISPLAY_NAMES. -->
     <string name="stt_language_label">Dictation language</string>
@@ -165,6 +172,13 @@
     <string name="stt_save">Save</string>
     <string name="stt_test">Test</string>
     <string name="stt_clear_token">Clear token</string>
+    <!-- 🔴 Issue #10: the contentDescription of the one destructive control on
+         the settings screen, and one of the two cues that do NOT depend on
+         seeing its red ring (the other is the ✕ glyph). It names what is
+         deleted AND what Dicta does next, which the visible "Clear token"
+         label does not — a description that merely repeats the label would
+         satisfy "has a description" and tell a screen-reader user nothing. -->
+    <string name="stt_clear_token_desc">Clear the stored token. The token is deleted and Dicta falls back to the phone\'s recognizer until you paste a new one.</string>
     <string name="stt_saved">Saved.</string>
     <string name="stt_token_cleared">Token cleared — Dicta will use the phone\'s recognizer.</string>
     <string name="stt_token_save_failed">Could not encrypt the token (%1$s) — nothing was saved.</string>
