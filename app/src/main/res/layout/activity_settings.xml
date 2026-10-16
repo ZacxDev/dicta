@@ -20,12 +20,16 @@
       "dictate" (see the comment on @id/try_now_button), and nothing on this
       screen dictates.
 
-  🔴 Presentation only. Every id SettingsActivity addresses is unchanged and in
-  the same order — @id/stt_remote_enabled, @id/stt_language, @id/stt_url,
+  🔴 Every id SettingsActivity addresses is unchanged and in the same order —
+  @id/stt_remote_enabled, @id/stt_language, @id/stt_url,
   @id/stt_token, @id/stt_save, @id/stt_test, @id/stt_clear_token,
   @id/stt_status — and no control changed type, so save(), clearToken(),
   testConnection() and renderTokenState() are untouched. DictationLanguageTest
   drives the real spinner through the real activity and still does.
+
+  Added since: the History group at the bottom — @id/stt_history_usage and
+  @id/stt_clear_history — built from the same four conventions and from no
+  new ones. SettingsThemingTest's control ledger covers it.
 -->
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
@@ -345,5 +349,78 @@
             android:textSize="13sp"
             android:lineSpacingExtra="3dp"
             android:textColor="@color/dicta_on_surface_variant" />
+
+        <!-- ===== History =====
+             Last, and deliberately below @id/stt_status: everything above is
+             one subject (which service, which language, which token) and
+             @id/stt_status is that cluster's own result line. History is a
+             different subject, so it gets its own heading and its own panel
+             rather than being wedged between a control and the line that
+             reports on it.
+
+             🔴 The retention bounds are NOT exposed here. Three numbers with
+             "whichever binds first" semantics is a settings screen that needs
+             explaining; if a control is ever wanted it is one toggle, not
+             three sliders. What the user gets is the two things they can act
+             on: how much is being kept, and a way to delete it. -->
+        <TextView
+            style="@style/Text.Dicta.SectionHeading"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="32dp"
+            android:text="@string/stt_section_history" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:layout_marginTop="10dp"
+            android:background="@drawable/row_bg"
+            android:padding="14dp">
+
+            <!-- Read-only, and a TextView rather than a disabled field: there
+                 is nothing to type here, and a greyed-out input would invite
+                 the user to try. Filled from DictationHistoryStore.usage() on
+                 a worker thread (it reads the index off disk), so its
+                 android:text is the pending string and never a stale number. -->
+            <TextView
+                android:id="@+id/stt_history_usage"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/stt_history_usage_pending"
+                android:textSize="15sp"
+                android:textColor="@color/dicta_on_surface" />
+        </LinearLayout>
+
+        <!--
+          The second destructive action, built exactly like @id/stt_clear_token
+          above — same drawable, same glyph, same three-cue rule.
+
+          🔴 THREE cues, because colour may not carry this alone (colors.xml,
+          "state is never carried by colour alone"): the error-coloured ring
+          and label, the ✕ glyph, and @string/stt_clear_history_desc, which
+          names what is deleted and that it is irreversible. Either of the
+          latter two identifies the control as destructive with no colour
+          vision at all.
+
+          @drawable/ic_close is reused rather than a new bin glyph being drawn:
+          ✕ already means "remove this" on this screen, and a second,
+          differently-drawn destructive mark would make the two actions look
+          like different KINDS of thing when they are the same kind.
+        -->
+        <Button
+            android:id="@+id/stt_clear_history"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:layout_marginTop="8dp"
+            android:background="@drawable/destructive_button_bg"
+            android:drawableStart="@drawable/ic_close"
+            android:drawableTint="@color/dicta_error"
+            android:drawablePadding="8dp"
+            android:stateListAnimator="@null"
+            android:textAllCaps="false"
+            android:textColor="@color/dicta_error"
+            android:contentDescription="@string/stt_clear_history_desc"
+            android:text="@string/stt_clear_history" />
     </LinearLayout>
 </ScrollView>

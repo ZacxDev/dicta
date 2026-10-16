@@ -155,6 +155,28 @@
     <string name="stt_section_service">Service</string>
     <string name="stt_section_language">Language</string>
     <string name="stt_section_connection">Connection</string>
+    <string name="stt_section_history">History</string>
+    <!-- The read-only usage line. A plural, not one "%1$d dictations" string:
+         the count is routinely 1 and "1 dictations" on the only screen that
+         reports what the app is keeping of your voice reads as carelessness.
+         MB is mebibytes to one decimal — see HISTORY_BYTES_PER_MB in
+         SettingsActivity for why that unit and not 10^6. -->
+    <plurals name="stt_history_usage">
+        <item quantity="one">History: %1$d dictation, %2$s MB</item>
+        <item quantity="other">History: %1$d dictations, %2$s MB</item>
+    </plurals>
+    <!-- Shown until the first read of the history directory comes back. The
+         usage line is filled from disk on a worker thread, so the layout needs
+         something honest to say in between — a hard-coded "0 dictations" would
+         be a wrong number rather than a pending one. -->
+    <string name="stt_history_usage_pending">History: checking…</string>
+    <string name="stt_clear_history">Delete all history</string>
+    <!-- 🔴 The second destructive control on this screen, and the same three
+         cues as @string/stt_clear_token_desc: the error ring, the ✕ glyph and
+         this description. It names what is deleted — the recordings, not only
+         the transcripts — and that it cannot be undone, neither of which the
+         visible "Delete all history" label says. -->
+    <string name="stt_clear_history_desc">Delete all history. Every saved recording and its transcript is deleted from this phone immediately, and this cannot be undone.</string>
     <!-- Issue #7. "Follow device language" is the first entry and the default;
          the rest are built from SttLanguage.DISPLAY_NAMES. -->
     <string name="stt_language_label">Dictation language</string>

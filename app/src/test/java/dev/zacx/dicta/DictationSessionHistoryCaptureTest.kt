@@ -33,15 +33,16 @@ import java.io.File
  * harness that never reaches the hook at all is indistinguishable from a zero
  * caused by the suppression under test, so the pair is what carries the claim.
  *
- * ⚠ **Measured gap, stated rather than papered over.** The `updateText` calls
- * wired into the `RemoteTranscriber.Events` handlers are NOT covered here.
- * `RemoteTranscriber` is constructed inside `transcribeRemotely` rather than
- * injected, so reaching `onRemoteTranscript` needs a real server, and the one
- * reachable event on this branch — `onFellBack` with no token configured — can
- * only ever re-file the same `localTranscript` that `add` already stored, which
- * is not a discriminating assertion. The store side of that path is pinned by
- * `DictationHistoryStoreTest.updateTextReplacesTheStoredTranscript`; the wiring
- * is not pinned, and is not counted as covered.
+ * ⚠ **Still not covered HERE, but no longer uncovered.** The `updateText` calls
+ * wired into the `RemoteTranscriber.Events` handlers are not exercised by this
+ * file: the sessions built here have no token, so nothing reaches
+ * `onRemoteTranscript`. That gap used to be unclosable, because
+ * `RemoteTranscriber` was constructed inside `transcribeRemotely` rather than
+ * injected. It now is injected (`transcriberFactory`), and
+ * [DictationSessionRemoteHistoryWiringTest] drives both handlers with a
+ * scripted transport and asserts the STORE's resulting state. The store side
+ * alone remains pinned by
+ * `DictationHistoryStoreTest.updateTextReplacesTheStoredTranscript`.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])

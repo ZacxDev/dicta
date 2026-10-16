@@ -105,6 +105,18 @@ class SettingsThemingTest {
         "stt_save" to "@drawable/outline_button_bg",
         "stt_test" to "@drawable/outline_button_bg",
         "stt_clear_token" to "@drawable/destructive_button_bg",
+        "stt_clear_history" to "@drawable/destructive_button_bg",
+    )
+
+    /**
+     * The destructive controls, and the description each must carry. A LEDGER
+     * for the same reason [controlBackgrounds] is one: the three-cue rule is a
+     * property of EVERY destructive control, and a guard naming only the one
+     * that existed when it was written cannot see the second.
+     */
+    private val destructiveActions: Map<String, Int> = mapOf(
+        "stt_clear_token" to R.string.stt_clear_token_desc,
+        "stt_clear_history" to R.string.stt_clear_history_desc,
     )
 
     /** The group labels, which must all be accent labels and not body text. */
@@ -112,6 +124,7 @@ class SettingsThemingTest {
         R.string.stt_section_service,
         R.string.stt_section_language,
         R.string.stt_section_connection,
+        R.string.stt_section_history,
     )
 
     private val controlTags = setOf("Button", "Spinner", "CheckBox", "EditText")
@@ -246,7 +259,7 @@ class SettingsThemingTest {
      * this is the only claim made about `stt_remote_enabled`, whose background
      * is legitimately null.
      *
-     * `stt_clear_token` is excluded because it is the one control whose label is
+     * The destructive controls are excluded because their labels are
      * deliberately NOT on-surface — see
      * [theDestructiveActionIsIdentifiableWithNoColourVision].
      */
@@ -256,7 +269,7 @@ class SettingsThemingTest {
         val examined = mutableListOf<String>()
 
         for (control in controlsIn(inflate())) {
-            if (control.id == R.id.stt_clear_token) continue
+            if (nameOf(control.id) in destructiveActions) continue
             // A Spinner is not a TextView; its collapsed row is covered by the
             // picker tests below.
             if (control !is TextView) continue
@@ -442,38 +455,53 @@ class SettingsThemingTest {
     @Test
     fun theDestructiveActionIsIdentifiableWithNoColourVision() {
         val ctx = themedContext()
+        val root = inflate()
+        val elements = controlElements()
 
-        assertEquals(
-            "the destructive action declares no leading glyph, so losing the red " +
-                "ring leaves it looking exactly like Save and Test",
-            "@drawable/ic_close",
-            controlElements()["stt_clear_token"]!!.getAttribute("android:drawableStart")
-        )
+        for ((id, descriptionRes) in destructiveActions) {
+            assertEquals(
+                "$id declares no leading glyph, so losing the red ring leaves it " +
+                    "looking exactly like Save and Test",
+                "@drawable/ic_close",
+                elements[id]!!.getAttribute("android:drawableStart")
+            )
 
-        val button = inflate().findViewById<Button>(R.id.stt_clear_token)
-        assertNotNull(
-            "the inflated destructive action has no leading compound drawable",
-            button.compoundDrawablesRelative[0]
-        )
+            val button = root.findViewById<Button>(
+                ctx.resources.getIdentifier(id, "id", ctx.packageName)
+            )
+            assertNotNull("$id is not on the inflated screen at all", button)
+            assertNotNull(
+                "$id has no leading compound drawable once inflated",
+                button.compoundDrawablesRelative[0]
+            )
 
-        val description = button.contentDescription?.toString()
-        assertNotNull("the destructive action has no contentDescription", description)
+            val description = button.contentDescription?.toString()
+            assertNotNull("$id has no contentDescription", description)
+            assertEquals(
+                "$id's description must name what is deleted and what happens next",
+                ctx.getString(descriptionRes),
+                description
+            )
+            assertNotEquals(
+                "$id's description merely repeats the visible label, so it adds no " +
+                    "information about the consequence",
+                button.text.toString(),
+                description
+            )
+            assertEquals(
+                "$id's label is not @color/dicta_error",
+                ctx.getColor(R.color.dicta_error),
+                button.textColors.defaultColor
+            )
+        }
+
+        // Positive control: an empty or shrunken ledger would make the loop
+        // above vacuous, and a zero-iteration loop is indistinguishable from a
+        // passing guard.
         assertEquals(
-            "the destructive action's description must name what is deleted and " +
-                "what happens next",
-            ctx.getString(R.string.stt_clear_token_desc),
-            description
-        )
-        assertNotEquals(
-            "the description merely repeats the visible label, so it adds no " +
-                "information about the consequence",
-            button.text.toString(),
-            description
-        )
-        assertEquals(
-            "the destructive action's label is not @color/dicta_error",
-            ctx.getColor(R.color.dicta_error),
-            button.textColors.defaultColor
+            "the destructive ledger no longer names both destructive controls",
+            setOf("stt_clear_token", "stt_clear_history"),
+            destructiveActions.keys
         )
     }
 
@@ -494,9 +522,9 @@ class SettingsThemingTest {
             .filterIsInstance<Button>()
             .filter { it !is android.widget.CompoundButton }
         assertEquals(
-            "the screen no longer has the three buttons this guard was written " +
+            "the screen no longer has the four buttons this guard was written " +
                 "for; re-derive it rather than loosening it",
-            3,
+            4,
             buttons.size
         )
         for (button in buttons) {
