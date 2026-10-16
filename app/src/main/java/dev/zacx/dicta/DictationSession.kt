@@ -48,6 +48,13 @@ class DictationSession(
     /** Overridable for tests; production uses the real device locale. */
     private val locale: Locale = Locale.getDefault(),
     private val sdkInt: Int = Build.VERSION.SDK_INT,
+    /**
+     * Where a finished recording is filed for history. Injectable so a test can
+     * hand over a temp dir and a fake clock — and so the sessions built by the
+     * existing tests, which care about tiers and gates rather than about
+     * history, keep working unchanged.
+     */
+    private val history: DictationHistoryStore = DictationHistoryStore(context),
 ) {
 
     interface Callbacks {
@@ -452,7 +459,33 @@ class DictationSession(
                 }
                 return
             }
-            worker.execute { transcribeRemotely(file, audioSeconds) }
+            // 🔴 The history capture, deliberately BELOW both gates above.
+            //
+            // `uploadSuppressed` is the cancel button, and the comment on
+            // `suppressUpload()` — "'nothing was uploaded' has to be a promise
+            // the user can rely on" — extends verbatim to "nothing was kept".
+            // A cancel that still files the audio into a browsable history is
+            // not a cancel; it is a cancel of the network call only, which is
+            // not what the user pressed the button for. Likewise a destroyed
+            // session, which deletes its recording rather than keeping it.
+            //
+            // (The `file == null` check above is a precondition, not a policy
+            // gate: there is no file to copy. The two gates are the privacy
+            // decision, and this hook is after both.)
+            //
+            // Not on the main thread: `onFinished` runs on the capture thread.
+            // `runCatching` because a full disk must degrade to "no history
+            // entry", never to a lost transcript — the upload below is the
+            // thing the user is waiting for.
+            val historyId = runCatching {
+                history.add(
+                    audio = file,
+                    text = localTranscript,
+                    fromRemote = false,
+                    audioSeconds = audioSeconds,
+                )
+            }.getOrNull()
+            worker.execute { transcribeRemotely(file, audioSeconds, historyId) }
         }
     }
 
@@ -472,7 +505,7 @@ class DictationSession(
      * — and the gate stays on this class's two posting routes rather than
      * moving into a class that knows nothing about this session's life cycle.
      */
-    private fun transcribeRemotely(file: File, audioSeconds: Double) {
+    private fun transcribeRemotely(file: File, audioSeconds: Double, historyId: String?) {
         RemoteTranscriber(appContext, settings, locale).transcribe(
             audio = file,
             audioSeconds = audioSeconds,
@@ -486,6 +519,11 @@ class DictationSession(
                 }
 
                 override fun onRemoteTranscript(text: String, status: String) {
+                    // Before the post, because this runs on the worker thread
+                    // and writing the index is IO. The stored text has to be
+                    // the text the user actually saw, which is this one — the
+                    // local first guess that `add` filed is now stale.
+                    updateHistoryText(historyId, text, fromRemote = true)
                     postToMain {
                         callbacks.onTranscript(
                             text, fromRemote = true, isFinal = true
@@ -495,6 +533,15 @@ class DictationSession(
                 }
 
                 override fun onFellBack(status: String, localTranscript: String) {
+                    // Only when there is something to show. `add` already
+                    // filed whatever local text existed at the time, but the
+                    // recogniser's onFinal can land after the ladder started,
+                    // so this is the first point where the text on screen is
+                    // known — and a blank would overwrite a good entry with
+                    // nothing.
+                    if (localTranscript.isNotBlank()) {
+                        updateHistoryText(historyId, localTranscript, fromRemote = false)
+                    }
                     postToMain {
                         callbacks.onStatus(status)
                         if (localTranscript.isNotBlank()) {
@@ -507,6 +554,23 @@ class DictationSession(
             },
         )
         // 🔴 The file is NOT deleted here, exactly as before: destroy() owns
-        // the cache file's life cycle for a recording this session made.
+        // the cache file's life cycle for a recording this session made. The
+        // history copy is a COPY, so that deletion is none of history's
+        // business — which is the whole reason `add` does not move the file.
+    }
+
+    /**
+     * Rewrites a history entry's transcript, tolerating every way it can fail
+     * to exist.
+     *
+     * A null [id] means the capture hook never filed anything (the store threw,
+     * or this is a session whose recording was suppressed and so never reached
+     * the hook); a store that no longer holds the id means it was evicted while
+     * the upload was in flight. Neither is an error, and neither may interfere
+     * with delivering the transcript — which is what the user is waiting for.
+     */
+    private fun updateHistoryText(id: String?, text: String, fromRemote: Boolean) {
+        if (id == null) return
+        runCatching { history.updateText(id, text, fromRemote) }
     }
 }
