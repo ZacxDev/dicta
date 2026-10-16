@@ -236,14 +236,30 @@
 
           maxLines=4 at full width clears the longest string with margin —
           the budget is REQUIRED_STATUS_LINES x CHARS_PER_STATUS_LINE in
-          OverlayMinimalLayoutTest, which owns both constants and the
-          measurement, rather than an arithmetic result restated here.
-          ellipsize=end is kept only as a backstop for copy
-          added later; if it ever actually engages, this view needs another
-          line, not a shorter sentence — the card is a ScrollView and can
-          afford the height. OverlayMinimalLayoutTest measures the real longest
-          string against the real inflated width rather than trusting this
-          arithmetic.
+          OverlayMinimalLayoutTest, which owns both constants, rather than an
+          arithmetic result restated here. ellipsize=end is kept only as a
+          backstop for copy added later; if it ever actually engages, this
+          view needs another line, not a shorter sentence — the card is a
+          ScrollView and can afford the height.
+
+          🔴 WHAT IS AND IS NOT PINNED. The guard is a CHARACTER-COUNT budget:
+          OverlayMinimalLayoutTest derives the longest status string from the
+          resources and compares its LENGTH against the budget above, and
+          separately asserts this view's real inflated width equals the card's
+          inner width. It does NOT measure rendered text, and **rendered wrap
+          is not pinned at all** — it cannot be under Robolectric, whose
+          measureText returns a flat 1.0px per character and whose
+          getEllipsisCount returns 0 even for a 4000-character string (that
+          dead end is written up in the test). Whether the words actually fit
+          on this device is confirmed by screenshot, not by the suite.
+
+          ⚠ This paragraph used to end "OverlayMinimalLayoutTest measures the
+          real longest string against the real inflated width rather than
+          trusting this arithmetic." No test does that, and the file's own
+          dead-end note says it is impossible by construction — so a
+          maintainer could read it, believe wrap was covered, widen the copy,
+          and ship a status line that truncates on device with every test
+          green.
         -->
         <TextView
             android:id="@+id/status_text"

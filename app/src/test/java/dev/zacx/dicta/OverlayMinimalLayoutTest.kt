@@ -491,7 +491,8 @@ class OverlayMinimalLayoutTest {
 
         assertTrue(
             "status_text allows ${status.maxLines} line(s). At full card width " +
-                "and 12sp this device fits roughly 48 characters per line, and " +
+                "and 12sp this device fits roughly $CHARS_PER_STATUS_LINE " +
+                "characters per line, and " +
                 "the longest string it must carry is ${longest.length} " +
                 "characters, so it needs at least $REQUIRED_STATUS_LINES. " +
                 "Issue #9 was this view capped at ONE ellipsized line. " +
@@ -610,39 +611,55 @@ class OverlayMinimalLayoutTest {
     }
 
     /**
-     * 🔴 The control for the derivation above, and the growth guard the old
-     * hardcoded list could not be.
-     *
-     * Asserts the derived set still contains every name the previous version
-     * listed by hand — so a derivation that breaks, or silently resolves to a
-     * handful of button labels, goes red rather than reporting a comfortably
-     * short "longest" — **and** that it contains the status strings added
-     * since, which is the case the `names.size == values.size` form was blind
-     * to. A new status string is picked up with no edit here; one that the
-     * derivation cannot see fails this.
-     */
-    /**
-     * 🔴 [STATUS_WRITERS] must name **every** class that can put text on
-     * `status_text`, and this is what makes a fifth one impossible to miss
-     * the way the fourth was.
+     * 🔴 Every class that **calls** `onStatus` must be classified — in
+     * [STATUS_WRITERS] or in the exclusion below — so a new status writer is
+     * a red test rather than a silent gap.
      *
      * The derivation above is only as wide as its list of writers, so a list
-     * maintained by hand reproduces, one level up, exactly the blindness the
-     * derivation was built to remove — which is what happened:
-     * `TranscriptionCoordinator` calls `onStatus` and was absent, and a
-     * mutant proved the suite could not see an overlong string introduced
-     * there.
+     * maintained by hand reproduces, one level up, the blindness the
+     * derivation was built to remove. That is exactly what happened:
+     * `TranscriptionCoordinator` calls `onStatus`, was absent from the list,
+     * and a mutant proved the suite could not see an overlong string
+     * introduced there.
      *
-     * So the writers are themselves derived: any class that **calls**
-     * `onStatus(` (as opposed to declaring or overriding it) is a candidate,
-     * and every candidate must be classified — in [STATUS_WRITERS] or in the
-     * explicit exclusion below. A new one is a compile-clean, test-red
-     * decision rather than a silent gap.
+     * 🔴 **The first version of this guard was line-formatting dependent, in
+     * both directions, and an audit demonstrated both.** It filtered per
+     * physical line with `containsMatchIn(line) && !line.contains("fun
+     * onStatus")`, so:
+     *
+     *  * a one-line **expression-bodied forwarder** — Kotlin's ordinary
+     *    idiom, `override fun onStatus(t: String) = down.onStatus(...)` —
+     *    declares and calls on one line, was dropped as a declaration, and a
+     *    fifth writer in that shape **survived with the suite fully green**;
+     *  * conversely `BubbleSessionBus`'s real forwarder escaped **only**
+     *    because it is one line, so a pure whitespace reformat of it onto two
+     *    (the shape `onClientSilenced` already uses ten lines below) turned
+     *    this test **spuriously red**. A gate that goes red on cosmetic
+     *    reformatting is the gate people learn to click through.
+     *
+     * So the match is now **declaration-aware rather than line-aware**: the
+     * file is whitespace-normalised to a single line, `fun onStatus(...)`
+     * declaration headers are deleted, and whatever `onStatus(` remains is a
+     * call. Formatting cannot change the answer in either direction.
+     *
+     * Scope, stated rather than overclaimed. This finds **callers**;
+     * `DictateActivity` is the *sink* (it declares the override and assigns
+     * `statusText.text`) and calls `onStatus` nowhere, so it is in
+     * [STATUS_WRITERS] for its resource references, not because it is found
+     * here. A class that authored a status string and handed it to another
+     * class to deliver would still be missed — none does today, and the
+     * resource-reference derivation would have to miss it too.
      */
     @Test
     fun everyClassThatCallsOnStatusIsClassified() {
-        // Forwards text authored elsewhere, and its own strings are Toasts.
-        val excluded = setOf("BubbleService")
+        val excluded = mapOf(
+            // Forwards text authored elsewhere; its own strings are Toasts
+            // (stt_max_duration via toast(...)).
+            "BubbleService" to "forwards; own strings are Toasts",
+            // A pure fan-out bus: `deliver { it.onStatus(text) }` passes on
+            // the identical string and references no R.string at all.
+            "BubbleSessionBus" to "pure fan-out; references no string resource",
+        )
         val sourceDir = listOf(
             java.io.File("app/src/main/java/dev/zacx/dicta"),
             java.io.File("src/main/java/dev/zacx/dicta"),
@@ -655,36 +672,64 @@ class OverlayMinimalLayoutTest {
             sourceDir != null,
         )
 
-        val callers = sourceDir!!.listFiles { f -> f.name.endsWith(".kt") }
-            .orEmpty()
-            .filter { file ->
-                file.readLines().any { line ->
-                    ON_STATUS_CALL.containsMatchIn(line) &&
-                        !line.contains("fun onStatus")
-                }
-            }
+        // walkTopDown, not listFiles: the package is flat today, and a writer
+        // added in a future sub-package would otherwise be silently unscanned.
+        val callers = sourceDir!!.walkTopDown()
+            .filter { it.isFile && it.extension == "kt" }
+            .filter { callsOnStatus(it.readText()) }
             .map { it.nameWithoutExtension }
             .toSet()
 
-        // Positive control: a scan wired to nothing would classify perfectly.
+        // Positive control: a scan wired to nothing classifies perfectly.
         assertTrue(
-            "the onStatus scan found ${callers.size} callers, which cannot be " +
-                "right — it is not reading the sources it thinks it is",
-            callers.containsAll(listOf("RemoteTranscriber", "TranscriptionCoordinator")),
+            "the onStatus scan found ${callers.size} callers (${callers.sorted()}), " +
+                "which cannot be right — it is not reading the sources it " +
+                "thinks it is",
+            callers.containsAll(
+                listOf("RemoteTranscriber", "TranscriptionCoordinator", "BubbleSessionBus")
+            ),
         )
 
-        val unclassified = callers - STATUS_WRITERS.toSet() - excluded
+        val unclassified = callers - STATUS_WRITERS.toSet() - excluded.keys
         assertEquals(
-            "these classes write a status string and are in neither " +
-                "STATUS_WRITERS nor the exclusion list, so the longest-status " +
-                "guard cannot see any string they introduce: $unclassified. " +
-                "Add each to STATUS_WRITERS, or to the exclusion with a " +
-                "reason that says where its text actually goes.",
+            "these classes hand a status string into the callback chain and " +
+                "are in neither STATUS_WRITERS nor the exclusion list, so the " +
+                "longest-status guard cannot see any string they introduce: " +
+                "$unclassified. Add each to STATUS_WRITERS, or to the " +
+                "exclusion with a reason that says where its text goes.",
             emptySet<String>(),
             unclassified,
         )
     }
 
+    /**
+     * True iff [source] **calls** `onStatus`, as opposed to only declaring or
+     * overriding it.
+     *
+     * Whitespace-normalised first so the answer cannot depend on where the
+     * line breaks fall, then declaration headers are removed so that an
+     * expression-bodied forwarder — which declares and calls in one
+     * expression — is still seen as the call it is.
+     */
+    private fun callsOnStatus(source: String): Boolean {
+        val normalised = source.replace(WHITESPACE_RUN, " ")
+        return ON_STATUS_CALL.containsMatchIn(
+            ON_STATUS_DECLARATION.replace(normalised, " ")
+        )
+    }
+
+    /**
+     * 🔴 The control for the resource derivation, and the growth guard the
+     * old hardcoded list could not be.
+     *
+     * Asserts the derived set still contains every name the previous version
+     * listed by hand — so a derivation that breaks, or silently resolves to a
+     * handful of button labels, goes red rather than reporting a comfortably
+     * short "longest" — **and** that it contains the status strings added
+     * since, which is the case the `names.size == values.size` form was blind
+     * to. A new status string is picked up with no edit here; one the
+     * derivation cannot see fails this.
+     */
     @Test
     fun theStatusStringLedgerIsDerivedAndNotAStaleList() {
         val names = statusStringNames()
@@ -756,21 +801,44 @@ class OverlayMinimalLayoutTest {
          */
         val RESOURCE_REFERENCE = Regex("""R\.string\.([a-z0-9_]+)""")
 
+        /** Any run of whitespace, so a scan cannot depend on line breaks. */
+        val WHITESPACE_RUN = Regex("""\s+""")
+
         /**
-         * Every class that can put text on `status_text`, as a ledger.
+         * A `fun onStatus(...)` **declaration header**, with any modifiers.
+         *
+         * Deleted before the call scan so that an expression-bodied forwarder
+         * (`override fun onStatus(t: String) = down.onStatus(t)`) is still
+         * recognised as the call it contains. Matched against
+         * whitespace-normalised text, so a declaration split across lines
+         * collapses to this same shape.
+         */
+        val ON_STATUS_DECLARATION = Regex(
+            """(?:\b(?:override|private|internal|public|protected|open|abstract|final)\s+)*""" +
+                """fun\s+onStatus\s*\([^)]*\)"""
+        )
+
+        /**
+         * An `onStatus(` call, matched only **after**
+         * [ON_STATUS_DECLARATION] has been removed — at which point any
+         * remaining occurrence is a call rather than a declaration.
+         */
+        val ON_STATUS_CALL = Regex("""\bonStatus\s*\(""")
+
+        /**
+         * The classes whose `R.string.*` references can reach `status_text`.
          *
          * `TranscriptionCoordinator` is here because it calls `onStatus`,
-         * which `RemoteTranscriber` forwards verbatim to `DictateActivity`.
-         * It was missing from the first version of this list and a mutant
-         * proved the gap. `BubbleService` is excluded on purpose — see
-         * [statusStringNames].
+         * which `RemoteTranscriber` forwards verbatim to `DictateActivity`;
+         * it was missing from the first version of this list and a mutant
+         * proved the gap. `DictateActivity` is here as the **sink** — it
+         * declares the override that assigns `statusText.text` — not because
+         * it calls `onStatus`, which it never does.
+         *
+         * `BubbleService` and `BubbleSessionBus` are deliberately excluded;
+         * [everyClassThatCallsOnStatusIsClassified] holds the reasons and
+         * fails if a new caller appears in neither place.
          */
-        /**
-         * An `onStatus(` **call**. `fun onStatus` is filtered separately so a
-         * declaration or an override does not count as writing a status.
-         */
-        val ON_STATUS_CALL = Regex("""\.onStatus\(""")
-
         val STATUS_WRITERS = listOf(
             "DictateActivity",
             "DictationSession",
