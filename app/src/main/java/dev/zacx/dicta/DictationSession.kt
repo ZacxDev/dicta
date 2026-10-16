@@ -55,6 +55,27 @@ class DictationSession(
      * history, keep working unchanged.
      */
     private val history: DictationHistoryStore = DictationHistoryStore(context),
+    /**
+     * Builds the upload path for one finished recording.
+     *
+     * 🔴 Injected for ONE reason: the `updateText` calls in the
+     * [RemoteTranscriber.Events] handlers below are the only thing that
+     * replaces history's on-device first guess with the transcript the user
+     * actually saw. With the transcriber constructed inline, reaching
+     * [RemoteTranscriber.Events.onRemoteTranscript] needed a real server, so
+     * that wiring was covered by nothing while both of its sides — the store's
+     * [DictationHistoryStore.updateText] and the ladder itself — were
+     * separately green. A defect living only in the join means history keeps
+     * the worse transcript forever, silently and with no error.
+     *
+     * The default is the construction this line replaced, argument for
+     * argument, and it is still called **per `transcribeRemotely` call** — a
+     * single injected instance would change the per-call
+     * [RemoteTranscriber.Transport] and [UploadBudget] lifetime that
+     * `RemoteTranscriberTest` pins.
+     */
+    private val transcriberFactory: (Context, SttSettings, Locale) -> RemoteTranscriber =
+        { context_, settings_, locale_ -> RemoteTranscriber(context_, settings_, locale_) },
 ) {
 
     interface Callbacks {
@@ -506,7 +527,7 @@ class DictationSession(
      * moving into a class that knows nothing about this session's life cycle.
      */
     private fun transcribeRemotely(file: File, audioSeconds: Double, historyId: String?) {
-        RemoteTranscriber(appContext, settings, locale).transcribe(
+        transcriberFactory(appContext, settings, locale).transcribe(
             audio = file,
             audioSeconds = audioSeconds,
             // Read when the fallback fires, not now: the recogniser's onFinal

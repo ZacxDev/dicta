@@ -36,6 +36,15 @@ class SettingsActivity : Activity() {
     private lateinit var statusLine: TextView
     private lateinit var remoteToggle: CheckBox
     private lateinit var languageSpinner: Spinner
+    private lateinit var historyUsage: TextView
+
+    /**
+     * History, read here only through [DictationHistoryStore.usage] and
+     * [DictationHistoryStore.clearAll]. This screen makes no retention
+     * decision and exposes no bound — see the History comment in
+     * `activity_settings.xml`.
+     */
+    private lateinit var history: DictationHistoryStore
 
     /**
      * The spinner's rows, by position. `null` is "follow the device locale" and
@@ -55,6 +64,8 @@ class SettingsActivity : Activity() {
         statusLine = findViewById(R.id.stt_status)
         remoteToggle = findViewById(R.id.stt_remote_enabled)
         languageSpinner = findViewById(R.id.stt_language)
+        historyUsage = findViewById(R.id.stt_history_usage)
+        history = DictationHistoryStore(this)
 
         urlField.setText(settings.baseUrl)
         remoteToggle.isChecked = settings.remoteEnabled
@@ -64,6 +75,9 @@ class SettingsActivity : Activity() {
         findViewById<Button>(R.id.stt_save).setOnClickListener { save() }
         findViewById<Button>(R.id.stt_clear_token).setOnClickListener { clearToken() }
         findViewById<Button>(R.id.stt_test).setOnClickListener { testConnection() }
+        findViewById<Button>(R.id.stt_clear_history).setOnClickListener { clearHistory() }
+
+        refreshHistoryUsage()
     }
 
     override fun onDestroy() {
@@ -171,6 +185,71 @@ class SettingsActivity : Activity() {
         statusLine.text = getString(R.string.stt_token_cleared)
     }
 
+    // --- history ------------------------------------------------------------
+
+    /**
+     * Reads [DictationHistoryStore.usage] and renders it.
+     *
+     * 🔴 On [worker], not here. `usage()` reads `index.json` off disk and, when
+     * an audio file has gone missing, rewrites it — file IO either way, and the
+     * history directory is as large as the retention bounds allow. The read is
+     * the reason the usage line's layout text is
+     * `@string/stt_history_usage_pending` rather than a zero: a hard-coded
+     * "0 dictations" would be a wrong number shown as a real one.
+     */
+    private fun refreshHistoryUsage() {
+        worker.execute {
+            val usage = runCatching { history.usage() }.getOrNull()
+            runOnUiThread {
+                // A store that cannot be read leaves the pending text alone
+                // rather than claiming "0 dictations" — the one number that
+                // would tell the user their history is gone when it is not.
+                if (usage != null) historyUsage.text = usageText(usage)
+            }
+        }
+    }
+
+    /**
+     * "History: 3 dictations, 1.4 MB".
+     *
+     * MB here is mebibytes (2^20), matching every file manager on the device;
+     * one decimal place, because a second one on a figure the user can only
+     * act on wholesale is noise.
+     */
+    private fun usageText(usage: DictationHistoryStore.Usage): String = resources
+        .getQuantityString(
+            R.plurals.stt_history_usage,
+            usage.itemCount,
+            usage.itemCount,
+            String.format(
+                Locale.getDefault(),
+                "%.1f",
+                usage.totalBytes.toDouble() / HISTORY_BYTES_PER_MB,
+            ),
+        )
+
+    /**
+     * Deletes every recording and transcript, then re-reads what is left.
+     *
+     * 🔴 `clearAll()` unlinks every file in the history directory, so it runs on
+     * [worker] — on the main thread a full history is a visible freeze on the
+     * one control whose whole job is to reassure.
+     *
+     * The refresh is NOT optional and NOT cosmetic: this screen's only report
+     * of what the app is keeping is the usage line, so a delete that leaves it
+     * reading "12 dictations" tells the user their voice recordings are still
+     * on the phone. It is also the only confirmation the action gives.
+     */
+    private fun clearHistory() {
+        worker.execute {
+            runCatching { history.clearAll() }
+            val usage = runCatching { history.usage() }.getOrNull()
+            runOnUiThread {
+                if (usage != null) historyUsage.text = usageText(usage)
+            }
+        }
+    }
+
     /**
      * Probes `GET /healthz` against the URL currently in the field.
      *
@@ -195,5 +274,10 @@ class SettingsActivity : Activity() {
                 )
             }
         }
+    }
+
+    private companion object {
+        /** Mebibytes, per the note on [usageText]. */
+        const val HISTORY_BYTES_PER_MB = 1024.0 * 1024.0
     }
 }
