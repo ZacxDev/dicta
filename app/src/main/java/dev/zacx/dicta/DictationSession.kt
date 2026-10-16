@@ -78,6 +78,25 @@ class DictationSession(
      */
     private val transcriberFactory: (Context, SttSettings, Locale) -> RemoteTranscriber =
         { context_, settings_, locale_ -> RemoteTranscriber(context_, settings_, locale_) },
+    /**
+     * Runs [destroy]'s history cleanup off the calling thread.
+     *
+     * 🔴 Injected for ONE reason, and it is a test-determinism one rather than
+     * a product one. Since the cleanup moved onto a thread, a test asserting
+     * that `destroy()` took an entry back out has nothing to wait on but wall
+     * time — `DictationSessionHistoryCaptureTest` was doing exactly that, and
+     * `Thread.sleep(100)` against an un-joined daemon passes almost always and
+     * flakes opaquely. A test passes a wrapper that counts a latch down once
+     * the block has returned, so it waits on the cleanup's actual completion.
+     *
+     * The default is [runHistoryCleanup], whose off-thread property stays
+     * pinned by
+     * `DictationSessionHistoryCaptureTest.historyCleanupNeverRunsOnTheCallersThread`
+     * — that test drives the companion function directly, so it still covers
+     * what production gets. What neither it nor this seam pins is that
+     * `destroy()` *calls* this at all; see the note on [runHistoryCleanup].
+     */
+    private val historyCleanup: (() -> Unit) -> Unit = { runHistoryCleanup(it) },
 ) {
 
     interface Callbacks {
@@ -140,8 +159,9 @@ class DictationSession(
      *
      * So the id is held only for the interval in which nothing else can
      * collect it: set just before `worker.execute`, cleared by the task itself
-     * as its first action. Three outcomes, each resolved by an atomic on this
-     * field rather than by timing:
+     * as its first action. Three outcomes, resolved by an atomic on this field
+     * rather than by timing — in all but one window, which the atomic does not
+     * resolve and which [destroy] names where it reads the field:
      *
      *  * the enqueue is **rejected** — `destroy()` already shut the worker
      *    down. The catch at the enqueue clears the id and deletes.
@@ -426,10 +446,22 @@ class DictationSession(
         main.removeCallbacksAndMessages(null)
         audioFile?.let { if (it.exists()) it.delete() }
         // 🔴 AFTER shutdownNow(), which is what decides the answer rather than
-        // merely preceding it: by the time it returns, every task that will
-        // ever run has started (and has therefore already cleared the id), and
-        // everything still queued has been drained and never will. So an id
-        // still here is exactly "filed, and nothing is going to collect it".
+        // merely preceding it: almost always, by the time it returns every
+        // task that will ever run has started (and has therefore already
+        // cleared the id) and everything still queued has been drained, so an
+        // id still here is "filed, and nothing is going to collect it".
+        //
+        // ⚠ "Almost always", not always — the absolute was written here twice
+        // and is false both times. `ThreadPoolExecutor.runWorker` removes a
+        // task from the queue inside `getTask()`, BEFORE calling `task.run()`,
+        // so a task can be dequeued-but-not-yet-started: `shutdownNow()` drains
+        // nothing, the `getAndSet` below returns the id, the entry is deleted,
+        // and the task then runs the full ladder anyway — its `updateText`
+        // silently no-ops on an unknown id and a dictation the user is watching
+        // loses its history entry. ACCEPTED AS UNREACHABLE RATHER THAN CLOSED:
+        // the window is a few instructions wide and `destroy()` is human-driven
+        // teardown. No guard is added for it, deliberately.
+        //
         // See [pendingHistoryId] for why this is not "the last id filed".
         pendingHistoryId.getAndSet(null)?.let { id ->
             // 🔴 NOT inline: destroy() is called from Service/Activity
@@ -443,10 +475,21 @@ class DictationSession(
             // the delete is idempotent: the entry is already unreachable from
             // this session (the id is gone from the field), `history.delete`
             // is a no-op for an unknown id, and the store's own monitor
-            // serialises it against any other writer. The cost is that
-            // "keeps nothing" becomes true shortly after destroy() rather than
-            // at the instant it returns.
-            runHistoryCleanup { runCatching { history.delete(id) } }
+            // serialises it against any other writer.
+            //
+            // 🔴 The cost is that the delete is **best-effort, and lost if the
+            // process dies first** — NOT, as this comment used to say, that
+            // "keeps nothing" becomes true "shortly after" destroy(). On the
+            // `BubbleService.onDestroy` path the process is often killed
+            // immediately afterwards, and the cleanup thread is `isDaemon =
+            // true` so nothing holds the process open for it; the delete must
+            // also first take the store's process-wide monitor, which an
+            // in-flight `add` can hold while copying. So "shortly after" can be
+            // **never**, leaving exactly the kept recording this cleanup exists
+            // to remove. The daemon flag stays anyway: a non-daemon thread
+            // would hold up a process the system is trying to end, which is the
+            // worse of the two failures.
+            historyCleanup { runCatching { history.delete(id) } }
         }
     }
 

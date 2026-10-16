@@ -291,19 +291,28 @@ class SettingsActivity : Activity() {
      * the one on screen — and it is read from a field rather than from
      * `usage()` because `usage()` is disk IO and this runs on the main thread.
      *
-     * ⚠ Which makes the count as stale as the usage line, and the line is
-     * refreshed only in `onCreate` and after a delete. A bubble session filing
-     * a dictation in between means the dialog says "2" while
-     * [DictationHistoryStore.clearAll] removes 3. Only *new* items can appear
-     * in that gap, so the drift has one direction: the dialog can **understate**
-     * the loss, never overstate it.
+     * ⚠ Which makes the count a **stale read**. [lastUsage] is written only by
+     * `onCreate`'s worker read and the read after a delete — there is no
+     * `onResume` refresh — so the window lasts as long as this activity stays
+     * backgrounded.
      *
-     * Kept deliberately, and not because understating is the flattering
-     * direction — it is the less conservative of the two. It is tolerable
-     * because the count is an aid and not the promise: the user is agreeing to
-     * "every saved recording … this cannot be undone", which stays true at any
-     * count, and the only way to make the number exact is a `usage()` read on
-     * the main thread.
+     * 🔴 It can drift in **either** direction. An earlier version of this
+     * comment said only *new* items could appear in the gap and concluded the
+     * dialog could therefore **understate** the loss and never overstate it.
+     * That is false. A route to an overstatement, established from the call
+     * sites rather than reasoned about — [HistoryRetention.evict] has exactly
+     * one caller in the whole app, `DictationHistoryStore.add` — is that
+     * retention is never applied on the `usage()` read, so
+     * items already past [HistoryRetention.MAX_AGE_MS] are still counted — and
+     * one bubble dictation firing `add()` while this screen is backgrounded
+     * evicts them, leaving the dialog naming more items than
+     * [DictationHistoryStore.clearAll] then removes.
+     *
+     * Kept deliberately: the only way to make the number exact is a `usage()`
+     * read, i.e. disk IO, on the main thread. It is tolerable because the count
+     * is an aid and **not** the promise — the user is agreeing to "every saved
+     * recording … this cannot be undone", which stays true at any count. No
+     * claim is made here about the drift's sign or its size.
      *
      * Cancel, back and a tap outside all do exactly nothing: the negative
      * button has no listener and the dialog is cancelable. There is no partial

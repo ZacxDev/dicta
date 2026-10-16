@@ -53,15 +53,26 @@ import java.io.FileOutputStream
  *
  * 🔴 **And when `index.json` is lost anyway, the temp file is the recovery.**
  * [load] falls back to `index.json.tmp` whenever `index.json` is missing or
- * unparseable. A temp file that still exists is, by construction, a complete
- * and `fsync`'d index that was never renamed into place — there is no other way
- * for one to survive a call, because the normal path consumes it in the rename
- * and the fallback path deletes it. So reading it recovers all three ways the
- * commit can be lost: a kill between the write and the rename, a rename the
- * filesystem *refused* followed by a torn in-place write, and a power cut in
- * either window. Every one of those used to land in the paragraph below —
- * **every recording the user has, deleted** — and now lands on the previous
- * index instead.
+ * unparseable. A surviving temp is *usually* a complete, `fsync`'d index that
+ * was never renamed into place: the normal path consumes it in the rename and
+ * the fallback path deletes it, so the ways it is normally left behind are a
+ * kill between the write and the rename, a rename the filesystem *refused*
+ * followed by a torn in-place write, and a power cut in either window. Those
+ * used to land in the paragraph below — **every recording the user has,
+ * deleted** — and now land on the previous index instead.
+ *
+ * 🔴 **But a surviving temp can also be a partial or an unsynced one**, and
+ * this file names the counter-example itself at [writeIndex]: the write can
+ * throw inside `FileOutputStream(temp).use { write; fd.sync() }`, leaving a
+ * truncated prefix (a partial write, ENOSPC) or a complete-but-unsynced file
+ * (`SyncFailedException`) — and [add]'s catch deletes only the audio copy, so
+ * that temp survives the call. `DictationHistoryStoreTest`'s
+ * `anAddThatThrowsLeavesNoAudioBehind` injects exactly that class of failure.
+ * **[recoverFromTemp]'s `parse` is what makes reading a temp safe. It is
+ * load-bearing and must not be removed.** This paragraph used to say a
+ * surviving temp was a complete index "by construction" with "no other way"
+ * to produce one, which reads as "the parse cannot fail here" and so as
+ * licence to delete that guard.
  *
  * 🔴 **The honest remaining loss cases**, because the sentence this replaces
  * was flattering and the one before that was wrong:
@@ -388,9 +399,11 @@ class DictationHistoryStore internal constructor(
      *
      * A *parseable* `index.json` is returned as-is and nothing is written.
      * Otherwise — missing, truncated, corrupt — [recoverFromTemp] gets the
-     * next word, because `index.json.tmp` surviving a call means it is a
-     * complete index that never made it into place (class kdoc). Only when
-     * that fails too is the directory treated as corrupt: reset, orphans
+     * next word, because `index.json.tmp` surviving a call is usually the
+     * write this index was supposed to have become (class kdoc). Usually, not
+     * always: [recoverFromTemp] re-parses it rather than trusting that, since
+     * a temp can also be torn. Only when that fails too — no temp, or a temp
+     * that will not parse — is the directory treated as corrupt: reset, orphans
      * swept. See the class kdoc for why resetting beats throwing, and for what
      * resetting costs.
      */
@@ -420,6 +433,14 @@ class DictationHistoryStore internal constructor(
     /**
      * Reads `index.json.tmp` as the index, restoring `index.json` from it, or
      * returns null when there is no usable temp.
+     *
+     * 🔴 **The `parse` below is a guard, not a formality — do not remove it,
+     * and do not weaken it to an existence or size check.** A surviving temp is
+     * not necessarily a complete index: [writeIndex] can throw part-way through
+     * `FileOutputStream(temp).use { … }` and leave a truncated or unsynced one
+     * (see the class kdoc). This parse is the only thing standing between such
+     * a temp and a restored `index.json` that is itself unparseable — i.e. the
+     * [sweepAndReset] wipe this whole path exists to prevent.
      *
      * 🔴 The restore writes `index.json` **in place, from the bytes just
      * parsed**, and deliberately does NOT go through [writeIndex]. [writeIndex]

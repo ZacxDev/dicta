@@ -105,10 +105,36 @@ class DictationSessionHistoryCaptureTest {
         (ctor.newInstance(session) as MicCapture.Listener).onFinished(file, 3.0)
     }
 
-    /** Lets the worker thread finish whatever it started and drains the looper. */
+    /**
+     * Lets the worker thread finish whatever it started and drains the looper.
+     *
+     * ⚠ NOT a synchronisation primitive, and specifically not one for
+     * `destroy()`'s history cleanup, which since r2 runs on an un-joined daemon
+     * thread. An assertion about whether that cleanup has *happened* must wait
+     * on [cleanupLatch] instead — a sleep there passes almost always and flakes
+     * opaquely in CI.
+     */
     private fun settle() {
         Thread.sleep(100)
         shadowOf(Looper.getMainLooper()).idle()
+    }
+
+    /**
+     * The real [DictationSession.runHistoryCleanup], wrapped so a test can wait
+     * on the cleanup block's **completion** rather than on wall time.
+     *
+     * Still a real off-thread run: the production function is what starts the
+     * thread, so this changes when the test observes the work, not where it
+     * happens.
+     */
+    private fun cleanupLatch(done: CountDownLatch): (() -> Unit) -> Unit = { block ->
+        DictationSession.runHistoryCleanup {
+            try {
+                block()
+            } finally {
+                done.countDown()
+            }
+        }
     }
 
     @Test
@@ -391,6 +417,10 @@ class DictationSessionHistoryCaptureTest {
     fun aSessionDestroyedAfterTheEnqueueKeepsOnlyTheRecordingAlreadyUploading() {
         val occupied = CountDownLatch(1)
         val release = CountDownLatch(1)
+        // 🔴 Waited on below instead of sleeping. destroy()'s delete runs on a
+        // daemon thread nobody joins, so `queued in left` would otherwise race
+        // it — passing almost always and flaking opaquely under CI load.
+        val cleaned = CountDownLatch(1)
         // 🔴 An ADVANCING clock, not this file's fixed one: both recordings go
         // into one store, and with equal `createdAtMs` the two ids differ only
         // by their random suffix — so "which of these two is the queued one"
@@ -404,6 +434,7 @@ class DictationSessionHistoryCaptureTest {
             Silent(),
             history = history,
             transcriberFactory = blockingTranscriber(occupied, release),
+            historyCleanup = cleanupLatch(cleaned),
         )
 
         // Recording 1: its task starts and parks inside the transport, so it
@@ -439,8 +470,18 @@ class DictationSessionHistoryCaptureTest {
         )
 
         session.destroy()
+        // 🔴 The actual completion of destroy()'s cleanup, not a sleep. Also a
+        // positive control on the assertions below: a zero from a cleanup that
+        // never ran is indistinguishable from one that ran and collected
+        // nothing, so without this a broken destroy() could still read green
+        // on the `running in left` half alone.
+        assertTrue(
+            "destroy()'s history cleanup never ran, so nothing could have " +
+                "collected the queued entry and the assertions below are " +
+                "measuring the harness rather than destroy()",
+            cleaned.await(10, TimeUnit.SECONDS),
+        )
         release.countDown()
-        settle()
         settle()
 
         val left = history.recent(10).map { it.id }
