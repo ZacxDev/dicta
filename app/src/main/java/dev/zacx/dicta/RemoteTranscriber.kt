@@ -161,10 +161,14 @@ class RemoteTranscriber(
             unitRandom = unitRandom,
             elapsedMs = elapsedMs,
             events = object : TranscriptionCoordinator.Events {
-                override fun onRemoteTranscript(text: String) {
+                override fun onRemoteTranscript(
+                    text: String,
+                    truncated: Boolean?,
+                    unreliable: Boolean?,
+                ) {
                     events.onRemoteTranscript(
                         text,
-                        appContext.getString(R.string.stt_remote_done),
+                        appContext.getString(statusLabel(truncated, unreliable)),
                     )
                 }
 
@@ -212,6 +216,56 @@ class RemoteTranscriber(
     }
 
     internal companion object {
+
+        /**
+         * Which status accompanies a remote transcript, given the server's two
+         * self-reported flags.
+         *
+         * 🔴 **Both branches are `== true` and nothing wider.** For either
+         * flag, `false` is the server saying it checked and found nothing, and
+         * `null` is the server saying **nothing could be checked** — no
+         * threshold configured, or the signal a rule needs is itself null.
+         * Neither is a reason to warn. `!= null` or `!= false` here would warn
+         * on a no-signal response, which is the ✓ defect inverted: a claim
+         * about a check that did not happen. And a warning shown on every
+         * dictation is one the user learns to scroll past, which costs the
+         * real warnings their meaning.
+         *
+         * 🔴 **Precedence: `unreliable` wins over `truncated`.** A transcript
+         * that may be fabricated is a worse problem than one that is merely
+         * cut off — and it is the only one of the two that fires on what issue
+         * #8 is about (`truncated` was measured **false** for both
+         * fabrications; it is a real detector of a different fault).
+         *
+         * 🟢 **Known blind spot, accepted.** Because `null` and `false` render
+         * identically, a server whose threshold got unset answers
+         * `unreliable: null` on every request and this app looks exactly as it
+         * does when all is well — a detector that stops working produces no
+         * observable change anywhere in the client. That is the price of not
+         * warning on a no-signal response and it is paid deliberately.
+         *
+         * 🔴 **Nothing watches for it automatically.** The only check that
+         * would catch it is `LiveServiceDeviceTest`, which asserts the live
+         * service still answers `false` for ordinary speech and `true` for a
+         * tone — and that is an **instrumentation test no runner executes**.
+         * CI compiles it and stops there (`connectedAndroidTest` is in no
+         * workflow; a GitHub runner has no device), and it needs a token at
+         * `/data/local/tmp/dicta-stt-token` plus mesh reachability. So it is
+         * a manual pre-release step for whoever touches this path, not a
+         * standing net, and until someone runs it nothing has checked the
+         * field at all. If this has to become observable in-app, start here.
+         *
+         * One function rather than an expression inlined at the delivery site:
+         * the predicate is the thing under test, and a second copy of it is a
+         * second place for it to be wrong. 🔴 The engine badge
+         * (`DictateActivity.showEngine`) is **not** such a copy — it answers
+         * "which engine", which no flag changes; see its kdoc.
+         */
+        internal fun statusLabel(truncated: Boolean?, unreliable: Boolean?): Int = when {
+            unreliable == true -> R.string.stt_remote_unreliable
+            truncated == true -> R.string.stt_remote_truncated
+            else -> R.string.stt_remote_done
+        }
 
         /**
          * The production transport: one `SttHttp` per call, wrapped so that

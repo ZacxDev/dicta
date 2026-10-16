@@ -326,4 +326,280 @@ class SttRequestTest {
     fun whitespaceAroundTheColonIsTolerated() {
         assertEquals("x", JsonLite.stringField("""{"detail"   :   "x"}""", "detail"))
     }
+
+    // --- the boolean extractor (truncated) ----------------------------------
+    //
+    // 🔴 Three-valued, and the third value is the point: null means the server
+    // gave NO SIGNAL. Every one of these asserts which of the three came back,
+    // because a reader that collapses null to false turns "could not tell"
+    // into "checked and fine".
+
+    @Test
+    fun aTrueBooleanFieldReadsAsTrue() {
+        assertEquals(
+            true,
+            JsonLite.boolField(
+                """{"text":"a cut-off sentence","truncated":true,"duration_s":9.37}""",
+                "truncated",
+            ),
+        )
+    }
+
+    @Test
+    fun aFalseBooleanFieldReadsAsFalseAndNotAsNull() {
+        // false is a POSITIVE claim by the server: it looked for the EOS token
+        // and found one. It must be distinguishable from "no signal".
+        assertEquals(
+            false,
+            JsonLite.boolField(
+                """{"text":"a whole sentence","truncated":false,"duration_s":4.81}""",
+                "truncated",
+            ),
+        )
+    }
+
+    @Test
+    fun anAbsentBooleanFieldIsNullRatherThanFalse() {
+        // The pre-change server, and any future response that drops the field.
+        assertNull(
+            JsonLite.boolField(
+                """{"text":"a whole sentence","duration_s":2.46}""",
+                "truncated",
+            ),
+        )
+    }
+
+    @Test
+    fun anExplicitJsonNullIsNullAndNotFalse() {
+        // 🔴 The server sends this when it had no EOS id to look for, i.e. it
+        // COULD NOT TELL. Reading it as false would be a verification claim
+        // nobody made.
+        assertNull(JsonLite.boolField("""{"truncated":null}""", "truncated"))
+    }
+
+    @Test
+    fun aNonBooleanValueIsNull() {
+        assertNull(JsonLite.boolField("""{"truncated":"true"}""", "truncated"))
+        assertNull(JsonLite.boolField("""{"truncated":1}""", "truncated"))
+        assertNull(JsonLite.boolField("""{"truncated":{"why":"cap"}}""", "truncated"))
+        assertNull(JsonLite.boolField("""{"truncated":[true]}""", "truncated"))
+    }
+
+    @Test
+    fun aNonJsonBodyIsNullRatherThanAThrowForBooleans() {
+        assertNull(JsonLite.boolField("<html><body>502 Bad Gateway</body></html>", "truncated"))
+        assertNull(JsonLite.boolField("", "truncated"))
+        assertNull(JsonLite.boolField("truncated", "truncated"))
+        // A key position with nothing after it at all.
+        assertNull(JsonLite.boolField("""{"truncated":""", "truncated"))
+    }
+
+    @Test
+    fun theBooleanNameAppearingInAValueIsNotMistakenForTheKey() {
+        // 🔴 The trap stringField's own comment documents, in the shape this
+        // field actually meets it: the transcript TEXT is the word, and the
+        // real key says the opposite. A naive indexOf reads the value's quotes
+        // and answers with whatever literal follows — here, the wrong one.
+        assertEquals(
+            false,
+            JsonLite.boolField(
+                """{"text":"truncated","truncated":false}""",
+                "truncated",
+            ),
+        )
+        // And the mirror image, so neither answer can be right by accident.
+        assertEquals(
+            true,
+            JsonLite.boolField(
+                """{"text":"not truncated at all","truncated":true}""",
+                "truncated",
+            ),
+        )
+    }
+
+    @Test
+    fun aBareWordThatMerelyStartsWithALiteralIsNotThatLiteral() {
+        assertNull(JsonLite.boolField("""{"truncated":truest}""", "truncated"))
+        assertNull(JsonLite.boolField("""{"truncated":falsehood}""", "truncated"))
+    }
+
+    @Test
+    fun aLongerKeyThatStartsWithTheNameIsNotMistakenForIt() {
+        // 🔴 Not hypothetical: the live response puts "unreliable_reasons"
+        // immediately after "unreliable". A needle built without its closing
+        // quote matches the LONGER key first, finds a `[` after the colon, and
+        // answers "no signal" for a response that said true — a fabrication
+        // warning silently lost to an adjacent field name.
+        val body = """{"text":" you","unreliable":true,""" +
+            """"unreliable_reasons":["no_speech_prob"],"truncated":false}"""
+        assertEquals(true, JsonLite.boolField(body, "unreliable"))
+        assertEquals(false, JsonLite.boolField(body, "truncated"))
+        // Read on its own the longer key is an array, i.e. no signal.
+        assertNull(JsonLite.boolField(body, "unreliable_reasons"))
+    }
+
+    @Test
+    fun whitespaceAroundTheColonIsToleratedForBooleans() {
+        assertEquals(true, JsonLite.boolField("""{"truncated"   :   true}""", "truncated"))
+    }
+
+    // --- depth: "top-level" must mean top-level -----------------------------
+    //
+    // 🔴 The bodies below proved the defect by probe and are kept as its
+    // regression. Before the depth check both readers returned the FIRST
+    // key-position match at ANY depth, so a nested field shadowed the real
+    // one. For `unreliable` that is the unsafe direction: a nested `false`
+    // ahead of a top-level `true` renders the plain reassuring status — the
+    // unmarked fabrication this change exists to prevent, reintroduced by an
+    // ADDITIVE server change with every other test still green.
+    //
+    // Not hypothetical. The response is explicitly a moving target (the
+    // threshold lives server-side so it can be retuned without an APK), and
+    // per-segment detail — `segments: [{...}]`, the shape every
+    // Whisper-family API grows — is exactly the additive evolution that
+    // invites it.
+
+    @Test
+    fun aNestedBooleanDoesNotShadowTheTopLevelOne() {
+        assertEquals(
+            "a nested \"unreliable\":false was read instead of the top-level " +
+                "true — the fabrication warning is lost to a field the server " +
+                "added elsewhere in the document",
+            true,
+            JsonLite.boolField(
+                """{"segments":[{"unreliable":false}],"unreliable":true}""",
+                "unreliable",
+            ),
+        )
+        // The mirror image, so neither answer can be right by accident.
+        assertEquals(
+            false,
+            JsonLite.boolField(
+                """{"segments":[{"unreliable":true}],"unreliable":false}""",
+                "unreliable",
+            ),
+        )
+    }
+
+    @Test
+    fun aBooleanThatExistsOnlyNestedIsNoSignal() {
+        assertNull(
+            "a nested \"truncated\" was reported as the document's own verdict " +
+                "when the document has no such field at all",
+            JsonLite.boolField("""{"meta":{"truncated":true},"text":"x"}""", "truncated"),
+        )
+    }
+
+    @Test
+    fun aNestedStringDoesNotShadowTheTopLevelOne() {
+        // Same flaw, same fix, different consequence: a nested hit here is a
+        // wrong TRANSCRIPT rather than a wrong safety verdict.
+        // `segments[].text` is the shape it occurs in.
+        assertEquals(
+            "a per-segment \"text\" was returned as the whole transcript",
+            "the whole transcript",
+            JsonLite.stringField(
+                """{"segments":[{"text":"the first segment"}],"text":"the whole transcript"}""",
+                "text",
+            ),
+        )
+        assertNull(JsonLite.stringField("""{"error":{"detail":"nested only"}}""", "detail"))
+    }
+
+    @Test
+    fun anOrdinaryFlatBodyStillParsesAfterTheDepthCheck() {
+        // 🔴 The control that stops the fix being "reject everything": the
+        // real measured response, both readers, every kind of value in it.
+        val body = """{"text":" you","duration_s":0.4,"elapsed_s":0.15,""" +
+            """"unreliable":true,"unreliable_reasons":["no_speech_prob"],""" +
+            """"finish_reason":"stop","truncated":false,"avg_logprob":-0.3622}"""
+        assertEquals(" you", JsonLite.stringField(body, "text"))
+        assertEquals("stop", JsonLite.stringField(body, "finish_reason"))
+        assertEquals(true, JsonLite.boolField(body, "unreliable"))
+        assertEquals(false, JsonLite.boolField(body, "truncated"))
+    }
+
+    @Test
+    fun aKeyAfterANestedObjectIsStillFound() {
+        // The scan must come back OUT of a nested value, not stop at it.
+        val body = """{"meta":{"a":1,"b":[{"c":true}]},"unreliable":true,""" +
+            """"nested":{"deep":{"deeper":"x"}},"truncated":true}"""
+        assertEquals(true, JsonLite.boolField(body, "unreliable"))
+        assertEquals(true, JsonLite.boolField(body, "truncated"))
+        assertNull(JsonLite.boolField(body, "c"))
+        assertNull(JsonLite.stringField(body, "deeper"))
+    }
+
+    @Test
+    fun aBraceInsideAStringDoesNotMoveTheDepth() {
+        // 🔴 A depth counter that does not skip string CONTENTS is fooled by
+        // punctuation in the transcript itself — not an attack, just a user
+        // dictating a brace.
+        val body = """{"text":"a { brace } and a [ bracket ]","unreliable":true}"""
+        assertEquals(
+            "a brace inside the transcript text moved the nesting depth, so " +
+                "the real top-level field stopped being seen as top-level",
+            true,
+            JsonLite.boolField(body, "unreliable"),
+        )
+        val escaped = """{"text":"a \"quoted\" { brace","truncated":true}"""
+        assertEquals(true, JsonLite.boolField(escaped, "truncated"))
+    }
+
+    @Test
+    fun aBodyThatIsNotAnObjectIsNoSignal() {
+        assertNull(JsonLite.boolField("""[{"unreliable":true}]""", "unreliable"))
+        assertNull(JsonLite.stringField("""["text"]""", "text"))
+        assertNull(JsonLite.boolField("   ", "unreliable"))
+    }
+
+    @Test
+    fun aNonJsonBodyThatMerelyQUOTESAFieldIsNoSignal() {
+        // 🔴 This case exists because a mutation sweep SURVIVED without it.
+        // Removing the "must start with {" check left every assertion above
+        // green: for a top-level array the nesting counter happens to reach
+        // zero and return -1 anyway, so those fixtures could not tell the two
+        // implementations apart. The input that can is a body that is not JSON
+        // at all but contains the text of a field — a proxy or gateway echoing
+        // an upstream payload into a plain-text error, which is precisely the
+        // "503 with an HTML body" family this reader already has to survive.
+        assertNull(
+            "a field QUOTED inside a non-JSON error body was read as the " +
+                "response's own verdict",
+            JsonLite.boolField(
+                """Error from upstream: "unreliable":true (request rejected)""",
+                "unreliable",
+            ),
+        )
+        assertNull(
+            JsonLite.stringField(
+                """upstream said "text":"not a transcript" and gave up""",
+                "text",
+            ),
+        )
+    }
+
+    @Test
+    fun anEscapedQuoteDoesNotEndTheStringAndHideALaterKey() {
+        // 🔴 Also added because a mutant SURVIVED: making the string-end scan
+        // treat `\` as an ordinary character left the earlier brace fixture
+        // green, because the stray `{` happened to fall inside the pseudo
+        // string the mis-parse produced — the guarded branch landed exactly on
+        // its own boundary and never ran. This fixture overshoots instead: the
+        // mis-parse shifts every subsequent quote by one, so the real
+        // top-level key stops being seen as a key at all.
+        assertEquals(
+            "an escaped quote inside the transcript ended the string early, " +
+                "shifting every later quote and hiding the real top-level key",
+            true,
+            JsonLite.boolField("""{"text":"a \" b","truncated":true}""", "truncated"),
+        )
+        assertEquals(
+            true,
+            JsonLite.boolField("""{"text":"\"","unreliable":true}""", "unreliable"),
+        )
+        // The string itself must still decode, so the fix cannot be "treat a
+        // backslash as the end of everything".
+        assertEquals("a \" b", JsonLite.stringField("""{"text":"a \" b"}""", "text"))
+    }
 }

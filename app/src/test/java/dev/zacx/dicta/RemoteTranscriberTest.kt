@@ -213,6 +213,258 @@ class RemoteTranscriberTest {
         assertTrue("a first-try success must not be slept on", stub.sleeps.isEmpty())
     }
 
+    // --- (d) the truncation status ------------------------------------------
+    //
+    // 🔴 The branch is `truncated == true` and nothing wider. Asserted on all
+    // three input values, with the two labels asserted to DIFFER, so a mutant
+    // that returns one constant for every case cannot pass.
+
+    @Test
+    fun truncatedTrueShowsTheCutOffStatusInsteadOfThePlainOne() {
+        val status = statusFor(SttOutcome.Success("a sentence that stops mid", true))
+        assertEquals(
+            "the server said the transcript is CUT OFF and the status line " +
+                "still reads like a complete one — the user has no way to " +
+                "know text is missing",
+            ctx.getString(R.string.stt_remote_truncated),
+            status,
+        )
+    }
+
+    @Test
+    fun truncatedFalseKeepsThePlainStatus() {
+        val status = statusFor(SttOutcome.Success("a whole sentence", false))
+        assertEquals(
+            "truncated=false is the server saying the transcript is WHOLE; " +
+                "warning on it is a false alarm",
+            ctx.getString(R.string.stt_remote_done),
+            status,
+        )
+    }
+
+    @Test
+    fun truncatedNullKeepsThePlainStatusBecauseNullIsNoSignal() {
+        val status = statusFor(SttOutcome.Success("a whole sentence", null))
+        assertEquals(
+            "truncated=null means the server COULD NOT TELL. A warning on " +
+                "every no-signal dictation is a warning the user learns to " +
+                "ignore, which costs the real ones their meaning",
+            ctx.getString(R.string.stt_remote_done),
+            status,
+        )
+    }
+
+    @Test
+    fun theTwoRemoteStatusesAreDistinguishable() {
+        // Otherwise the branch above is unobservable and every assertion in
+        // this section passes against a single constant.
+        val plain = ctx.getString(R.string.stt_remote_done)
+        val cutOff = ctx.getString(R.string.stt_remote_truncated)
+        assertTrue(
+            "the truncated status reads \"$cutOff\", identical to the plain " +
+                "one — the distinction exists in the code and not on screen",
+            plain != cutOff,
+        )
+    }
+
+    /**
+     * 🔴 The ✓ was a **verification claim the server does not earn**.
+     *
+     * The service fabricates fluent transcripts from near-silent input
+     * (reproduced 2/2 on device; one output was a racial slur), and the client
+     * rendered those under "Transcribed by the server ✓". The client knows
+     * which *engine* produced the text and nothing whatsoever about whether it
+     * is right, so the string may name the engine and may not tick it.
+     *
+     * Pinned as the WHOLE normalised string rather than "contains no ✓": a
+     * guard on one character is walkable by any other mark of approval
+     * (✔, ✅, "verified"), and the hazard is the claim, not the glyph. A
+     * cosmetic reword of this string is therefore meant to fail here.
+     *
+     * An **invariant guard**, not regression coverage of a logic defect: it is
+     * red at `origin/main` because the resource itself changed.
+     */
+    @Test
+    fun theRemoteDoneStatusMakesNoVerificationClaim() {
+        assertEquals(
+            "the remote status line asserts something about CORRECTNESS. The " +
+                "server hallucinates on quiet input, so a tick here is a " +
+                "claim the client cannot support.",
+            "Transcribed by the server",
+            ctx.getString(R.string.stt_remote_done),
+        )
+    }
+
+    // --- (e) the unreliability status ---------------------------------------
+    //
+    // 🔴 The field that does issue #8's work. `truncated` is a real detector
+    // but was measured FALSE for both fabrications, so the ONLY flag that can
+    // fire on a fabricated transcript is this one. Three-valued in both
+    // directions, and the null case is the one that matters most: `!= null`
+    // here would warn on a response nothing could be checked on, which is the
+    // ✓ defect inverted — a claim about a check that did not happen.
+
+    @Test
+    fun unreliableTrueShowsTheFabricationWarningInsteadOfThePlainStatus() {
+        val status = statusFor(
+            SttOutcome.Success("a fabricated sentence", truncated = false, unreliable = true)
+        )
+        assertEquals(
+            "the server flagged this transcript as unreliable and the status " +
+                "line still reads like an ordinary success — this is exactly " +
+                "the fabrication reaching the user unmarked that issue #8 is " +
+                "about",
+            ctx.getString(R.string.stt_remote_unreliable),
+            status,
+        )
+    }
+
+    @Test
+    fun unreliableFalseKeepsThePlainStatus() {
+        val status = statusFor(
+            SttOutcome.Success("a trustworthy sentence", truncated = false, unreliable = false)
+        )
+        assertEquals(
+            "unreliable=false is the server saying every configured rule was " +
+                "evaluated and none fired; warning on it is a false alarm on " +
+                "ordinary dictation",
+            ctx.getString(R.string.stt_remote_done),
+            status,
+        )
+    }
+
+    @Test
+    fun unreliableNullKeepsThePlainStatusBecauseNothingCouldBeChecked() {
+        val status = statusFor(
+            SttOutcome.Success("an unchecked sentence", truncated = false, unreliable = null)
+        )
+        assertEquals(
+            "🔴 unreliable=null means NOTHING COULD BE CHECKED — no threshold " +
+                "configured, or the signal a rule needs is itself null. " +
+                "Warning on it claims a check that did not happen, and a " +
+                "warning on every dictation is one the user learns to ignore",
+            ctx.getString(R.string.stt_remote_done),
+            status,
+        )
+    }
+
+    @Test
+    fun unreliableWinsOverTruncatedWhenBothFire() {
+        val status = statusFor(
+            SttOutcome.Success("a suspect and clipped sentence", truncated = true, unreliable = true)
+        )
+        assertEquals(
+            "both flags fired and the user was shown the CUT-OFF warning. A " +
+                "transcript that may be fabricated is the worse problem: cut " +
+                "off text is visibly short, invented text is not.",
+            ctx.getString(R.string.stt_remote_unreliable),
+            status,
+        )
+    }
+
+    @Test
+    fun truncatedStillWinsOverThePlainStatusWhenUnreliableSaysNothing() {
+        // The precedence must not have swallowed the older signal: unreliable
+        // null/false must leave truncated=true free to speak.
+        for (noSignal in listOf(null, false)) {
+            val status = statusFor(
+                SttOutcome.Success("a clipped sentence", truncated = true, unreliable = noSignal)
+            )
+            assertEquals(
+                "unreliable=$noSignal suppressed the truncation warning — " +
+                    "adding the new precedence must not mute the old signal",
+                ctx.getString(R.string.stt_remote_truncated),
+                status,
+            )
+        }
+    }
+
+    /**
+     * The whole 3 × 3 input space of the predicate, in one place.
+     *
+     * Exhaustive rather than illustrative: the three behavioural tests above
+     * pin the cases a user meets, and this pins that **no other combination**
+     * produces a surprise — including the six where a `!= null` or `!= false`
+     * mutation differs from `== true`.
+     */
+    @Test
+    fun theStatusLabelCoversEveryCombinationOfTheTwoFlags() {
+        val plain = R.string.stt_remote_done
+        val cut = R.string.stt_remote_truncated
+        val suspect = R.string.stt_remote_unreliable
+        val expected = mapOf(
+            (null to null) to plain,
+            (false to null) to plain,
+            (null to false) to plain,
+            (false to false) to plain,
+            (true to null) to cut,
+            (true to false) to cut,
+            (null to true) to suspect,
+            (false to true) to suspect,
+            (true to true) to suspect,
+        )
+        for ((input, want) in expected) {
+            val (truncated, unreliable) = input
+            assertEquals(
+                "statusLabel(truncated=$truncated, unreliable=$unreliable) " +
+                    "picked ${ctx.getString(
+                        RemoteTranscriber.statusLabel(truncated, unreliable)
+                    )}",
+                ctx.getString(want),
+                ctx.getString(RemoteTranscriber.statusLabel(truncated, unreliable)),
+            )
+        }
+    }
+
+    @Test
+    fun theThreeRemoteStatusesAreAllDistinguishable() {
+        // Without this every assertion above could pass against one constant.
+        val all = listOf(
+            ctx.getString(R.string.stt_remote_done),
+            ctx.getString(R.string.stt_remote_truncated),
+            ctx.getString(R.string.stt_remote_unreliable),
+        )
+        assertEquals(
+            "two of the three remote statuses read identically, so a " +
+                "distinction that exists in the code does not exist on screen: $all",
+            3,
+            all.toSet().size,
+        )
+    }
+
+    /**
+     * 🔴 The fabrication warning must not be reassuring, and must not claim
+     * the client checked anything itself.
+     *
+     * Pinned as the whole normalised string for the same reason
+     * [theRemoteDoneStatusMakesNoVerificationClaim] is: the hazard is the
+     * claim the sentence makes, not any one word in it.
+     *
+     * ⚠ The copy itself is **unconfirmed** — the operator has not reviewed the
+     * wording. If he changes it, this assertion is meant to fail and be
+     * updated deliberately.
+     */
+    @Test
+    fun theUnreliableStatusWarnsRatherThanReassures() {
+        assertEquals(
+            "Transcribed by the server — the output may not match what you said",
+            ctx.getString(R.string.stt_remote_unreliable),
+        )
+    }
+
+    /** Runs the ladder over one scripted outcome and returns the status shown. */
+    private fun statusFor(outcome: SttOutcome): String {
+        val events = Recorder()
+        transcriber(configuredSettings(), Stub(listOf(outcome))).transcribe(
+            audio = recordingFile(),
+            audioSeconds = 13.0,
+            localTranscript = { "the phone's guess" },
+            events = events,
+        )
+        val (_, status) = events.remote.single()
+        return status
+    }
+
     @Test
     fun theLanguageAndAudioBytesReachTheTransportUnchanged() {
         val stub = Stub(listOf(SttOutcome.Success("x")))

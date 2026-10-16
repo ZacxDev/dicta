@@ -109,6 +109,18 @@ object SttRetryPolicy {
      * no token configured at all — retrying it is a guaranteed waste and
      * polling `/healthz` for it is worse, because `/healthz` is
      * unauthenticated and will happily return 200 the whole time.
+     *
+     * 🔴 **Unstated dependency, now stated: this works only while `detail` is
+     * a TOP-LEVEL field.** It is matched against
+     * `JsonLite.stringField(body, "detail")`, which reads the **outermost
+     * object only** — deliberately, and pinned by a test asserting a
+     * nested-only `detail` reads as null. FastAPI puts `detail` at the top
+     * level, so it holds today. If the service ever nests it (under an
+     * `error` object, say), `stringField` correctly returns null, this marker
+     * stops matching, and the one 503 that must never be retried silently
+     * becomes a retried one — **with nothing going red**, because every
+     * fixture here spells the body the way the service spells it now. A
+     * response-shape change is the trigger to re-check this.
      */
     const val PERMANENT_503_MARKER: String = "STT_API_TOKEN"
 

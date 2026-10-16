@@ -235,7 +235,35 @@
     <!-- Dictation status line, remote path -->
     <string name="stt_recording">Recording… tap Stop when done</string>
     <string name="stt_uploading">Transcribing on the server…</string>
-    <string name="stt_remote_done">Transcribed by the server ✓</string>
+    <!-- 🔴 No ✓. The tick was a VERIFICATION claim the server does not earn:
+         the service fabricates fluent transcripts from near-silent input
+         (reproduced 2/2 on device; one output was a racial slur), and the
+         client rendered those under a checkmark. This string names the ENGINE,
+         which is the only thing the client actually knows. -->
+    <string name="stt_remote_done">Transcribed by the server</string>
+    <!-- Shown INSTEAD of stt_remote_done when the server reports
+         truncated=true, i.e. generation hit its max_new_tokens cap and the
+         transcript is cut off. Only on an explicit true: truncated=null means
+         the server could not tell, and a warning on every dictation would
+         train the user to ignore it. -->
+    <string name="stt_remote_truncated">Transcribed by the server — cut off at the length limit</string>
+    <!-- 🔴 Shown INSTEAD of either label above when the server reports
+         unreliable=true, i.e. one of its configured rules fired on this
+         transcript (today: no_speech_prob over threshold, which is what the
+         fabrications-on-quiet-input measure as). This is the status that does
+         issue #8's actual work: `truncated` is a real detector but it was
+         false for BOTH measured fabrications, so it cannot fire on them.
+
+         Wins over stt_remote_truncated when both fire — a transcript that may
+         be fabricated is a worse problem than one that is merely cut off.
+
+         Only on an explicit true. unreliable=null means NOTHING COULD BE
+         CHECKED (no threshold configured, or the signal a rule needs is
+         itself null), and rendering that as "looks fine" is the ✓ defect one
+         layer further in.
+
+         ⚠ COPY UNCONFIRMED: the operator has not reviewed this wording. -->
+    <string name="stt_remote_unreliable">Transcribed by the server — the output may not match what you said</string>
     <!-- 🔴 The user must know WHICH engine produced the text on screen. The
          two engines disagree, sometimes materially, and silently swapping one
          for the other is how a wrong transcript gets trusted. -->

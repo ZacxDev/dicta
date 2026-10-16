@@ -600,7 +600,27 @@ class DictateActivity : Activity() {
         }
     }
 
-    /** Names the engine behind the text currently in the box. */
+    /**
+     * Names the engine behind the text currently in the box.
+     *
+     * 🔴 **Deliberately flag-blind, and this is not the second copy of
+     * [RemoteTranscriber.statusLabel]'s predicate it resembles.** The badge
+     * answers one question — *which engine produced this text* — and no value
+     * of `truncated` or `unreliable` changes that answer. The caveats go on
+     * the status line, which is a full-width sentence; this is an 11sp pill
+     * that cannot carry one, and duplicating the warning in two places on one
+     * screen would make both easier to ignore.
+     *
+     * 🔴 It nevertheless **shares** `stt_remote_done` with the status line's
+     * plain case, which is safe for exactly one reason: that string is pinned
+     * as a whole, normalised string by
+     * `RemoteTranscriberTest.theRemoteDoneStatusMakesNoVerificationClaim`. If
+     * anyone makes it case-specific — the concrete trigger an audit named — that
+     * test goes red and this call site has to be revisited rather than quietly
+     * inheriting a sentence the badge has no room for and no basis to claim.
+     * `OverlayMinimalLayoutTest` additionally pins that the badge is never
+     * either warning string.
+     */
     private fun showEngine(fromRemote: Boolean) {
         engineBadge.visibility = View.VISIBLE
         engineBadge.text = getString(
