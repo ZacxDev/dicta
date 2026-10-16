@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  One row of a themed Spinner's DROPDOWN, over @drawable/popup_bg. Replaces
+  android.R.layout.simple_spinner_dropdown_item.
+
+  🔴 The root stays a <CheckedTextView> with a checkMark, and that is an
+  accessibility requirement rather than a like-for-like copy of the platform
+  layout. ?android:attr/listChoiceIndicatorSingle is the mark that says WHICH
+  language is currently selected; it is a shape, so the current row is still
+  identifiable with no colour vision and in a greyscale screenshot — the rule
+  the header of colors.xml states. Downgrading this to a plain TextView would
+  leave the selected row distinguished only by the platform's activated tint,
+  i.e. by colour alone. (The mark's own tint follows colorAccent from
+  Theme.Dicta, so it lands on the ember accent rather than Material teal.)
+
+  CheckedTextView extends TextView, so ArrayAdapter's cast-to-TextView still
+  holds — see the note in @layout/spinner_item about why that cast constrains
+  both of these files.
+
+  No background: the rows must stay transparent so @drawable/popup_bg is the
+  sheet and the platform's own list selector draws the touch feedback. Padding
+  is declared HERE (unlike spinner_item) because these rows are children of the
+  popup's ListView, which contributes none.
+-->
+<CheckedTextView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:minHeight="48dp"
+    android:gravity="center_vertical"
+    android:paddingStart="14dp"
+    android:paddingEnd="14dp"
+    android:paddingTop="12dp"
+    android:paddingBottom="12dp"
+    android:textSize="15sp"
+    android:textColor="@color/dicta_on_surface"
+    android:checkMark="?android:attr/listChoiceIndicatorSingle"
+    android:singleLine="true"
+    android:ellipsize="end" />

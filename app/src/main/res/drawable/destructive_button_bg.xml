@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The one destructive control on the settings screen ("Clear token"). Same
+  geometry as @drawable/outline_button_bg — 22dp radius, 1dp ring, no fill at
+  rest — so it is recognisably a button of the same family, with the ring and
+  the label in @color/dicta_error instead of @color/dicta_outline.
+
+  🔴 The colour is the WEAKEST of the three cues here and is deliberately not
+  the only one, per the rule in colors.xml ("state is never carried by colour
+  alone"), which applies to consequence as much as to state: a red ring is
+  invisible to a red-blind operator and invisible again in a greyscale
+  screenshot. The other two cues are in the layout and carry the meaning on
+  their own — the ✕ glyph (@drawable/ic_close) as drawableStart, and a
+  contentDescription (@string/stt_clear_token_desc) that names what is deleted
+  and what happens next. Removing either of those, and leaving only this
+  drawable, would make the control's destructiveness colour-only.
+
+  dicta_error measures 6.68:1 on surface_2 per colors.xml and better on the
+  level-0 window this button is actually drawn over, so it clears 1.4.11's 3:1
+  for a component boundary as well as AA for the label text.
+
+  Pressed fills to surface_3, exactly as outline_button_bg does, rather than to
+  an error-tinted fill: a saturated red flash at full button width reads as a
+  failure that has already happened rather than as a press.
+-->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:state_pressed="true">
+        <shape android:shape="rectangle">
+            <solid android:color="@color/dicta_surface_3" />
+            <corners android:radius="22dp" />
+            <stroke android:width="1dp" android:color="@color/dicta_error" />
+        </shape>
+    </item>
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="@android:color/transparent" />
+            <corners android:radius="22dp" />
+            <stroke android:width="1dp" android:color="@color/dicta_error" />
+        </shape>
+    </item>
+</selector>

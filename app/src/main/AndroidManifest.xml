@@ -30,8 +30,32 @@
          everywhere else. The blanket attribute would permit an unencrypted
          request to any host on any network, which is a real downgrade — see
          res/xml/network_security_config.xml for the full reasoning. -->
+    <!-- 🔴 allowBackup is FALSE deliberately, and the platform default is true.
+         The dictation history store lands in noBackupFilesDir, so with the
+         default in place up to 2 GiB of the user's recorded VOICE plus every
+         transcript would be eligible for cloud auto-backup and for
+         `adb backup` — a data-egress change with no lint error, no build
+         warning and no runtime symptom. Nothing would ever go red.
+
+         One attribute rather than android:dataExtractionRules, on DRIFT
+         grounds and not capability. dataExtractionRules is API 31+ and needs
+         two rule sets (<cloud-backup> and <device-transfer>), and minSdk here
+         is 26, so devices on 26–30 would additionally need fullBackupContent:
+         three files that must agree with each other AND with the store's
+         directory name. That is exactly the cross-file drift class that
+         produced issue #11. The single attribute covers both transports,
+         every API level, and shared_prefs too.
+
+         Accepted cost, so it is not rediscovered as a bug: on device
+         migration the user loses backup of their base URL and language
+         preference (two fields, under a minute to re-enter). The bearer token
+         has to be re-entered regardless — the AndroidKeyStore key wrapping it
+         is non-exportable, so it could never have been restored anyway.
+
+         Pinned by BackupManifestTest, which also fails if the rule-file
+         attributes appear. -->
     <application
-        android:allowBackup="true"
+        android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:label="@string/app_name"
