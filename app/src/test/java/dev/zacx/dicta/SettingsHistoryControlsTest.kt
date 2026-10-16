@@ -222,9 +222,4 @@ class SettingsHistoryControlsTest {
             controller.close()
         }
     }
-
-    private companion object {
-        /** Never equal to any real read; keeps [settleUsage]'s loop honest. */
-        const val PENDING_PREFIX_MARKER = " "
-    }
 }

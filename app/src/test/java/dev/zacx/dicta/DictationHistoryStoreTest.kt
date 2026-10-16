@@ -272,10 +272,18 @@ class DictationHistoryStoreTest {
 
     @Test
     fun addingPastTheByteBoundDeletesTheOldestFromDiskAndFromTheIndex() {
-        // 🔴 This path now RUNS IN PRODUCTION. At MAX_BYTES = 200 MiB against
-        // 50 items the byte stage was unreachable on a real device; at 2 GiB
-        // against 1000 items a long-dictation user can get there. So the store
-        // must honour the byte bound it is handed, not only the count.
+        // 🔴 This path does NOT run in production at the current constants —
+        // an earlier version of this comment claimed it did, and was wrong.
+        // MAX_RECORDING_MS caps an item at ~352-469 KiB, so 1000 of them is
+        // 343-458 MiB against a 2 GiB bound: count always binds first. See
+        // HistoryRetention's kdoc and the arithmetic pinned by
+        // theByteBoundCannotBindAtTheCurrentConstants.
+        //
+        // The test is still worth having, and this is the honest reason: it
+        // pins that the store honours WHATEVER byte bound it is handed, which
+        // is what makes the stage correct on the day MAX_RECORDING_MS rises
+        // and the bound goes live. It is a guard on a dormant path, not
+        // evidence that the path is hot.
         val store = store(bounds = tinyBounds.copy(maxItems = 100, maxAgeMs = 600_000L))
         val ids = mutableListOf<String>()
         val names = mutableListOf<String>()

@@ -32,7 +32,7 @@
          res/xml/network_security_config.xml for the full reasoning. -->
     <!-- 🔴 allowBackup is FALSE deliberately, and the platform default is true.
          The dictation history store lands in noBackupFilesDir, so with the
-         default in place up to 200 MB of the user's recorded VOICE plus every
+         default in place up to 2 GiB of the user's recorded VOICE plus every
          transcript would be eligible for cloud auto-backup and for
          `adb backup` — a data-egress change with no lint error, no build
          warning and no runtime symptom. Nothing would ever go red.

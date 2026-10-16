@@ -95,16 +95,27 @@ package dev.zacx.dicta
  *    "Delete all history" control is therefore load-bearing, not a
  *    convenience — see [DictationHistoryStore.clearAll], which is why that
  *    method deletes every file in the directory rather than the indexed ones.
- *  - **The byte bound will actually execute in production.** At [MAX_BYTES]
- *    = 200 MiB it was effectively unreachable, because [MAX_ITEMS] = 50
- *    recordings never came close; the byte stage and its oversize carve-out
- *    were exercised only by tests. At 2 GiB against 1000 items it is still
- *    the *second* bound to bite — 1000 items at a realistic ~1 minute each is
- *    about 17 hours of audio, ~180 MB at the ~3 kB/s Opus rate, whereas 2 GiB
- *    is roughly 185 hours — so count still binds first in practice. But a
- *    backstop that a long-dictation user can reach is a different thing from
- *    one they cannot, and the byte stage's behaviour is now a production code
- *    path.
+ *  - 🔴 **The byte bound CANNOT BIND at the current constants, and this is
+ *    arithmetic rather than an estimate.** An earlier draft of this comment
+ *    claimed the opposite — that raising [MAX_BYTES] to 2 GiB made the byte
+ *    stage "a production code path". That was false, and it was false in the
+ *    commit that wrote it. `BubbleDictation.MAX_RECORDING_MS` caps every
+ *    recording at 120 s, and `AudioCaptureLogic` offers exactly two encoders
+ *    (`OPUS_BITRATE` 24 kbps, `AAC_BITRATE` 32 kbps), so a single item cannot
+ *    exceed ~352–469 KiB. The worst case this store can hold is therefore
+ *    [MAX_ITEMS] items each recorded to the full cap: **343–458 MiB, against a
+ *    2048 MiB bound.** Count binds first by 4.5–6×, in every regime — not
+ *    "in practice", but always. The oversize carve-out is deader still: it
+ *    needs one continuous recording larger than [MAX_BYTES], i.e. ~149 hours,
+ *    against a 2-minute cap.
+ *
+ *    The stage is KEPT, and the reason is narrow and specific: it is the
+ *    backstop for a change to `MAX_RECORDING_MS`. Long-form recording is an
+ *    openly contemplated direction, and it is exactly the change that would
+ *    make this bound load-bearing overnight. [theByteBoundCannotBindAtTheCurrentConstants]
+ *    pins the arithmetic above so this comment cannot quietly go stale again
+ *    — if someone raises the recording cap, that test fails and tells them the
+ *    byte stage has just become live.
  *
  * ## Bounds are values, not just constants
  *

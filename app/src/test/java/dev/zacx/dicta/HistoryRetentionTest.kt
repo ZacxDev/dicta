@@ -630,5 +630,52 @@ class HistoryRetentionTest {
         }
     }
 
+    /**
+     * 🔴 Pins the arithmetic that [HistoryRetention]'s kdoc asserts: at the
+     * current constants the **byte stage cannot bind**, so it is a dormant
+     * backstop rather than a live code path.
+     *
+     * This exists because the kdoc said the opposite and was wrong in the
+     * commit that wrote it. A sentence nothing asserts on goes stale silently;
+     * this is the assertion.
+     *
+     * The chain: `BubbleDictation.MAX_RECORDING_MS` caps one recording, and
+     * `AudioCaptureLogic` offers exactly two encoders, so a single item has a
+     * hard ceiling. [MAX_ITEMS] of those is the most this store can ever hold.
+     * If that total is below [MAX_BYTES], no input reaches the byte stage.
+     *
+     * 🔴 If you raised `MAX_RECORDING_MS` (long-form recording) and landed
+     * here: that is the point. The byte bound has just become load-bearing —
+     * go read the byte stage and its oversize carve-out before changing this.
+     */
+    @Test
+    fun theByteBoundCannotBindAtTheCurrentConstants() {
+        val capSeconds = BubbleDictation.MAX_RECORDING_MS / 1000.0
+        val worstBitrate = maxOf(
+            AudioCaptureLogic.OPUS_BITRATE,
+            AudioCaptureLogic.AAC_BITRATE,
+        )
+        val largestPossibleItem = (capSeconds * worstBitrate / 8).toLong()
+        val worstCaseTotal = largestPossibleItem * MAX_ITEMS
+
+        assertTrue(
+            "the byte stage is now REACHABLE: $MAX_ITEMS items of at most " +
+                "$largestPossibleItem B total $worstCaseTotal B, which meets or " +
+                "exceeds MAX_BYTES=$MAX_BYTES. HistoryRetention's kdoc says the " +
+                "byte bound cannot bind and that is no longer true — update the " +
+                "kdoc, and re-read the byte stage and its oversize carve-out, " +
+                "which have never executed against real input.",
+            worstCaseTotal < MAX_BYTES,
+        )
+
+        // Positive control: the comparison can fail. Without this, a bug that
+        // made either side zero would leave the assertion vacuously true.
+        assertTrue(
+            "the worst-case total computed as $worstCaseTotal B, which is not a " +
+                "plausible non-zero size — the arithmetic above is wired to nothing",
+            worstCaseTotal > 100L * 1024 * 1024,
+        )
+    }
+
     private fun randomNow(rng: Random): Long = now + rng.nextInt(1_000_003) - 500_001
 }
