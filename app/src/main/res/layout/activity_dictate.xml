@@ -65,15 +65,32 @@
           ========================= THE STATUS STRIP =========================
           🔴 ISSUE #9: @id/status_text USED TO LIVE IN THIS ROW and no longer
           does. It was maxLines=1 + ellipsize=end, sharing a 801px strip with
-          the 72dp meter, which left it 555px — about 30 characters. The two
-          longest strings it carries are 154 and 145 characters
-          (@string/stt_fell_back_retrying, @string/stt_tier_remote_only), so
-          the user never saw the half of the sentence that says what happens
-          NEXT ("…the server transcript is on its way"). No amount of maxLines
-          rescues it inside this row: four lines of 555px is still ~123
-          characters. It therefore sits BELOW the strip at full card width,
-          where four lines hold ~194 characters. Pinned by
-          OverlayMinimalLayoutTest.theLongestStatusStringIsNotTruncated.
+          the 72dp meter, which left it 555px — about 30 characters. The
+          longest strings it carries (@string/stt_fell_back_retrying,
+          @string/stt_tier_remote_only) are several times that, so the user
+          never saw the half of the sentence that says what happens NEXT
+          ("…the server transcript is on its way"). No amount of maxLines
+          rescues it inside this row. It therefore sits BELOW the strip at
+          full card width. Pinned by OverlayMinimalLayoutTest's
+          theStatusLineSpansTheFullCardWidth and
+          noStatusStringOutgrowsItsLineBudget.
+
+          ⚠ RETRACTED FIGURES, NOT CORRECTED ONES. This comment used to say
+          those two strings "are 154 and 145 characters", and the width note
+          further down said "strings up to 154". Both are false and appear
+          never to have been true: measured against the live resources the
+          two lengths match 154/145 in NO unit, raw or with a realistic %1$s
+          filler, and neither string has changed since 843e4f2.
+
+          🔴 They are deliberately NOT replaced with today's numbers — not
+          even as a correction. A length copied into a comment is a claim
+          nothing re-checks, which is exactly how these two survived long
+          enough for a maintainer to budget copy against them, and a
+          "corrected" figure goes stale the same way on the next copy edit.
+          OverlayMinimalLayoutTest derives the longest status string from the
+          resources, asserts it against the line budget, and prints the real
+          string and its real length in the failure message. That test is the
+          only place a figure belongs.
 
           This row now carries two things, both GONE at rest. Both were
           RESERVED stubs
@@ -211,12 +228,17 @@
           🔴 FULL CARD WIDTH, AND NOT ONE LINE. This is the #9 fix. It used to
           be a weighted child of @id/overlay_status_strip above, capped at
           maxLines=1 with ellipsize=end, which on this 1080px device left it
-          555px — roughly 30 characters — to render strings up to 154.
+          555px — roughly 30 characters — for status copy several times that
+          long (the figure "strings up to 154" that stood here is retracted;
+          see the STATUS STRIP comment above for why no number replaces it).
           Everything after the first clause was replaced by an ellipsis,
           including the half that tells the user what happens next.
 
-          maxLines=4 at full width is ~194 characters, which clears the longest
-          string with margin. ellipsize=end is kept only as a backstop for copy
+          maxLines=4 at full width clears the longest string with margin —
+          the budget is REQUIRED_STATUS_LINES x CHARS_PER_STATUS_LINE in
+          OverlayMinimalLayoutTest, which owns both constants and the
+          measurement, rather than an arithmetic result restated here.
+          ellipsize=end is kept only as a backstop for copy
           added later; if it ever actually engages, this view needs another
           line, not a shorter sentence — the card is a ScrollView and can
           afford the height. OverlayMinimalLayoutTest measures the real longest

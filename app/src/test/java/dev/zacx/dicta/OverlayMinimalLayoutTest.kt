@@ -358,7 +358,10 @@ class OverlayMinimalLayoutTest {
      *
      * CHANGED BY ISSUE #9. `status_text` used to be the middle child here,
      * weighted and capped at one ellipsized line. It now lives BELOW the strip
-     * at full card width (see [theLongestStatusStringIsNotTruncated]), and a
+     * at full card width (see [theStatusLineSpansTheFullCardWidth] and
+     * [noStatusStringOutgrowsItsLineBudget] — this used to name a
+     * `theLongestStatusStringIsNotTruncated` that exists nowhere, the test
+     * the DEAD END kdoc below explains could never be written), and a
      * spacer took over the job of holding the badge at the trailing edge.
      *
      * Still an invariant guard, not regression coverage: asserting the exact
@@ -425,15 +428,25 @@ class OverlayMinimalLayoutTest {
      *    4000-character string** in a one-line view. It does not model
      *    ellipsising at all.
      *  * `TextPaint.measureText` returns **exactly 1.0px per character**
-     *    regardless of `textSize` (measured: 154 chars -> 154.0px, textSize
-     *    12.0, density 1.0). So the longest real string "fits" in one line of
-     *    the ~953px card, and a `maxLines="1"` regression measures as fine.
+     *    regardless of `textSize` (textSize 12.0, density 1.0). So any real
+     *    status string "fits" in one line of the ~953px card — every one of
+     *    them is a few hundred pixels under that bound at 1px per character —
+     *    and a `maxLines="1"` regression measures as fine.
      *
      * Both versions were written, and both passed a mutation that put the old
      * broken layout back. They were only caught because the mutation battery
      * ran — a positive control using an absurd 4000-character string passed
-     * while the real 154-character assertion stayed vacuous, since 4000px DOES
-     * exceed the width and 154px does not.
+     * while the assertion against a real status string stayed vacuous, since
+     * 4000px DOES exceed the width and a real string's length in px does not.
+     *
+     * ⚠ This passage used to reason from a specific figure — "measured: 154
+     * chars -> 154.0px" and "the real 154-character assertion". No status
+     * string is or ever was 154 characters (see [REQUIRED_STATUS_LINES]), so
+     * that datum is **withdrawn rather than corrected**. The argument does
+     * not need it and is not re-propped with a replacement number: it turns
+     * only on 1px-per-character against a ~953px card, which holds for every
+     * real status string by a wide margin and would hold for any plausible
+     * future one.
      *
      * So the wrap itself is a **device** question, confirmed by screenshot on
      * the PR. What is pinned here instead is the configuration that caused #9,
@@ -464,7 +477,8 @@ class OverlayMinimalLayoutTest {
             "status_text is ${status.width}px wide inside a ${cardInner}px " +
                 "card. It must span the FULL card width — issue #9 was this " +
                 "view being a weighted child of the status strip, left with " +
-                "555px of an 801px row (~30 characters) for strings up to 154.",
+                "555px of an 801px row (~30 characters) for status copy " +
+                "several times that long.",
             cardInner,
             status.width,
         )
@@ -522,8 +536,8 @@ class OverlayMinimalLayoutTest {
      * covering the set it describes. The sentence was true of the intent and
      * false of the code, which is the failure mode a reader cannot see.
      *
-     * So the set is now actually derived: every `R.string.*` the three classes
-     * that write this view reference, resolved against the real resources.
+     * So the set is now actually derived: every `R.string.*` referenced by
+     * the classes in [STATUS_WRITERS], resolved against the real resources.
      * `onStatus` forwards an already-localised string, so there is no single
      * `getString` call site to enumerate — the reference set in those files is
      * the honest over-approximation, and over-approximating is the safe
@@ -555,12 +569,27 @@ class OverlayMinimalLayoutTest {
     /**
      * The resource names referenced by the classes that write `status_text`.
      *
-     * `BubbleService` is deliberately excluded: its long strings are Toasts,
-     * not this view, and pulling them in would make a Settings-adjacent copy
-     * edit fail a dictation-layout guard for no reason.
+     * 🔴 **[STATUS_WRITERS] is the ledger, and it was wrong by one.** The
+     * first version of this derivation listed three classes and its kdoc
+     * called them "the three classes that write `status_text`".
+     * [TranscriptionCoordinator] is a fourth: it calls `events.onStatus(...)`,
+     * `RemoteTranscriber` forwards that verbatim, and `DictateActivity`
+     * assigns it to `statusText.text`. Demonstrated rather than argued — the
+     * same overlong string referenced from the coordinator left the suite
+     * fully green while the byte-identical one referenced from
+     * `DictateActivity` was caught. It uses bare literals today, so there was
+     * no live defect; the moment one is localised the guard could not see it.
+     * That is precisely the blindness this derivation exists to close, so
+     * being blind to a whole writer was the same bug one level up.
+     *
+     * `BubbleService` stays excluded, and the reason is narrower than "it is
+     * not a writer": it **forwards** status text it did not author (already
+     * covered through the classes above), and the strings it references
+     * itself go to Toasts — `stt_max_duration` via `toast(...)`. Pulling them
+     * in would let an unrelated copy edit fail a dictation-layout guard.
      */
     private fun statusStringNames(): Set<String> =
-        listOf("DictateActivity", "DictationSession", "RemoteTranscriber")
+        STATUS_WRITERS
             .flatMap { cls ->
                 RESOURCE_REFERENCE
                     .findAll(readSource("app/src/main/java/dev/zacx/dicta/$cls.kt", cls))
@@ -592,6 +621,70 @@ class OverlayMinimalLayoutTest {
      * to. A new status string is picked up with no edit here; one that the
      * derivation cannot see fails this.
      */
+    /**
+     * 🔴 [STATUS_WRITERS] must name **every** class that can put text on
+     * `status_text`, and this is what makes a fifth one impossible to miss
+     * the way the fourth was.
+     *
+     * The derivation above is only as wide as its list of writers, so a list
+     * maintained by hand reproduces, one level up, exactly the blindness the
+     * derivation was built to remove — which is what happened:
+     * `TranscriptionCoordinator` calls `onStatus` and was absent, and a
+     * mutant proved the suite could not see an overlong string introduced
+     * there.
+     *
+     * So the writers are themselves derived: any class that **calls**
+     * `onStatus(` (as opposed to declaring or overriding it) is a candidate,
+     * and every candidate must be classified — in [STATUS_WRITERS] or in the
+     * explicit exclusion below. A new one is a compile-clean, test-red
+     * decision rather than a silent gap.
+     */
+    @Test
+    fun everyClassThatCallsOnStatusIsClassified() {
+        // Forwards text authored elsewhere, and its own strings are Toasts.
+        val excluded = setOf("BubbleService")
+        val sourceDir = listOf(
+            java.io.File("app/src/main/java/dev/zacx/dicta"),
+            java.io.File("src/main/java/dev/zacx/dicta"),
+            java.io.File("../app/src/main/java/dev/zacx/dicta"),
+        ).firstOrNull { it.isDirectory }
+        assertTrue(
+            "could not locate the main source directory from " +
+                "${java.io.File(".").absolutePath} — refusing to report a " +
+                "pass on a scan that read nothing",
+            sourceDir != null,
+        )
+
+        val callers = sourceDir!!.listFiles { f -> f.name.endsWith(".kt") }
+            .orEmpty()
+            .filter { file ->
+                file.readLines().any { line ->
+                    ON_STATUS_CALL.containsMatchIn(line) &&
+                        !line.contains("fun onStatus")
+                }
+            }
+            .map { it.nameWithoutExtension }
+            .toSet()
+
+        // Positive control: a scan wired to nothing would classify perfectly.
+        assertTrue(
+            "the onStatus scan found ${callers.size} callers, which cannot be " +
+                "right — it is not reading the sources it thinks it is",
+            callers.containsAll(listOf("RemoteTranscriber", "TranscriptionCoordinator")),
+        )
+
+        val unclassified = callers - STATUS_WRITERS.toSet() - excluded
+        assertEquals(
+            "these classes write a status string and are in neither " +
+                "STATUS_WRITERS nor the exclusion list, so the longest-status " +
+                "guard cannot see any string they introduce: $unclassified. " +
+                "Add each to STATUS_WRITERS, or to the exclusion with a " +
+                "reason that says where its text actually goes.",
+            emptySet<String>(),
+            unclassified,
+        )
+    }
+
     @Test
     fun theStatusStringLedgerIsDerivedAndNotAStaleList() {
         val names = statusStringNames()
@@ -632,12 +725,19 @@ class OverlayMinimalLayoutTest {
          * [CHARS_PER_STATUS_LINE] characters per line and four of those covers
          * the longest string the view carries.
          *
-         * ⚠ This kdoc used to assert that longest **is 154 characters**. It is
-         * not, and was not: the set the guard measures maxes out at 123 with a
-         * realistic `%1$s` filler. The number was a stale restatement of a
-         * measurement, so it is gone — `longestStatusString()` measures it,
-         * `noStatusStringOutgrowsItsLineBudget` asserts it fits, and neither
-         * needs a figure copied into prose that nothing re-checks.
+         * ⚠ This kdoc used to assert that longest **is 154 characters**. It
+         * is not, and was not — no status string has ever been that length.
+         * The figure was a stale restatement of a measurement, and three more
+         * copies of it (and of a companion "145") were still standing in
+         * `activity_dictate.xml` and in this file when the first retraction
+         * only edited this one sentence; a retraction is a tree-wide sweep.
+         *
+         * 🔴 No corrected figure replaces them here, deliberately — the first
+         * version of this retraction quoted today's measurement, which is the
+         * same mistake one revision later. `longestStatusString()` measures
+         * it, `noStatusStringOutgrowsItsLineBudget` asserts it fits the
+         * budget, and the failure message prints the actual string and its
+         * actual length at the moment it matters. Prose gets no number.
          */
         const val REQUIRED_STATUS_LINES = 4
 
@@ -655,6 +755,28 @@ class OverlayMinimalLayoutTest {
          * strings `status_text` can carry, instead of restating it by hand.
          */
         val RESOURCE_REFERENCE = Regex("""R\.string\.([a-z0-9_]+)""")
+
+        /**
+         * Every class that can put text on `status_text`, as a ledger.
+         *
+         * `TranscriptionCoordinator` is here because it calls `onStatus`,
+         * which `RemoteTranscriber` forwards verbatim to `DictateActivity`.
+         * It was missing from the first version of this list and a mutant
+         * proved the gap. `BubbleService` is excluded on purpose — see
+         * [statusStringNames].
+         */
+        /**
+         * An `onStatus(` **call**. `fun onStatus` is filtered separately so a
+         * declaration or an override does not count as writing a status.
+         */
+        val ON_STATUS_CALL = Regex("""\.onStatus\(""")
+
+        val STATUS_WRITERS = listOf(
+            "DictateActivity",
+            "DictationSession",
+            "RemoteTranscriber",
+            "TranscriptionCoordinator",
+        )
     }
 
     /**

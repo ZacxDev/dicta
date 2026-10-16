@@ -242,11 +242,18 @@ class RemoteTranscriber(
          * `unreliable: null` on every request and this app looks exactly as it
          * does when all is well — a detector that stops working produces no
          * observable change anywhere in the client. That is the price of not
-         * warning on a no-signal response and it is paid deliberately. The
-         * only thing that notices is `LiveServiceDeviceTest`, which asserts
-         * the live service still answers `false` for ordinary speech and
-         * `true` for a tone. If that ever has to be observable in-app rather
-         * than in a device test, this is the comment to come back to.
+         * warning on a no-signal response and it is paid deliberately.
+         *
+         * 🔴 **Nothing watches for it automatically.** The only check that
+         * would catch it is `LiveServiceDeviceTest`, which asserts the live
+         * service still answers `false` for ordinary speech and `true` for a
+         * tone — and that is an **instrumentation test no runner executes**.
+         * CI compiles it and stops there (`connectedAndroidTest` is in no
+         * workflow; a GitHub runner has no device), and it needs a token at
+         * `/data/local/tmp/dicta-stt-token` plus mesh reachability. So it is
+         * a manual pre-release step for whoever touches this path, not a
+         * standing net, and until someone runs it nothing has checked the
+         * field at all. If this has to become observable in-app, start here.
          *
          * One function rather than an expression inlined at the delivery site:
          * the predicate is the thing under test, and a second copy of it is a

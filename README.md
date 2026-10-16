@@ -272,26 +272,43 @@ the service has no TLS listener a phone could validate.
   clean speech at 0.001825 transcribed correctly — the input that must be
   rejected is *louder* than the inputs that must be accepted, so no threshold
   separates them.
-- Truncation **is** detectable and is surfaced: the response carries
-  `finish_reason` and `truncated`, and `truncated: true` shows "cut off at the
-  length limit" instead of the plain status. (This bullet previously said the
-  response "carries no finish-reason field, so the client cannot detect it" —
-  false once the service grew the field, and exactly the shape of claim that
-  gets a working guard deleted as dead code.)
+- Truncation **is** detectable and is surfaced. The client reads exactly one
+  field for it — `truncated` — and `truncated: true` shows "cut off at the
+  length limit" instead of the plain status. The response also carries
+  `finish_reason`, but **nothing in `app/src/main` reads it**; detection
+  rests on `truncated` alone. (This bullet previously said the response
+  "carries no finish-reason field, so the client cannot detect it", false
+  once the service grew the field and exactly the shape of claim that gets a
+  working guard deleted as dead code — and it then over-corrected into
+  implying both fields are consumed.)
 - Fabrication is reported by the service, not judged here: the response's
-  `unreliable` boolean (with `unreliable_reasons`) is read and shown as "the
-  output may not match what you said". The threshold lives **server-side on
-  purpose** so it can be retuned without shipping an APK, so the client reads
-  the boolean and never re-derives it from `avg_logprob` / `no_speech_prob`.
+  `unreliable` boolean is read and shown as "the output may not match what
+  you said". The response also carries `unreliable_reasons`, which the client
+  **neither reads nor displays** — a string-array reader was deliberately not
+  built, because the status line does not name the reason and an unused
+  reader is one more thing to keep correct. The threshold lives **server-side
+  on purpose** so it can be retuned without shipping an APK, so the client
+  reads the boolean and never re-derives it from `avg_logprob` /
+  `no_speech_prob`.
 - 🔴 Both flags are **three-valued**, and `null` means the server could not
   check — no threshold configured, or the signal a rule needs is itself null.
   The client renders `null` exactly like `false`, i.e. with no warning. So a
   server whose threshold got unset reports `unreliable: null` on every request
   and the app looks precisely as it does when all is well: a detector that
   stops working is currently **unobservable from the client**. That is a
-  deliberate trade against warning-fatigue, not an oversight, and the only
-  thing that would notice today is the device test that asserts the live
-  service still answers `false` for ordinary speech and `true` for a tone.
+  deliberate trade against warning-fatigue, not an oversight.
+
+  🔴 **Nothing watches for it automatically.** `LiveServiceDeviceTest`
+  asserts the live service still answers `unreliable: false` for ordinary
+  speech and `true` for a 200 Hz tone, and it is the only check that would
+  catch the threshold being unset — but it is an **instrumentation test run
+  by hand**. CI compiles it and never runs it (`connectedAndroidTest` appears
+  in no workflow; there is no device on a runner), and it needs a token
+  pushed to `/data/local/tmp/dicta-stt-token` plus mesh reachability. So this
+  is a **manual procedure for whoever is making a release or touching the STT
+  path**, not a standing safety net: run `./gradlew :app:connectedDebugAndroidTest`
+  against a connected handset before shipping a change here. Until someone
+  runs it, nothing has checked the field at all.
 - `KeystoreCipher` is **not** covered by the unit suite: `AndroidKeyStore` has
   no Robolectric implementation, so the real cipher is device-verified only.
   The `SecretCipher` seam is what the unit tests exercise.
