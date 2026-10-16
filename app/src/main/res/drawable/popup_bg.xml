@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The language Spinner's dropdown sheet (android:popupBackground).
+
+  Elevation level 2 of the surface ramp, which is what the ramp in colors.xml
+  assigns to a surface floating over the level-0 window — the same step the
+  dictation card uses. Without this the popup keeps
+  @android:drawable/popup_background_material, a light-grey platform sheet, and
+  the one tap that opens this control shows the stock Material look the rest of
+  the screen was restyled away from.
+
+  Hairline is @color/dicta_divider rather than @color/dicta_outline for the
+  reason card_bg.xml gives: the sheet floats over a dimmed-free window but is
+  already separated by a 1.33:1 fill step plus its own corners, so a 3:1
+  boundary here would read as a frame drawn around the list.
+
+  Radius 16dp matches @drawable/input_bg — the collapsed Spinner — so the sheet
+  reads as that control expanding rather than as a separate dialog. No padding
+  is declared: the rows in @layout/spinner_dropdown_item carry their own, and a
+  shape that reported padding would inset the popup's own measured width.
+-->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="@color/dicta_surface_2" />
+    <corners android:radius="16dp" />
+    <stroke android:width="1dp" android:color="@color/dicta_divider" />
+</shape>

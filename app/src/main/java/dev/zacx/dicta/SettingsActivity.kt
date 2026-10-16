@@ -97,12 +97,21 @@ class SettingsActivity : Activity() {
         languageCodes = listOf<String?>(null) + named.map { it.key }
         val labels = listOf(followLabel) + named.map { it.value }
 
+        // 🔴 Issue #10: these two were android.R.layout.simple_spinner_item and
+        // android.R.layout.simple_spinner_dropdown_item, i.e. the platform's own
+        // rows with the platform's metrics and colours — which is why adding
+        // this picker RAISED the screen's unthemed-control count. The
+        // replacements are the app's own layouts; each explains, in its own
+        // header, the cue it has to carry that the platform row used to supply
+        // (the caret, and the selected-row mark). The adapter itself, the
+        // labels and the positional languageCodes list below are deliberately
+        // unchanged — SettingsLanguageTest/DictationLanguageTest drive them.
         languageSpinner.adapter = ArrayAdapter(
             this,
-            android.R.layout.simple_spinner_item,
+            R.layout.spinner_item,
             labels,
         ).apply {
-            setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
+            setDropDownViewResource(R.layout.spinner_dropdown_item)
         }
 
         // settings.language is null when following the device, which is

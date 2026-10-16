@@ -1,0 +1,21 @@
+<!-- Picker caret for the dictation-language Spinner.
+
+     🔴 Load-bearing, not decoration. Replacing a Spinner's background with
+     @drawable/input_bg removes the platform spinner_background_material, and
+     that drawable is where the stock caret is drawn — so a themed Spinner with
+     no glyph of its own looks exactly like the read-only text fields above and
+     below it, and nothing says it opens a list. This is carried as the
+     drawableEnd of @layout/spinner_item so it travels with the collapsed view
+     only (a dropdown row must not show a caret).
+
+     Platform expand_more glyph. fillColor is white and tinted at the use site,
+     matching ic_close / ic_more in this directory. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M16.59,8.59L12,13.17 7.41,8.59 6,10l6,6 6,-6z" />
+</vector>

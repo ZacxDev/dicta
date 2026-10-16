@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The COLLAPSED row of a themed Spinner — the dictation-language picker in
+  activity_settings.xml is the only one. Replaces
+  android.R.layout.simple_spinner_item, which is a platform TextView carrying
+  ?android:attr/spinnerItemStyle and therefore the stock Material metrics and
+  colours; on this screen that rendered as the one grey control left among
+  restyled ones.
+
+  🔴 The root MUST stay a <TextView>. ArrayAdapter's one-resource constructor
+  leaves its text-view id at 0 and then casts the inflated root straight to
+  TextView (ArrayAdapter.createViewFromResource), so a LinearLayout root here
+  throws ClassCastException at first inflation — it would not be a styling
+  regression, it would be a crash on opening Settings, and SettingsActivity's
+  adapter construction is explicitly out of scope to restructure. That is why
+  the caret is a drawableEnd rather than a sibling ImageView.
+
+  The caret itself is not optional: see @drawable/ic_chevron_down. The
+  collapsed view is the only place it may appear, which is the whole reason
+  this layout and @layout/spinner_dropdown_item are two files rather than one.
+
+  No padding is declared here on purpose: this view is a CHILD of the Spinner,
+  and the Spinner carries the screen's input metrics itself (14dp padding over
+  @drawable/input_bg, 48dp minHeight) so that the collapsed picker boxes
+  identically to the @id/stt_url and @id/stt_token fields around it. Padding
+  declared in both places would double.
+-->
+<TextView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:minHeight="48dp"
+    android:gravity="center_vertical"
+    android:textSize="15sp"
+    android:textColor="@color/dicta_on_surface"
+    android:drawableEnd="@drawable/ic_chevron_down"
+    android:drawableTint="@color/dicta_on_surface_variant"
+    android:drawablePadding="8dp"
+    android:singleLine="true"
+    android:ellipsize="end" />
