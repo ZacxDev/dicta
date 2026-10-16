@@ -2,6 +2,7 @@ package dev.zacx.dicta
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -444,6 +445,212 @@ class DictationHistoryStoreTest {
             indexText().contains(lost),
         )
         assertEquals(DictationHistoryStore.Usage(1, 64L), store.usage())
+    }
+
+    // --- recovering from the temp file --------------------------------------
+
+    private val tempIndex: File get() = File(historyDir, "${DictationHistoryStore.INDEX}.tmp")
+
+    /**
+     * Reproduces the state `writeIndex`'s rename-refused fallback leaves when
+     * its in-place `writeText` throws part-way: the temp holds the complete,
+     * `fsync`'d payload, and `index.json` has been truncated on open.
+     *
+     * 🔴 Zero-length specifically, because that is the shape
+     * `FileOutputStream(file)` produces the instant it opens — the most likely
+     * torn index there is, and the one the round-1 comment described as "a
+     * stale one", i.e. harmless.
+     */
+    @Test
+    fun aZeroLengthIndexIsRecoveredFromTheTempRatherThanWipingHistory() {
+        val store = store()
+        val id = store.add(recording(), "kept", fromRemote = false, audioSeconds = 1.0)
+        val committed = indexText()
+        val audio = audioFiles()
+        assertEquals("fixture: nothing was filed", 1, audio.size)
+
+        tempIndex.writeText(committed)
+        File(historyDir, DictationHistoryStore.INDEX).writeText("")
+
+        assertEquals(
+            "a zero-length index.json read as empty, so load() took the " +
+                "sweepAndReset() path and DELETED every recording the user " +
+                "has. The temp file beside it was a complete, fsync'd index.",
+            listOf(id),
+            store.recent(10).map { it.id },
+        )
+        assertEquals(
+            "the audio was swept while a valid index existed in the temp: " +
+                "${audioFiles()}",
+            audio,
+            audioFiles(),
+        )
+        assertEquals(
+            "index.json was not restored from the temp, so every later read " +
+                "still depends on the temp surviving",
+            committed,
+            indexText(),
+        )
+    }
+
+    /** The same, torn rather than empty: a prefix of valid JSON. */
+    @Test
+    fun aTruncatedIndexIsRecoveredFromTheTemp() {
+        val store = store()
+        val id = store.add(recording(), "kept", fromRemote = false, audioSeconds = 1.0)
+        val committed = indexText()
+
+        tempIndex.writeText(committed)
+        File(historyDir, DictationHistoryStore.INDEX)
+            .writeText(committed.take(committed.length / 2))
+
+        assertEquals(
+            "a truncated index.json wiped history instead of being recovered " +
+                "from the complete temp beside it",
+            listOf(id),
+            store.recent(10).map { it.id },
+        )
+    }
+
+    /**
+     * 🔴 The *missing* index, which is the branch that also holds the orphan
+     * sweep — so this pins an ORDER, not just a lookup. `sweepAndReset()`
+     * deletes every audio file in the directory, which is exactly the set the
+     * temp still has rows for, so sweeping before recovering would read a
+     * valid index back and have nothing left for it to point at.
+     */
+    @Test
+    fun aMissingIndexIsRecoveredFromTheTempBeforeTheOrphanSweepRuns() {
+        val store = store()
+        val id = store.add(recording(), "kept", fromRemote = false, audioSeconds = 1.0)
+        val committed = indexText()
+        val audio = audioFiles()
+
+        tempIndex.writeText(committed)
+        assertTrue(
+            "fixture: index.json was not removed",
+            File(historyDir, DictationHistoryStore.INDEX).delete(),
+        )
+
+        assertEquals(
+            "a missing index.json with a complete temp beside it read as " +
+                "empty. If the orphan sweep ran first it also deleted the " +
+                "audio, which is unrecoverable.",
+            listOf(id),
+            store.recent(10).map { it.id },
+        )
+        assertEquals(
+            "the orphan sweep ran before the recovery and deleted the audio " +
+                "the recovered index points at: ${audioFiles()}",
+            audio,
+            audioFiles(),
+        )
+    }
+
+    /**
+     * The inverse, and the reason the recovery is safe to have: with nothing
+     * usable to recover from, the degradation must still be "empty", never a
+     * crash. Covers both halves of "usable" — no temp at all, and a temp that
+     * is itself unparseable.
+     */
+    @Test
+    fun aTornIndexWithNoUsableTempStillDegradesToEmpty() {
+        val store = store()
+        store.add(recording(), "lost", fromRemote = false, audioSeconds = 1.0)
+        assertFalse(
+            "fixture: the rename should have consumed the temp, so this case " +
+                "is genuinely 'no temp'",
+            tempIndex.exists(),
+        )
+        File(historyDir, DictationHistoryStore.INDEX).writeText("{\"items\": [ torn")
+
+        assertEquals(
+            "a torn index with no temp beside it must read as empty rather " +
+                "than throw",
+            emptyList<DictationHistoryStore.Item>(),
+            store.recent(10),
+        )
+        assertEquals("the orphans were not swept: ${audioFiles()}", emptyList<String>(), audioFiles())
+
+        // And again with a temp present but garbage, which is the other way
+        // "usable" can fail.
+        clock += 1_000
+        store.add(recording("second.ogg"), "lost too", fromRemote = false, audioSeconds = 1.0)
+        tempIndex.writeText("not json at all")
+        File(historyDir, DictationHistoryStore.INDEX).writeText("{\"items\": [ torn")
+
+        assertEquals(
+            "an unparseable temp was accepted as the index, or the double " +
+                "fault threw instead of degrading to empty",
+            emptyList<DictationHistoryStore.Item>(),
+            store.recent(10),
+        )
+    }
+
+    /**
+     * 🔴 Direction guard. The temp is the *fallback*, so a readable
+     * `index.json` must win even when the temp parses — otherwise a stale temp
+     * silently rolls history back. [aLeftoverTempFileLeavesTheRealIndexIntact]
+     * makes the same claim with an UNPARSEABLE temp, which a "read the temp
+     * first" mutation would still pass.
+     */
+    @Test
+    fun aParseableButStaleTempLosesToAReadableIndex() {
+        val store = store()
+        val first = store.add(recording("one.ogg"), "one", fromRemote = false, audioSeconds = 1.0)
+        val stale = indexText()
+        clock += 1_000
+        val second = store.add(recording("two.ogg"), "two", fromRemote = false, audioSeconds = 1.0)
+
+        tempIndex.writeText(stale)
+
+        assertEquals(
+            "a stale but VALID temp file was preferred over the committed " +
+                "index, rolling history back to before the newest item",
+            listOf(second, first),
+            store.recent(10).map { it.id },
+        )
+    }
+
+    /**
+     * 🔴 `add` has throwing steps *after* the audio is on disk — `copyTo`
+     * running out of space, and `writeIndex`'s `fd.sync()`. The caller treats a
+     * throw as "no history entry", so a copy left behind is an orphan nothing
+     * ever collects: `visible()` prunes rows without files, never files without
+     * rows.
+     *
+     * The failure is injected by occupying the temp index's *name* with a
+     * directory, which is what `writeIndex`'s `FileOutputStream` opens first.
+     */
+    @Test
+    fun anAddThatThrowsLeavesNoAudioBehind() {
+        val dir = temp.newFolder("add-throws")
+        assertTrue(
+            "fixture: could not occupy the temp index name",
+            File(dir, "${DictationHistoryStore.INDEX}.tmp").mkdirs(),
+        )
+        val store = store(dir)
+
+        var threw: Throwable? = null
+        try {
+            store.add(recording("orphan.ogg"), "x", fromRemote = false, audioSeconds = 1.0)
+        } catch (t: Throwable) {
+            threw = t
+        }
+
+        assertNotNull(
+            "fixture: add did not throw, so this test observes nothing. The " +
+                "index write was supposed to fail on an occupied temp name.",
+            threw,
+        )
+        assertEquals(
+            "the audio copy survived a failed add. No index row will ever " +
+                "point at it, nothing sweeps a file-without-a-row, and it " +
+                "counts against no retention bound — a recording of the " +
+                "user's voice kept forever. Left: ${audioFiles(dir)}",
+            emptyList<String>(),
+            audioFiles(dir),
+        )
     }
 
     @Test

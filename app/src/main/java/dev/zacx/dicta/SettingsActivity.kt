@@ -55,6 +55,18 @@ class SettingsActivity : Activity() {
     private var lastUsage: DictationHistoryStore.Usage? = null
 
     /**
+     * The delete-all confirmation, while it is up, so [onDestroy] can dismiss
+     * it.
+     *
+     * 🔴 Not optional hygiene. This activity declares no `configChanges` and no
+     * `screenOrientation`, so a rotation with the dialog showing destroys the
+     * activity under it: the window is leaked (`WindowLeaked` in logcat, and a
+     * dialog attached to a dead activity), and the confirmation the user was
+     * part-way through is silently dropped rather than re-offered.
+     */
+    private var confirmDialog: AlertDialog? = null
+
+    /**
      * The spinner's rows, by position. `null` is "follow the device locale" and
      * is always position 0 — see [languageCodes].
      */
@@ -89,6 +101,10 @@ class SettingsActivity : Activity() {
     }
 
     override fun onDestroy() {
+        // Before super, and before the worker: a dialog still attached to an
+        // activity that has finished destroying is the leak itself.
+        confirmDialog?.let { runCatching { it.dismiss() } }
+        confirmDialog = null
         worker.shutdownNow()
         super.onDestroy()
     }
@@ -275,6 +291,20 @@ class SettingsActivity : Activity() {
      * the one on screen — and it is read from a field rather than from
      * `usage()` because `usage()` is disk IO and this runs on the main thread.
      *
+     * ⚠ Which makes the count as stale as the usage line, and the line is
+     * refreshed only in `onCreate` and after a delete. A bubble session filing
+     * a dictation in between means the dialog says "2" while
+     * [DictationHistoryStore.clearAll] removes 3. Only *new* items can appear
+     * in that gap, so the drift has one direction: the dialog can **understate**
+     * the loss, never overstate it.
+     *
+     * Kept deliberately, and not because understating is the flattering
+     * direction — it is the less conservative of the two. It is tolerable
+     * because the count is an aid and not the promise: the user is agreeing to
+     * "every saved recording … this cannot be undone", which stays true at any
+     * count, and the only way to make the number exact is a `usage()` read on
+     * the main thread.
+     *
      * Cancel, back and a tap outside all do exactly nothing: the negative
      * button has no listener and the dialog is cancelable. There is no partial
      * clear to get wrong.
@@ -286,7 +316,7 @@ class SettingsActivity : Activity() {
      */
     private fun clearHistory() {
         val count = lastUsage?.itemCount ?: 0
-        AlertDialog.Builder(this)
+        confirmDialog = AlertDialog.Builder(this)
             .setTitle(R.string.stt_clear_history_confirm_title)
             .setMessage(
                 if (count > 0) {

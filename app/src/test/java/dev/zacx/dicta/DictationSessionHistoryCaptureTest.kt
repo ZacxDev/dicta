@@ -3,6 +3,8 @@ package dev.zacx.dicta
 import android.content.Context
 import android.os.Looper
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -13,6 +15,10 @@ import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import java.io.File
+import java.util.Locale
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * 🔴 The **third** half of the cancel button.
@@ -250,6 +256,240 @@ class DictationSessionHistoryCaptureTest {
                 .map { it.name }
                 .filterNot { it.startsWith(DictationHistoryStore.INDEX) }
                 .sorted(),
+        )
+    }
+
+    // --- destroy() landing AFTER the enqueue ---------------------------------
+
+    /**
+     * Settings whose token decrypts, so the upload ladder gets past
+     * `isRemoteConfigured` and actually calls the transport. Same seam
+     * [DictationSessionRemoteHistoryWiringTest] uses.
+     */
+    private fun configuredSettings(): SttSettings {
+        val prefs = ctx.getSharedPreferences(
+            "history-enqueue-test-${counter++}", Context.MODE_PRIVATE
+        )
+        prefs.edit().clear().apply()
+        val cipher = object : SecretCipher {
+            override fun encrypt(plaintext: String): String = plaintext
+            override fun decrypt(blob: String): String? = blob
+        }
+        val tokens = TokenStore(prefs, cipher)
+        tokens.putToken("a-bearer-token")
+        return SttSettings(prefs, tokens)
+    }
+
+    /**
+     * The real ladder, over a transport that parks inside `upload` until
+     * [release] — so the single worker thread is provably occupied, and
+     * "started" is a point in the call stack rather than a point in time.
+     *
+     * @param occupied counted down once the worker is inside the transport.
+     */
+    private fun blockingTranscriber(
+        occupied: CountDownLatch,
+        release: CountDownLatch,
+    ): (Context, SttSettings, Locale) -> RemoteTranscriber = { _, _, _ ->
+        RemoteTranscriber(
+            ctx,
+            configuredSettings(),
+            locale = Locale("en", "US"),
+            transportFactory = { _, _ ->
+                RemoteTranscriber.Transport(
+                    upload = {
+                        occupied.countDown()
+                        release.await(10, TimeUnit.SECONDS)
+                        SttOutcome.Success("remote text")
+                    },
+                    health = { true },
+                )
+            },
+            sleeper = { },
+            unitRandom = { 0.5 },
+            elapsedMs = { 0L },
+        )
+    }
+
+    /**
+     * 🔴 The direction that matters most in production, and the one the
+     * two-recording test below is structurally blind to.
+     *
+     * A session whose upload has **started** must keep its entry when
+     * `destroy()` lands. That is not an edge case: `BubbleService` parks every
+     * submitted session in `submitted` and destroys it when the next recording
+     * starts, so "destroy() deletes whatever this session filed" would delete
+     * the history entry of every dictation the user actually completed — the
+     * feature, not the window.
+     *
+     * ⚠ Why this needs its OWN test rather than the pair asserted below:
+     * `pendingHistoryId` is a single slot, so with two recordings in one
+     * session the second `set` overwrites the first id and destroy() cannot
+     * reach the running entry even with the claim removed. A mutation deleting
+     * the task's `compareAndSet` therefore SURVIVED the two-recording test,
+     * measured — one recording is the only shape that can see it.
+     */
+    @Test
+    fun aRecordingWhoseUploadHasStartedSurvivesDestroy() {
+        val occupied = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val history = store()
+        val session = DictationSession(
+            ctx,
+            configuredSettings(),
+            Silent(),
+            history = history,
+            transcriberFactory = blockingTranscriber(occupied, release),
+        )
+
+        finishRecording(session, recordingFile())
+        assertTrue(
+            "fixture: the worker never reached the transport, so the task " +
+                "cannot be said to have STARTED and this test observes nothing",
+            occupied.await(10, TimeUnit.SECONDS),
+        )
+        val id = history.recent(10).single().id
+
+        session.destroy()
+        release.countDown()
+        settle()
+        settle()
+
+        assertEquals(
+            "destroy() deleted the entry of a recording whose upload had " +
+                "already started. BubbleService destroys every submitted " +
+                "session when the next recording begins, so this deletes the " +
+                "history of every completed dictation.",
+            listOf(id),
+            history.recent(10).map { it.id },
+        )
+    }
+
+    /**
+     * 🔴 The third interleaving, and the one the
+     * `RejectedExecutionException` catch structurally cannot see.
+     *
+     * `destroy()` landing *before* the add is the gate at the top of
+     * `onFinished`; *during* the add is the rejected enqueue
+     * ([aSessionDestroyedWhileFilingKeepsNothing]). This is `destroy()` landing
+     * after the enqueue was **accepted**: `shutdownNow()` drains the queue, the
+     * task never runs, nothing throws — and the entry plus its audio copy
+     * stayed in a browsable history forever. The user tore the session down and
+     * a recording of their voice was kept.
+     *
+     * The interleaving is made deterministic rather than slept at: the single
+     * worker thread is occupied inside the first recording's transport, so the
+     * second recording's task can only queue behind it.
+     *
+     * 🔴 And the first recording is not scenery — it is the discriminating
+     * half. A `destroy()` that simply deleted the last filed id would delete it
+     * too, and `BubbleService` destroys every *successfully completed* session
+     * when the next recording starts. So the assertion pair is "the queued one
+     * is gone AND the running one is not".
+     */
+    @Test
+    fun aSessionDestroyedAfterTheEnqueueKeepsOnlyTheRecordingAlreadyUploading() {
+        val occupied = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        // 🔴 An ADVANCING clock, not this file's fixed one: both recordings go
+        // into one store, and with equal `createdAtMs` the two ids differ only
+        // by their random suffix — so "which of these two is the queued one"
+        // would be decided by `Random`, and the first version of this test
+        // labelled them backwards half the time.
+        var clock = 1_700_000_000_000L
+        val history = DictationHistoryStore(temp.newFolder("history-enqueue"), { clock })
+        val session = DictationSession(
+            ctx,
+            configuredSettings(),
+            Silent(),
+            history = history,
+            transcriberFactory = blockingTranscriber(occupied, release),
+        )
+
+        // Recording 1: its task starts and parks inside the transport, so it
+        // owns the single worker thread for the rest of the test.
+        finishRecording(session, recordingFile())
+        assertTrue(
+            "fixture: the worker never reached the transport, so nothing is " +
+                "occupying it and recording 2's task would have RUN rather " +
+                "than queued — this test would then be measuring the " +
+                "already-covered interleaving.",
+            occupied.await(10, TimeUnit.SECONDS),
+        )
+
+        // Recording 2: accepted by the executor, queued behind recording 1.
+        clock += 1_000
+        finishRecording(session, recordingFile())
+        // recent() is newest-first, so with the clock advanced this is
+        // [recording 2, recording 1] by construction rather than by luck.
+        val filed = history.recent(10)
+        assertEquals(
+            "fixture: both recordings should be filed by now, so the delete " +
+                "below is observable. Filed: ${filed.map { it.id }}",
+            2,
+            filed.size,
+        )
+        val queued = filed.first().id
+        val running = filed.last().id
+        assertEquals(
+            "fixture: the two entries are not in creation order, so the " +
+                "labels below are guesses",
+            1_700_000_001_000L,
+            filed.first().createdAtMs,
+        )
+
+        session.destroy()
+        release.countDown()
+        settle()
+        settle()
+
+        val left = history.recent(10).map { it.id }
+        assertFalse(
+            "the queued recording survived destroy(). shutdownNow() drained " +
+                "its task, so nothing ever ran to collect it and no " +
+                "RejectedExecutionException was thrown — the session was torn " +
+                "down and a recording of the user's voice stayed in a " +
+                "browsable history. Left: $left",
+            queued in left,
+        )
+        assertTrue(
+            "destroy() deleted the recording whose upload was already " +
+                "RUNNING. That is every successfully completed dictation: " +
+                "BubbleService parks a submitted session and destroys it when " +
+                "the next recording starts, so this would delete the feature " +
+                "rather than close the window. Left: $left",
+            running in left,
+        )
+    }
+
+    /**
+     * 🔴 `destroy()` runs on the main thread (Service/Activity `onDestroy`) and
+     * `DictationHistoryStore.delete` takes the store's process-wide monitor and
+     * then reads, rewrites and `fsync`s the index — a block of unbounded length
+     * if it were inlined, because the monitor can be held by an `add` copying
+     * ~469 KiB.
+     *
+     * The *outcome* of an inline delete is identical, so no behavioural test
+     * can see the difference. This pins the seam that makes it off-thread.
+     */
+    @Test
+    fun historyCleanupNeverRunsOnTheCallersThread() {
+        val caller = Thread.currentThread()
+        val ran = AtomicReference<Thread?>(null)
+        val done = CountDownLatch(1)
+
+        DictationSession.runHistoryCleanup {
+            ran.set(Thread.currentThread())
+            done.countDown()
+        }
+
+        assertTrue("the cleanup block never ran", done.await(10, TimeUnit.SECONDS))
+        assertNotEquals(
+            "destroy()'s history cleanup ran on its caller's thread, which in " +
+                "production is the main thread — a store delete there is an " +
+                "ANR on a teardown path, not jank",
+            caller,
+            ran.get(),
         )
     }
 }

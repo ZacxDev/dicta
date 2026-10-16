@@ -10,6 +10,7 @@ import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * One dictation: capture, the on-device recogniser, the upload, and the
@@ -123,6 +124,44 @@ class DictationSession(
     val isRecording: Boolean get() = recording.get()
 
     private val uploadSuppressed = AtomicBoolean(false)
+
+    /**
+     * The history entry this session has filed but not yet handed to the
+     * upload ladder, so [destroy] can take it back out.
+     *
+     * 🔴 This is where "a destroyed session keeps nothing" is actually
+     * decided, and it is deliberately NOT "whatever this session last filed".
+     * `destroy()` runs on every *successfully completed* session too —
+     * `BubbleService` parks a submitted session in `submitted` and destroys it
+     * when the next recording starts — so a `destroy()` that deleted the last
+     * filed id unconditionally would delete the history entry of every
+     * dictation the user actually completed. That would not close the window;
+     * it would delete the feature.
+     *
+     * So the id is held only for the interval in which nothing else can
+     * collect it: set just before `worker.execute`, cleared by the task itself
+     * as its first action. Three outcomes, each resolved by an atomic on this
+     * field rather than by timing:
+     *
+     *  * the enqueue is **rejected** — `destroy()` already shut the worker
+     *    down. The catch at the enqueue clears the id and deletes.
+     *  * the task is **accepted but drained** by `shutdownNow()` and never
+     *    runs. Nothing clears the id, so `destroy()` sees it and deletes. This
+     *    is the instant the `RejectedExecutionException` catch cannot see, and
+     *    it is the whole reason this field exists.
+     *  * the task **starts**. It clears the id, and the ladder owns the entry
+     *    from then on.
+     *
+     * ⚠ So the absolute "a destroyed session keeps nothing" stays **false**,
+     * and must not be written here again. A `destroy()` landing after the task
+     * has started keeps the entry — deliberately, and pinned by
+     * `DictationSessionHistoryCaptureTest.aRecordingWhoseUploadHasStartedSurvivesDestroy`:
+     * the user submitted that recording, the ladder is running, and
+     * `shutdownNow()`'s interrupt does not unblock its socket read anyway. The
+     * true claim is the narrower one: **a session destroyed before its
+     * recording reached the upload keeps nothing.**
+     */
+    private val pendingHistoryId = AtomicReference<String?>(null)
 
     /**
      * 🔴 Closes the **class**, not just the instance's capture.
@@ -386,6 +425,29 @@ class DictationSession(
         worker.shutdownNow()
         main.removeCallbacksAndMessages(null)
         audioFile?.let { if (it.exists()) it.delete() }
+        // 🔴 AFTER shutdownNow(), which is what decides the answer rather than
+        // merely preceding it: by the time it returns, every task that will
+        // ever run has started (and has therefore already cleared the id), and
+        // everything still queued has been drained and never will. So an id
+        // still here is exactly "filed, and nothing is going to collect it".
+        // See [pendingHistoryId] for why this is not "the last id filed".
+        pendingHistoryId.getAndSet(null)?.let { id ->
+            // 🔴 NOT inline: destroy() is called from Service/Activity
+            // onDestroy, i.e. on the main thread, and `delete` takes the
+            // store's process-wide monitor and then reads, rewrites and
+            // `fsync`s the index. The monitor can be held by an `add` copying
+            // ~469 KiB, so inlining this is a main-thread block of unbounded
+            // length on a teardown path — an ANR, not jank.
+            //
+            // Fire-and-forget is sound because nothing waits on the result and
+            // the delete is idempotent: the entry is already unreachable from
+            // this session (the id is gone from the field), `history.delete`
+            // is a no-op for an unknown id, and the store's own monitor
+            // serialises it against any other writer. The cost is that
+            // "keeps nothing" becomes true shortly after destroy() rather than
+            // at the instant it returns.
+            runHistoryCleanup { runCatching { history.delete(id) } }
+        }
     }
 
     private fun setTier(next: AudioCaptureLogic.Tier) {
@@ -461,12 +523,19 @@ class DictationSession(
             // 🔴 Before everything: destroy() stops the capture, which lands
             // here. Enqueueing on an executor destroy() is about to
             // shutdownNow() made "was it uploaded" a race. A destroyed session
-            // uploads nothing, says nothing and keeps nothing.
+            // uploads nothing and says nothing.
+            //
+            // 🔴 The third clause this comment used to carry — "and keeps
+            // nothing" — is an absolute and was false twice over, so it is
+            // gone from here on purpose. What is kept is decided by `destroy()`
+            // and `pendingHistoryId`, not by this gate and not by the enqueue
+            // below, and the true form of the claim is narrower than the
+            // absolute: see `pendingHistoryId`.
             //
             // ⚠ This gate is the fast path, not the whole mechanism — it reads
-            // the flag before ~469 KiB of file IO. The case where destroy()
-            // lands *during* that IO is handled at the enqueue below; see the
-            // note there for why that is the one place it can be handled.
+            // the flag before ~469 KiB of file IO. The cases where destroy()
+            // lands *during* or *after* that IO are covered at the enqueue
+            // below and in destroy() respectively.
             if (destroyed.get()) {
                 file?.let { if (it.exists()) it.delete() }
                 return
@@ -513,30 +582,46 @@ class DictationSession(
             }.getOrNull()
 
             // 🔴 The gate at the top of this method is NOT sufficient on its
-            // own any more, and this is what closes the gap. `history.add`
-            // copies up to ~469 KiB and re-serialises the index, so
-            // `destroy()` has a real window to land between the gate and this
-            // line — and after `worker.shutdownNow()` the enqueue throws
+            // own, and the two lines below are what cover the rest.
+            // `history.add` copies up to ~469 KiB and re-serialises the index,
+            // so `destroy()` has a real window to land between the gate and
+            // here — and after `worker.shutdownNow()` the enqueue throws
             // RejectedExecutionException **on the capture thread**, where
             // nothing catches it.
             //
             // The catch is not belt-and-braces around a second
-            // `destroyed.get()`: it IS the check, deliberately. `destroy()` is
-            // the only thing in this class that shuts the worker down, the
-            // single-thread executor's queue is unbounded so saturation cannot
-            // reject, and `execute` on a shut-down ThreadPoolExecutor always
-            // rejects (AbortPolicy) — so "rejected" and "destroyed" are the
-            // same event, observed at the one instant that matters rather than
-            // one line earlier. A re-read of the flag here would narrow the
-            // window without closing it and would be a branch no test could
-            // reach, which is how an unpinned guard gets mistaken for one.
+            // `destroyed.get()`; it is the handler for one of the two ways the
+            // race resolves. `destroy()` is the only thing in this class that
+            // shuts the worker down, the single-thread executor's queue is
+            // unbounded so saturation cannot reject, and `execute` on a
+            // shut-down ThreadPoolExecutor always rejects (AbortPolicy) — so a
+            // rejection here IS a destroy.
+            //
+            // 🔴 But it was once written up as "the check", on the argument
+            // that "'rejected' and 'destroyed' are the same event". They are
+            // not: the enqueue can be ACCEPTED and the task then drained by
+            // `shutdownNow()` without ever running, and in that case the catch
+            // never fires while the entry and its audio copy survive in a
+            // browsable history forever. `pendingHistoryId` is what covers
+            // that instant — handed over here, and claimed by the task below
+            // as its first action. See its kdoc.
             //
             // Filing the entry and then taking it back out is the only order
             // available: the add must finish before we can know it raced.
             // `DictationHistoryStore.delete` exists for this caller alone.
+            pendingHistoryId.set(historyId)
             try {
-                worker.execute { transcribeRemotely(file, audioSeconds, historyId) }
+                worker.execute {
+                    // The claim. Past this point the ladder owns the entry and
+                    // destroy() must not delete it — it is a recording the
+                    // user submitted and is waiting on. `compareAndSet`, not
+                    // `set(null)`, so a task racing a later recording's id
+                    // cannot clear the wrong one.
+                    pendingHistoryId.compareAndSet(historyId, null)
+                    transcribeRemotely(file, audioSeconds, historyId)
+                }
             } catch (_: RejectedExecutionException) {
+                pendingHistoryId.compareAndSet(historyId, null)
                 historyId?.let { runCatching { history.delete(it) } }
                 if (file.exists()) file.delete()
             }
@@ -626,5 +711,35 @@ class DictationSession(
     private fun updateHistoryText(id: String?, text: String, fromRemote: Boolean) {
         if (id == null) return
         runCatching { history.updateText(id, text, fromRemote) }
+    }
+
+    internal companion object {
+        /**
+         * Runs [destroy]'s history cleanup off the calling thread.
+         *
+         * 🔴 A named function rather than an inline `Thread { … }.start()` for
+         * one reason: "this does not run on the caller's thread" is the
+         * property that matters, `destroy()`'s caller is the main thread, and
+         * the observable outcome of an inline delete is identical — so without
+         * a seam no test could see the difference at all. Pinned by
+         * `DictationSessionHistoryCaptureTest.historyCleanupNeverRunsOnTheCallersThread`.
+         *
+         * It **starts** the thread rather than returning one, deliberately: an
+         * unstarted `Thread` invites `.run()` at the call site, which executes
+         * the block inline and would be exactly the defect this exists to
+         * prevent, while still passing a test written against the factory.
+         *
+         * ⚠ What this does NOT pin, stated rather than implied: that `destroy`
+         * calls it. A mutant inlining `history.delete(id)` into `destroy` would
+         * survive, because Robolectric runs the activity on the main thread and
+         * enforces no `StrictMode` — the same gap
+         * `SettingsHistoryControlsTest` already names for its `usage()` read.
+         *
+         * Daemon because the work is best-effort and must never hold up a
+         * process the system is trying to end.
+         */
+        internal fun runHistoryCleanup(block: () -> Unit) {
+            Thread(block, "dicta-history-cleanup").apply { isDaemon = true }.start()
+        }
     }
 }

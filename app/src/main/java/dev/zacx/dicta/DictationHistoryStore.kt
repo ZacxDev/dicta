@@ -46,21 +46,44 @@ import java.io.FileOutputStream
  *
  * ## The index, and what survives a kill
  *
- * `index.json` is written to `index.json.tmp` and then [File.renameTo]'d over
- * the real file, which is atomic within a directory. On that path a process
- * death mid-write loses *the newest item*, never the whole index — the old
- * index is either fully there or fully replaced.
+ * `index.json` is written to `index.json.tmp`, `fsync`'d, and then
+ * [File.renameTo]'d over the real file, which is atomic within a directory. On
+ * that path a process death mid-write loses *the newest item*, never the whole
+ * index — the old index is either fully there or fully replaced.
  *
- * 🔴 **That is the normal path, not a guarantee of the class**, which an
- * earlier version of this paragraph claimed. When the rename is *refused*,
- * [writeIndex] falls back to writing `index.json` in place, which is not
- * atomic: a kill inside that window leaves a truncated index. And the
- * recovery from an unparseable index is the paragraph below — **every
- * recording deleted**. So the honest worst case is "history is wiped", it is
- * reachable (rename refused, then killed; or a torn write that outlived the
- * data `fsync`), and it is merely improbable rather than impossible. What the
- * fallback *does* guarantee is that no path ends with neither file present:
- * losing both is what makes the wipe happen without even a kill.
+ * 🔴 **And when `index.json` is lost anyway, the temp file is the recovery.**
+ * [load] falls back to `index.json.tmp` whenever `index.json` is missing or
+ * unparseable. A temp file that still exists is, by construction, a complete
+ * and `fsync`'d index that was never renamed into place — there is no other way
+ * for one to survive a call, because the normal path consumes it in the rename
+ * and the fallback path deletes it. So reading it recovers all three ways the
+ * commit can be lost: a kill between the write and the rename, a rename the
+ * filesystem *refused* followed by a torn in-place write, and a power cut in
+ * either window. Every one of those used to land in the paragraph below —
+ * **every recording the user has, deleted** — and now lands on the previous
+ * index instead.
+ *
+ * 🔴 **The honest remaining loss cases**, because the sentence this replaces
+ * was flattering and the one before that was wrong:
+ *
+ *  * **Both files unparseable.** The sweep below still runs, and it is still a
+ *    wipe. Needs two independent faults, or one fault big enough to damage two
+ *    files (a corrupt block, a truncated filesystem).
+ *  * **Neither file present.** Same outcome, same paragraph. [writeIndex] has
+ *    no path that produces it.
+ *  * **Possibly the newest item, after a power cut — stated as UNKNOWN rather
+ *    than as a bound.** `java.io` cannot `fsync` a directory (see
+ *    [writeIndex]), so the durability of the rename, and of the temp's own
+ *    directory entry, is the filesystem's business and not ours. Whether the
+ *    post-crash directory shows the temp (recoverable, newest item kept) or
+ *    shows neither name (the bullet above) is not something this code decides,
+ *    and this comment does not claim it either way. What it does claim is that
+ *    whatever names ARE there get read in the right order.
+ *
+ * What is NOT a remaining case, and was the costliest one: a kill during
+ * recovery itself. The restore writes `index.json` in place from bytes it has
+ * already validated and leaves the temp alone, so there is no instant at which
+ * both files are bad. See [recoverFromTemp].
  *
  * A corrupt or unparseable index is treated as **empty and overwritten**, after
  * deleting every audio file in the directory. Both halves matter. Crashing or
@@ -167,6 +190,16 @@ class DictationHistoryStore internal constructor(
     /**
      * Files the store owns but which are not audio. Anything in the directory
      * that is not one of these and not referenced by the index is an orphan.
+     *
+     * The temp file is in here so the orphan sweep does not mistake it for
+     * audio and so [load]'s "is there anything to sweep" test does not fire on
+     * a directory that holds only bookkeeping.
+     *
+     * ⚠ It is NOT what protects [recoverFromTemp]'s input, which an earlier
+     * draft of this comment claimed. The ordering in [load] is: the recovery
+     * runs before any sweep, and a sweep only happens once the recovery has
+     * already failed. Flipping that order is the mutation that loses the
+     * recovery copy, not editing this predicate.
      */
     private fun isBookkeeping(file: File): Boolean =
         file.name == INDEX || file.name == "$INDEX$TMP_SUFFIX"
@@ -197,17 +230,37 @@ class DictationHistoryStore internal constructor(
         val id = newId(createdAtMs)
         val name = audioNameFor(id, audio.name)
         val destination = File(dir, name)
-        audio.copyTo(destination, overwrite = true)
-        val item = Item(
-            id = id,
-            createdAtMs = createdAtMs,
-            audioBytes = destination.length(),
-            audioFile = name,
-            text = text,
-            fromRemote = fromRemote,
-            audioSeconds = audioSeconds,
-        )
-        writeIndex(evict(existing + item, createdAtMs))
+        // 🔴 Everything from the copy to the index write is undone on a throw,
+        // and this is not defensive noise: `add` HAS throwing steps after the
+        // audio is on disk — `copyTo` itself can run out of space part-way,
+        // and `writeIndex`'s `fd.sync()` throws `SyncFailedException`. The
+        // caller ([DictationSession]) wraps `add` in `runCatching` and treats a
+        // throw as "no history entry", so without this the copy would stay in
+        // the directory with no index row pointing at it, and NOTHING collects
+        // that: `visible()` prunes rows whose file is missing, never files with
+        // no row, and `sweepAndReset()` runs only on an unreadable index. A
+        // recording of the user's voice would live on the device forever,
+        // counting against no retention bound.
+        try {
+            audio.copyTo(destination, overwrite = true)
+            val item = Item(
+                id = id,
+                createdAtMs = createdAtMs,
+                audioBytes = destination.length(),
+                audioFile = name,
+                text = text,
+                fromRemote = fromRemote,
+                audioSeconds = audioSeconds,
+            )
+            writeIndex(evict(existing + item, createdAtMs))
+        } catch (t: Throwable) {
+            // Deleted, then rethrown unchanged: the caller still has to learn
+            // the add failed. Not `runCatching` on the delete — `File.delete`
+            // returns false rather than throwing, and a false here leaves the
+            // pre-existing orphan hazard, which it did not create.
+            destination.delete()
+            throw t
+        }
         id
     }
 
@@ -282,6 +335,13 @@ class DictationHistoryStore internal constructor(
      * privacy control that does not do what its label says — and unreachable
      * audio is exactly what a corrupt index or an interrupted [add] leaves
      * behind.
+     *
+     * 🔴 "Every file" includes `index.json.tmp`, and that now matters for the
+     * same privacy reason rather than only for tidiness: since [load] recovers
+     * from the temp, a temp left holding rows would resurrect the transcripts
+     * of recordings the user asked to delete the next time the index could not
+     * be read. `listFiles()` covers it with no special case — the point is
+     * that narrowing this to indexed files would break the promise twice over.
      */
     fun clearAll() = synchronized(LOCK) {
         dir.listFiles()?.forEach { it.delete() }
@@ -326,27 +386,71 @@ class DictationHistoryStore internal constructor(
     /**
      * Reads the index, or treats it as empty.
      *
-     * Three cases, and only one of them writes: a missing index on a
-     * never-used (or just-cleared) directory is simply empty; a *parseable*
-     * index is returned as-is; anything else is a corrupt index, which is
-     * reset and whose orphans are swept. See the class kdoc for why resetting
-     * beats throwing.
+     * A *parseable* `index.json` is returned as-is and nothing is written.
+     * Otherwise — missing, truncated, corrupt — [recoverFromTemp] gets the
+     * next word, because `index.json.tmp` surviving a call means it is a
+     * complete index that never made it into place (class kdoc). Only when
+     * that fails too is the directory treated as corrupt: reset, orphans
+     * swept. See the class kdoc for why resetting beats throwing, and for what
+     * resetting costs.
      */
     private fun load(): List<Item> {
         if (!dir.isDirectory) return emptyList()
-        if (!indexFile.isFile) {
-            // No index at all. Any audio here is already unreachable, so sweep
-            // it on the same reasoning as a corrupt index — but only when
-            // there is something to sweep, so an empty store does no IO.
-            if (dir.listFiles()?.any { !isBookkeeping(it) } == true) sweepAndReset()
-            return emptyList()
+        if (indexFile.isFile) {
+            try {
+                return parse(indexFile.readText())
+            } catch (_: Exception) {
+                // Torn or corrupt. The temp, if there is one, is the write
+                // this index was supposed to have become.
+                return recoverFromTemp() ?: run { sweepAndReset(); emptyList() }
+            }
         }
-        return try {
-            parse(indexFile.readText())
+        // No index at all. Recovery FIRST and the sweep second: sweepAndReset
+        // deletes every audio file, which is precisely the set the temp still
+        // has rows for, so the other order would destroy what it is about to
+        // read.
+        recoverFromTemp()?.let { return it }
+        // Nothing to recover from, so any audio here is already unreachable:
+        // sweep it on the same reasoning as a corrupt index — but only when
+        // there is something to sweep, so an empty store does no IO.
+        if (dir.listFiles()?.any { !isBookkeeping(it) } == true) sweepAndReset()
+        return emptyList()
+    }
+
+    /**
+     * Reads `index.json.tmp` as the index, restoring `index.json` from it, or
+     * returns null when there is no usable temp.
+     *
+     * 🔴 The restore writes `index.json` **in place, from the bytes just
+     * parsed**, and deliberately does NOT go through [writeIndex]. [writeIndex]
+     * truncates the temp as its very first step, so routing the restore through
+     * it would destroy the only good copy while the committed index was still
+     * torn — a kill in that window is the total loss this whole path exists to
+     * remove. Writing in place can only fail forward: `index.json` stays torn,
+     * the temp is untouched, and the next [load] recovers again.
+     *
+     * The temp is left in place for the same reason. It stops being a
+     * duplicate the moment any normal write happens: the rename consumes it,
+     * and [writeIndex]'s fallback deletes it.
+     *
+     * `runCatching` on the restore because recovery must not turn a readable
+     * history into a throw — the items are already in hand, and the caller is
+     * a read.
+     */
+    private fun recoverFromTemp(): List<Item>? {
+        if (!tempFile.isFile) return null
+        val text = try {
+            tempFile.readText()
         } catch (_: Exception) {
-            sweepAndReset()
-            emptyList()
+            return null
         }
+        val items = try {
+            parse(text)
+        } catch (_: Exception) {
+            return null
+        }
+        runCatching { indexFile.writeText(text) }
+        return items
     }
 
     /** Deletes every non-bookkeeping file and writes a fresh empty index. */
@@ -402,7 +506,9 @@ class DictationHistoryStore internal constructor(
      * It does **not** make the rename itself durable — fsync'ing a directory
      * needs a descriptor `java.io.File` will not give us — so after a power
      * cut the index may still be the previous one. That direction is the safe
-     * one: a stale index is readable, a torn one is a wipe.
+     * one: a stale index is readable. A torn one is no longer a wipe either,
+     * but only because [recoverFromTemp] exists; it was one when this comment
+     * was first written.
      */
     private fun writeIndex(items: List<Item>) {
         dir.mkdirs()
@@ -428,15 +534,26 @@ class DictationHistoryStore internal constructor(
         if (temp.renameTo(indexFile)) return
         // renameTo can refuse when the target exists on some filesystems. The
         // index is NOT deleted to make room: write the payload in place
-        // instead, so the directory holds a readable index throughout — a
-        // stale one if this throws, the new one if it does not. Giving up
-        // atomicity for this one write is the whole cost, and the comparison
-        // is against a wipe (see the kdoc), not against staleness.
+        // instead.
+        //
+        // 🔴 This write is NOT atomic, and the comment here used to call its
+        // failure "a stale index", which was wrong in the direction that
+        // matters: `writeText` is `FileOutputStream(this).use { … }`, which
+        // truncates on open, so a throw mid-write leaves `index.json`
+        // zero-length or torn — not stale. Unparseable, in other words, which
+        // used to mean load() → sweepAndReset() → every recording deleted.
+        //
+        // What makes it survivable is `temp`, which still holds this exact
+        // payload, already `fsync`'d, and which load() now reads when
+        // `index.json` will not parse. So the cost of losing atomicity here is
+        // bounded by the recovery rather than by the wipe.
         indexFile.writeText(payload)
-        // Only now, with the index definitely in place, is the temp redundant.
-        // Left behind on the throwing path on purpose: isBookkeeping() keeps
-        // the orphan sweep off it, load() never reads it, and the next write
-        // overwrites it — a stale .tmp is inert, which the index is not.
+        // Only now, with a parseable index definitely in place, is the temp
+        // redundant. Left behind on the throwing path ON PURPOSE, and the
+        // reason has inverted: it is not that a stale .tmp is inert —
+        // load() reads it — it is that it is the recovery copy for exactly the
+        // index this line may have just torn. isBookkeeping() keeps the orphan
+        // sweep off it.
         temp.delete()
     }
 

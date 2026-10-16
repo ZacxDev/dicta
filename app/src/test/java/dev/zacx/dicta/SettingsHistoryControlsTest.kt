@@ -353,6 +353,98 @@ class SettingsHistoryControlsTest {
     }
 
     /**
+     * 🔴 The `count == 0` branch of the confirmation, which is reachable and
+     * was untested.
+     *
+     * `lastUsage` is null until the first off-thread `usage()` read has been
+     * rendered, so a tap before that lands — a real sequence on a cold
+     * activity, not a contrived one — must raise a confirmation that names no
+     * number. "Delete all 0 saved recordings" would be the one wrong number
+     * that tells the user there is nothing to lose.
+     *
+     * The window is held open by NOT draining the main looper before the tap:
+     * the worker's `runOnUiThread` is queued, so `renderUsage` has not run. The
+     * store is seeded all the same, so a branch that read `usage()` directly
+     * would say "2" and fail here.
+     */
+    @Test
+    fun theConfirmationNamesNoCountUntilTheFirstUsageReadHasRendered() {
+        val store = appStore()
+        seed(store, 262_144, "one")
+        seed(store, 262_144, "two")
+
+        val controller = Robolectric.buildActivity(SettingsActivity::class.java).create()
+        try {
+            val activity = controller.get()
+            val ctx = RuntimeEnvironment.getApplication()
+            assertEquals(
+                "fixture: the usage line has already rendered, so lastUsage is " +
+                    "set and this test is exercising the counted branch instead",
+                ctx.getString(R.string.stt_history_usage_pending),
+                activity.findViewById<TextView>(R.id.stt_history_usage).text?.toString(),
+            )
+
+            activity.findViewById<Button>(R.id.stt_clear_history).performClick()
+
+            val dialog = confirmation()
+            assertNotNull("tapping delete raised no confirmation", dialog)
+            assertEquals(
+                "the confirmation quoted a count it does not have. Before the " +
+                    "first usage read lands lastUsage is null, and \"0 saved " +
+                    "recordings\" is the one number that would tell the user " +
+                    "their history is already empty when it is not.",
+                ctx.getString(R.string.stt_clear_history_confirm_any),
+                shadowOf(dialog!!).message?.toString(),
+            )
+            assertEquals(
+                "the store was emptied by the tap alone",
+                2,
+                store.usage().itemCount,
+            )
+        } finally {
+            controller.close()
+        }
+    }
+
+    /**
+     * 🔴 The confirmation must not outlive the activity. No `configChanges`
+     * and no `screenOrientation` are declared for this activity, so a rotation
+     * with the dialog up destroys the activity under it: the window leaks
+     * (`WindowLeaked`) and the confirmation the user was part-way through is
+     * silently dropped.
+     *
+     * Robolectric does not report `WindowLeaked`, so what is asserted is the
+     * mechanism that prevents it — the dialog is not showing once `onDestroy`
+     * has run.
+     */
+    @Test
+    fun theConfirmationIsDismissedWhenTheActivityIsDestroyed() {
+        val store = appStore()
+        seed(store, 262_144, "one")
+
+        val controller = Robolectric.buildActivity(SettingsActivity::class.java).setup()
+        val activity = controller.get()
+        firstRender(activity.findViewById(R.id.stt_history_usage))
+        activity.findViewById<Button>(R.id.stt_clear_history).performClick()
+        shadowOf(Looper.getMainLooper()).idle()
+        val dialog = confirmation()
+        assertNotNull("fixture: no confirmation was raised", dialog)
+        assertTrue("fixture: the confirmation is not showing", dialog!!.isShowing)
+
+        controller.destroy()
+        shadowOf(Looper.getMainLooper()).idle()
+
+        assertEquals(
+            "the confirmation is still showing after the activity was " +
+                "destroyed — a dialog attached to a dead activity, which is " +
+                "the WindowLeaked a rotation produces, and the user's " +
+                "in-flight confirmation is dropped rather than re-offered",
+            false,
+            dialog.isShowing,
+        )
+    }
+
+    /**
      * The usage read happens off the main thread, because `usage()` reads the
      * index off disk. There is no main-thread guard that can observe this in a
      * unit test — Robolectric runs the activity ON the main thread and does not
