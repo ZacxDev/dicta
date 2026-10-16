@@ -80,7 +80,7 @@ package dev.zacx.dicta
  * map from `(entries, nowMs)` to a list — the same set of entries in any
  * input order gives byte-identical output.
  *
- * ## 🔴 The bounds are large, and the byte bound is now REACHABLE
+ * ## 🔴 The bounds are large, and the byte bound CANNOT BIND
  *
  * Measured on the handset this ships to (SM-G991W): history lives in
  * `/data/data/<pkg>/no_backup/history/`, where `/data` has **18 GB free of
@@ -147,10 +147,19 @@ object HistoryRetention {
     /**
      * How much audio history keeps, at most — 2 GiB.
      *
-     * A real backstop rather than a theoretical one: ~185 hours of Opus, on a
-     * phone measured with 18 GB free. It is the bound that catches the user
-     * whose recordings are long rather than numerous, and it is reachable, so
-     * this code path runs in production.
+     * For scale: 2 GiB is ~199 h of `OPUS_BITRATE` audio (24 kbps = 3000 B/s,
+     * so 2³¹ B / 3000 ≈ 715 828 s) and ~149 h at `AAC_BITRATE` (32 kbps).
+     * Re-derived here rather than copied — an earlier figure of "~185 hours"
+     * matched neither encoder.
+     *
+     * 🔴 **Dormant at the current constants, not a live code path.** This kdoc
+     * used to end "it is reachable, so this code path runs in production",
+     * which the commit above it had already retracted as false: a 120 s
+     * recording cap times two encoders means [MAX_ITEMS] items total at most
+     * ~458 MiB, so the count bound always binds first. See the object kdoc for
+     * the full arithmetic and for why the stage is kept anyway, and
+     * [HistoryRetentionTest.theByteBoundCannotBindAtTheCurrentConstants] for
+     * the assertion that keeps these sentences honest.
      *
      * 🔴 Subject to the one-oversize-item carve-out documented on the object;
      * history can exceed this by one recording.

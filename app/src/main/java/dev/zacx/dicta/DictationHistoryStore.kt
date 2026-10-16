@@ -4,6 +4,7 @@ import android.content.Context
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.io.FileOutputStream
 
 /**
  * Where dictation history lives: one directory holding the audio files plus a
@@ -46,9 +47,20 @@ import java.io.File
  * ## The index, and what survives a kill
  *
  * `index.json` is written to `index.json.tmp` and then [File.renameTo]'d over
- * the real file, which is atomic within a directory. A process death mid-write
- * therefore loses *the newest item*, never the whole index — the old index is
- * either fully there or fully replaced.
+ * the real file, which is atomic within a directory. On that path a process
+ * death mid-write loses *the newest item*, never the whole index — the old
+ * index is either fully there or fully replaced.
+ *
+ * 🔴 **That is the normal path, not a guarantee of the class**, which an
+ * earlier version of this paragraph claimed. When the rename is *refused*,
+ * [writeIndex] falls back to writing `index.json` in place, which is not
+ * atomic: a kill inside that window leaves a truncated index. And the
+ * recovery from an unparseable index is the paragraph below — **every
+ * recording deleted**. So the honest worst case is "history is wiped", it is
+ * reachable (rename refused, then killed; or a torn write that outlived the
+ * data `fsync`), and it is merely improbable rather than impossible. What the
+ * fallback *does* guarantee is that no path ends with neither file present:
+ * losing both is what makes the wipe happen without even a kill.
  *
  * A corrupt or unparseable index is treated as **empty and overwritten**, after
  * deleting every audio file in the directory. Both halves matter. Crashing or
@@ -59,10 +71,29 @@ import java.io.File
  *
  * ## Threading
  *
- * [add], [clearAll], [updateText] and the index sweeps do file IO, so callers
- * run them off the main thread. Methods are `synchronized` on the instance:
- * the capture thread adds while the upload worker updates text, and the index
- * is a read-modify-write.
+ * [add], [clearAll], [updateText], [delete] and the index sweeps do file IO,
+ * so callers run them off the main thread.
+ *
+ * 🔴 The monitor is a **process-wide object on the companion, not the
+ * instance**, because production builds one store PER OWNER over one
+ * directory: [DictationSession] constructs a fresh store per session, and
+ * `SettingsActivity` constructs its own. `@Synchronized` on the instance —
+ * what this class shipped with — therefore excluded a session from its own
+ * upload worker and from nothing else. Settings' `clearAll()` could interleave
+ * with a session's `add`; a previous session's late `updateText` (its
+ * `destroy()` does not unblock a socket read) could interleave with the next
+ * session's `add`. The index is a read-modify-write, so the loser's row is
+ * simply dropped — and a dropped row is silent *and* permanent: the audio
+ * stays on disk with no index entry, `visible()` only prunes rows whose file
+ * is missing (never files with no row), and [sweepAndReset] runs only on a
+ * missing or corrupt index. The orphan counts against no retention bound and
+ * lives on the device forever.
+ *
+ * What the monitor does **not** cover: another process. Dicta is
+ * single-process — no `android:process` anywhere in the manifest — so today it
+ * covers every writer that exists, and the temp-file name being shared is
+ * safe for the same reason. A second process would be outside it on both
+ * counts.
  */
 class DictationHistoryStore internal constructor(
     /** The history directory itself. Injected so tests can use a temp dir. */
@@ -152,8 +183,12 @@ class DictationHistoryStore internal constructor(
      * Order is copy → evict → rewrite index, so the index never references a
      * file that is not yet on disk.
      */
-    @Synchronized
-    fun add(audio: File, text: String, fromRemote: Boolean, audioSeconds: Double): String {
+    fun add(
+        audio: File,
+        text: String,
+        fromRemote: Boolean,
+        audioSeconds: Double,
+    ): String = synchronized(LOCK) {
         dir.mkdirs()
         // Loaded BEFORE the copy, so the orphan sweep a corrupt index triggers
         // cannot possibly delete the file this call is about to write.
@@ -173,7 +208,7 @@ class DictationHistoryStore internal constructor(
             audioSeconds = audioSeconds,
         )
         writeIndex(evict(existing + item, createdAtMs))
-        return id
+        id
     }
 
     /**
@@ -188,17 +223,17 @@ class DictationHistoryStore internal constructor(
      * not a crash, and not a row in the list that silently does nothing when
      * tapped.
      */
-    @Synchronized
-    fun recent(limit: Int): List<Item> =
+    fun recent(limit: Int): List<Item> = synchronized(LOCK) {
         visible().sortedWith(
             compareByDescending<Item> { it.createdAtMs }.thenBy { it.id },
         ).take(limit.coerceAtLeast(0))
+    }
 
     /** The audio for [id], or null when the entry or its file is gone. */
-    @Synchronized
-    fun audioFor(id: String): File? {
-        val item = load().firstOrNull { it.id == id } ?: return null
-        return File(dir, item.audioFile).takeIf { it.isFile }
+    fun audioFor(id: String): File? = synchronized(LOCK) {
+        val item = load().firstOrNull { it.id == id }
+            ?: return@synchronized null
+        File(dir, item.audioFile).takeIf { it.isFile }
     }
 
     /**
@@ -209,15 +244,34 @@ class DictationHistoryStore internal constructor(
      * an unknown id — by the time the upload returns the entry may have been
      * evicted, and that is not an error.
      */
-    @Synchronized
-    fun updateText(id: String, text: String, fromRemote: Boolean) {
+    fun updateText(id: String, text: String, fromRemote: Boolean) = synchronized(LOCK) {
         val items = load()
-        if (items.none { it.id == id }) return
+        if (items.none { it.id == id }) return@synchronized
         writeIndex(
             items.map {
                 if (it.id == id) it.copy(text = text, fromRemote = fromRemote) else it
             },
         )
+    }
+
+    /**
+     * Removes the entry [id] and its audio file. A no-op for an unknown id.
+     *
+     * 🔴 Exists for exactly one caller, and is not a user-facing delete: the
+     * undo in [DictationSession]'s capture hook, for the window where the
+     * session is destroyed *while* `add` is copying the recording. Without it
+     * "a destroyed session keeps nothing" is a claim about timing — the hook's
+     * gate ran before the destroy and the file lands after it — and there is
+     * no other way to take a filed entry back out.
+     *
+     * Per-item deletion from the history UI is a separate feature and does not
+     * exist yet; when it does, it wants its own tests rather than this one's.
+     */
+    fun delete(id: String) = synchronized(LOCK) {
+        val items = load()
+        val item = items.firstOrNull { it.id == id } ?: return@synchronized
+        File(dir, item.audioFile).delete()
+        writeIndex(items.filterNot { it.id == id })
     }
 
     /**
@@ -229,16 +283,15 @@ class DictationHistoryStore internal constructor(
      * audio is exactly what a corrupt index or an interrupted [add] leaves
      * behind.
      */
-    @Synchronized
-    fun clearAll() {
+    fun clearAll() = synchronized(LOCK) {
         dir.listFiles()?.forEach { it.delete() }
+        Unit
     }
 
     /** Item count and total audio bytes, over items whose audio still exists. */
-    @Synchronized
-    fun usage(): Usage {
+    fun usage(): Usage = synchronized(LOCK) {
         val items = visible()
-        return Usage(items.size, items.sumOf { it.audioBytes })
+        Usage(items.size, items.sumOf { it.audioBytes })
     }
 
     // --- internals ----------------------------------------------------------
@@ -333,6 +386,23 @@ class DictationHistoryStore internal constructor(
      * [File.renameTo] within one directory is atomic, and the temp file lives
      * in the same directory precisely so it is a rename and not a cross-device
      * copy.
+     *
+     * 🔴 **No path here may end with neither file present.** The fallback used
+     * to be `indexFile.delete()`, retry, and `temp.delete()` if the retry
+     * failed too — which is exactly that state, and it is not a lost write: a
+     * directory holding audio and no index is what [load] calls corrupt, and
+     * its recovery is [sweepAndReset], i.e. **every recording the user has is
+     * deleted**. The old comment weighed this as "better than silently keeping
+     * a stale index"; the costs are the other way round by a wide margin. A
+     * stale index loses the newest row. Losing the index loses everything.
+     *
+     * The data `fsync` is deliberate and is the narrow half that `java.io` can
+     * express: it makes the temp file's *contents* durable before the rename,
+     * so a power cut cannot leave a renamed-into-place index that is a hole.
+     * It does **not** make the rename itself durable — fsync'ing a directory
+     * needs a descriptor `java.io.File` will not give us — so after a power
+     * cut the index may still be the previous one. That direction is the safe
+     * one: a stale index is readable, a torn one is a wipe.
      */
     private fun writeIndex(items: List<Item>) {
         dir.mkdirs()
@@ -351,15 +421,23 @@ class DictationHistoryStore internal constructor(
         }
         val payload = JSONObject().put(KEY_VERSION, VERSION).put(KEY_ITEMS, array).toString()
         val temp = tempFile
-        temp.writeText(payload)
-        if (!temp.renameTo(indexFile)) {
-            // renameTo can refuse when the target exists on some filesystems.
-            // Falling back to delete-then-rename gives up atomicity for this
-            // one write, which is still better than silently keeping a stale
-            // index and leaving a .tmp behind forever.
-            indexFile.delete()
-            if (!temp.renameTo(indexFile)) temp.delete()
+        FileOutputStream(temp).use { out ->
+            out.write(payload.toByteArray())
+            out.fd.sync()
         }
+        if (temp.renameTo(indexFile)) return
+        // renameTo can refuse when the target exists on some filesystems. The
+        // index is NOT deleted to make room: write the payload in place
+        // instead, so the directory holds a readable index throughout — a
+        // stale one if this throws, the new one if it does not. Giving up
+        // atomicity for this one write is the whole cost, and the comparison
+        // is against a wipe (see the kdoc), not against staleness.
+        indexFile.writeText(payload)
+        // Only now, with the index definitely in place, is the temp redundant.
+        // Left behind on the throwing path on purpose: isBookkeeping() keeps
+        // the orphan sweep off it, load() never reads it, and the next write
+        // overwrites it — a stale .tmp is inert, which the index is not.
+        temp.delete()
     }
 
     /**
@@ -385,6 +463,13 @@ class DictationHistoryStore internal constructor(
         "%013d-%08x".format(createdAtMs, RANDOM.nextInt())
 
     companion object {
+        /**
+         * 🔴 The monitor every instance shares — see "Threading" on the class.
+         * Process-wide because the stores are not: production builds one per
+         * session plus one in `SettingsActivity`, all over one directory.
+         */
+        private val LOCK = Any()
+
         /** The directory name under `noBackupFilesDir`. */
         const val DIR = "history"
 

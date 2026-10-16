@@ -1,6 +1,7 @@
 package dev.zacx.dicta
 
 import android.app.Activity
+import android.app.AlertDialog
 import android.os.Bundle
 import android.widget.ArrayAdapter
 import android.widget.Button
@@ -45,6 +46,13 @@ class SettingsActivity : Activity() {
      * `activity_settings.xml`.
      */
     private lateinit var history: DictationHistoryStore
+
+    /**
+     * The last usage actually rendered, so the delete confirmation can name the
+     * count without doing disk IO on the main thread. Null until the first read
+     * lands; see [clearHistory] for what the dialog says then.
+     */
+    private var lastUsage: DictationHistoryStore.Usage? = null
 
     /**
      * The spinner's rows, by position. `null` is "follow the device locale" and
@@ -200,13 +208,23 @@ class SettingsActivity : Activity() {
     private fun refreshHistoryUsage() {
         worker.execute {
             val usage = runCatching { history.usage() }.getOrNull()
-            runOnUiThread {
-                // A store that cannot be read leaves the pending text alone
-                // rather than claiming "0 dictations" — the one number that
-                // would tell the user their history is gone when it is not.
-                if (usage != null) historyUsage.text = usageText(usage)
-            }
+            runOnUiThread { renderUsage(usage) }
         }
+    }
+
+    /**
+     * The one place the usage line is written, and the one place [lastUsage] is
+     * set — so the number in the delete confirmation is always the number on
+     * screen rather than a second, independently-read count.
+     *
+     * A store that cannot be read leaves the pending text alone rather than
+     * claiming "0 dictations", the one number that would tell the user their
+     * history is gone when it is not.
+     */
+    private fun renderUsage(usage: DictationHistoryStore.Usage?) {
+        if (usage == null) return
+        lastUsage = usage
+        historyUsage.text = usageText(usage)
     }
 
     /**
@@ -215,6 +233,17 @@ class SettingsActivity : Activity() {
      * MB here is mebibytes (2^20), matching every file manager on the device;
      * one decimal place, because a second one on a figure the user can only
      * act on wholesale is noise.
+     *
+     * 🔴 Formatted in `resources.configuration.locales[0]`, **not**
+     * `Locale.getDefault()`. The two halves of this one sentence are formatted
+     * by different code: `%1$d` by `getQuantityString`, which uses the resource
+     * configuration's locale, and `%2$s` here. Those are the same value on an
+     * ordinary handset and are NOT the same under a per-app locale (Android
+     * 13's `LocaleManager`, or any `createConfigurationContext` override), where
+     * the result is one sentence carrying two locales' number conventions — a
+     * count formatted one way and a decimal separator from somewhere else.
+     * Reading the locale off `resources` makes that disagreement
+     * unrepresentable rather than merely unlikely.
      */
     private fun usageText(usage: DictationHistoryStore.Usage): String = resources
         .getQuantityString(
@@ -222,14 +251,67 @@ class SettingsActivity : Activity() {
             usage.itemCount,
             usage.itemCount,
             String.format(
-                Locale.getDefault(),
+                resources.configuration.locales[0],
                 "%.1f",
                 usage.totalBytes.toDouble() / HISTORY_BYTES_PER_MB,
             ),
         )
 
     /**
+     * Asks first. Deletes nothing.
+     *
+     * 🔴 The button's destructive styling and its `contentDescription` are
+     * **cues**, and a cue is a label rather than a gate: before this dialog
+     * existed, one mis-tap on a scrolling settings screen irreversibly
+     * destroyed every recording and transcript on the device. There is no undo
+     * and deliberately no soft delete — recordings the user asked to delete
+     * have to actually be gone, which is the posture
+     * [DictationHistoryStore]'s kdoc commits to — so the gate has to be in
+     * front of the action, not behind it.
+     *
+     * The message names the count and the irreversibility rather than asking
+     * "Are you sure?". The count comes from [lastUsage], i.e. the number the
+     * usage line is showing, so the dialog cannot quote a different figure to
+     * the one on screen — and it is read from a field rather than from
+     * `usage()` because `usage()` is disk IO and this runs on the main thread.
+     *
+     * Cancel, back and a tap outside all do exactly nothing: the negative
+     * button has no listener and the dialog is cancelable. There is no partial
+     * clear to get wrong.
+     *
+     * ⚠ Deliberately NOT applied to "Clear token", which stays unconfirmed: a
+     * token is re-pasteable from the password manager it came from, a recording
+     * of the user's voice is not. Consistency between the two controls is worth
+     * less than keeping the gate meaningful on the one that needs it.
+     */
+    private fun clearHistory() {
+        val count = lastUsage?.itemCount ?: 0
+        AlertDialog.Builder(this)
+            .setTitle(R.string.stt_clear_history_confirm_title)
+            .setMessage(
+                if (count > 0) {
+                    resources.getQuantityString(
+                        R.plurals.stt_clear_history_confirm,
+                        count,
+                        count,
+                    )
+                } else {
+                    // Nothing to count: an empty history, or the first usage
+                    // read not back yet. "Delete all 0 saved recordings" is
+                    // worse copy than naming no number at all.
+                    getString(R.string.stt_clear_history_confirm_any)
+                },
+            )
+            .setPositiveButton(R.string.stt_clear_history_confirm_delete) { _, _ ->
+                deleteAllHistory()
+            }
+            .setNegativeButton(R.string.stt_clear_history_confirm_keep, null)
+            .show()
+    }
+
+    /**
      * Deletes every recording and transcript, then re-reads what is left.
+     * Reached only from the confirmation dialog's positive button.
      *
      * 🔴 `clearAll()` unlinks every file in the history directory, so it runs on
      * [worker] — on the main thread a full history is a visible freeze on the
@@ -240,13 +322,11 @@ class SettingsActivity : Activity() {
      * reading "12 dictations" tells the user their voice recordings are still
      * on the phone. It is also the only confirmation the action gives.
      */
-    private fun clearHistory() {
+    private fun deleteAllHistory() {
         worker.execute {
             runCatching { history.clearAll() }
             val usage = runCatching { history.usage() }.getOrNull()
-            runOnUiThread {
-                if (usage != null) historyUsage.text = usageText(usage)
-            }
+            runOnUiThread { renderUsage(usage) }
         }
     }
 

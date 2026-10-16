@@ -8,6 +8,7 @@ import java.io.File
 import java.util.Locale
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
@@ -459,9 +460,13 @@ class DictationSession(
         override fun onFinished(file: File?, audioSeconds: Double) {
             // 🔴 Before everything: destroy() stops the capture, which lands
             // here. Enqueueing on an executor destroy() is about to
-            // shutdownNow() made "was it uploaded" a race, and after
-            // shutdownNow it throws RejectedExecutionException on the capture
-            // thread. A destroyed session uploads nothing and says nothing.
+            // shutdownNow() made "was it uploaded" a race. A destroyed session
+            // uploads nothing, says nothing and keeps nothing.
+            //
+            // ⚠ This gate is the fast path, not the whole mechanism — it reads
+            // the flag before ~469 KiB of file IO. The case where destroy()
+            // lands *during* that IO is handled at the enqueue below; see the
+            // note there for why that is the one place it can be handled.
             if (destroyed.get()) {
                 file?.let { if (it.exists()) it.delete() }
                 return
@@ -506,7 +511,35 @@ class DictationSession(
                     audioSeconds = audioSeconds,
                 )
             }.getOrNull()
-            worker.execute { transcribeRemotely(file, audioSeconds, historyId) }
+
+            // 🔴 The gate at the top of this method is NOT sufficient on its
+            // own any more, and this is what closes the gap. `history.add`
+            // copies up to ~469 KiB and re-serialises the index, so
+            // `destroy()` has a real window to land between the gate and this
+            // line — and after `worker.shutdownNow()` the enqueue throws
+            // RejectedExecutionException **on the capture thread**, where
+            // nothing catches it.
+            //
+            // The catch is not belt-and-braces around a second
+            // `destroyed.get()`: it IS the check, deliberately. `destroy()` is
+            // the only thing in this class that shuts the worker down, the
+            // single-thread executor's queue is unbounded so saturation cannot
+            // reject, and `execute` on a shut-down ThreadPoolExecutor always
+            // rejects (AbortPolicy) — so "rejected" and "destroyed" are the
+            // same event, observed at the one instant that matters rather than
+            // one line earlier. A re-read of the flag here would narrow the
+            // window without closing it and would be a branch no test could
+            // reach, which is how an unpinned guard gets mistaken for one.
+            //
+            // Filing the entry and then taking it back out is the only order
+            // available: the add must finish before we can know it raced.
+            // `DictationHistoryStore.delete` exists for this caller alone.
+            try {
+                worker.execute { transcribeRemotely(file, audioSeconds, historyId) }
+            } catch (_: RejectedExecutionException) {
+                historyId?.let { runCatching { history.delete(it) } }
+                if (file.exists()) file.delete()
+            }
         }
     }
 

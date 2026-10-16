@@ -173,6 +173,12 @@ class DictationSessionHistoryCaptureTest {
         // destroy() stops the capture, which lands in onFinished. A dead
         // session deletes its recording rather than keeping it, so the hook
         // must be below this gate too.
+        //
+        // ⚠ The SEQUENTIAL case only: destroy() has fully returned before
+        // onFinished runs, so this exercises the gate at the top of the method
+        // and nothing else. The interleaved case — destroy() landing *during*
+        // the hook's disk IO — is a different code path and is
+        // [aSessionDestroyedWhileFilingKeepsNothing] below.
         val history = store()
         val session = session(history)
         session.destroy()
@@ -188,6 +194,62 @@ class DictationSessionHistoryCaptureTest {
         assertEquals(
             emptyList<String>(),
             (history.dir.listFiles() ?: emptyArray()).map { it.name }.sorted(),
+        )
+    }
+
+    /**
+     * 🔴 The interleaved case, which the sequential test above cannot see.
+     *
+     * `onFinished` reads `destroyed` and *then* copies up to ~469 KiB and
+     * re-serialises the index, so `destroy()` has a real window to land between
+     * the two. What used to happen then: the add succeeded, and `worker.execute`
+     * on the executor `destroy()` had just `shutdownNow()`n threw an uncaught
+     * `RejectedExecutionException` **on the capture thread** — while the
+     * recording the user had torn the session down to be rid of sat in a
+     * browsable history.
+     *
+     * The window is opened here by the store's injected clock, which `add`
+     * calls on the capture thread between the gate and the write. No threads
+     * and no sleeping: the destroy happens at a point in the call stack rather
+     * than at a point in time, so the interleaving is the same on every run.
+     */
+    @Test
+    fun aSessionDestroyedWhileFilingKeepsNothing() {
+        val dir = temp.newFolder("history-interleaved")
+        var victim: DictationSession? = null
+        val history = DictationHistoryStore(
+            dir,
+            {
+                // Inside history.add(), past the destroyed gate in onFinished
+                // and before the index is rewritten.
+                victim?.destroy()
+                1_700_000_000_000L
+            },
+        )
+        val session = session(history).also { victim = it }
+
+        // Must not throw: the enqueue below the add is what catches the
+        // rejection, and it runs on the capture thread.
+        finishRecording(session, recordingFile())
+        settle()
+
+        assertEquals(
+            "a session destroyed WHILE the capture hook was filing its " +
+                "recording left the entry in history. The gate at the top of " +
+                "onFinished cannot see this — it ran before destroy() did — so " +
+                "the entry has to be taken back out once the add returns.",
+            emptyList<DictationHistoryStore.Item>(),
+            history.recent(10),
+        )
+        assertEquals(
+            "the audio copy survived in the history directory, so a destroyed " +
+                "session kept a recording of the user's voice that no index row " +
+                "points at — nothing ever sweeps that: ${dir.list()?.toList()}",
+            emptyList<String>(),
+            (dir.listFiles() ?: emptyArray())
+                .map { it.name }
+                .filterNot { it.startsWith(DictationHistoryStore.INDEX) }
+                .sorted(),
         )
     }
 }

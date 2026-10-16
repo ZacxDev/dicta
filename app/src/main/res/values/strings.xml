@@ -177,6 +177,27 @@
          the transcripts — and that it cannot be undone, neither of which the
          visible "Delete all history" label says. -->
     <string name="stt_clear_history_desc">Delete all history. Every saved recording and its transcript is deleted from this phone immediately, and this cannot be undone.</string>
+    <!-- 🔴 The confirmation gate in front of that button. The destructive
+         styling and the description above are CUES, and a cue is a label rather
+         than a gate: one mis-tap on a scrolling settings screen irreversibly
+         destroys every recording on the device. It matters more than it looks
+         because "Delete all history" is currently the ONLY way to remove
+         anything at all — there is no per-item delete and no viewer yet — so it
+         is both reached for more often and more expensive to hit by accident.
+
+         The message names the count and the irreversibility instead of asking
+         "Are you sure?", which tells the user nothing they do not already know.
+         The plural carries the count; the unconditional string covers the cases
+         where there is nothing to count (empty history, or the first usage read
+         not back yet) — it must not render "0 recordings". -->
+    <string name="stt_clear_history_confirm_title">Delete all history?</string>
+    <plurals name="stt_clear_history_confirm">
+        <item quantity="one">Delete the %1$d saved recording and its transcript from this phone? This cannot be undone.</item>
+        <item quantity="other">Delete all %1$d saved recordings and their transcripts from this phone? This cannot be undone.</item>
+    </plurals>
+    <string name="stt_clear_history_confirm_any">Delete every saved recording and its transcript from this phone? This cannot be undone.</string>
+    <string name="stt_clear_history_confirm_delete">Delete</string>
+    <string name="stt_clear_history_confirm_keep">Keep</string>
     <!-- Issue #7. "Follow device language" is the first entry and the default;
          the rest are built from SttLanguage.DISPLAY_NAMES. -->
     <string name="stt_language_label">Dictation language</string>

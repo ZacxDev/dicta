@@ -71,11 +71,13 @@ class DictationHistoryBoundsSeamTest {
     fun theProductionStoresByteBoundIsTheRealPolicy() {
         assertEquals(
             "the shipped store's maxBytes has DRIFTED from " +
-                "HistoryRetention.MAX_BYTES. This is the bound that became " +
-                "REACHABLE at 2 GiB, so the drift is a production code path, " +
-                "not a theoretical one: too low and long dictations are " +
-                "deleted the user cannot explain, too high and history grows " +
-                "past what the phone has free.",
+                "HistoryRetention.MAX_BYTES. At 2 GiB this bound cannot bind " +
+                "(the count bound always binds first — see " +
+                "theByteBoundCannotBindAtTheCurrentConstants), so what the " +
+                "drift costs depends on its direction: a LOWER value makes the " +
+                "stage live and deletes long dictations for a reason the user " +
+                "cannot explain, a higher one changes nothing observable today " +
+                "and removes the backstop for a raised recording cap.",
             HistoryRetention.MAX_BYTES,
             production.maxBytes,
         )
