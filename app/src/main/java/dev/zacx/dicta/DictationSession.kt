@@ -461,82 +461,42 @@ class DictationSession(
     /**
      * Runs the retry / fallback ladder for the finished recording.
      *
-     * On the worker thread. [SingleFlightUploader] wraps the transport so the
-     * 🔴 exactly-one-in-flight invariant is observable rather than merely
-     * implied by the executor having one thread.
+     * On the worker thread. The ladder itself — and every `R.string` it
+     * resolves — now lives in [RemoteTranscriber], which owns no microphone and
+     * deletes no file, so the dictation-history re-transcribe can run the same
+     * upload path without a capture surface to leave unused.
+     *
+     * 🔴 What stays here is the `destroyed` gate. Each [RemoteTranscriber.Events]
+     * call is wrapped in exactly **one** [postToMain], so every unit that was
+     * delivered atomically before the extraction is still one `Handler` message
+     * — and the gate stays on this class's two posting routes rather than
+     * moving into a class that knows nothing about this session's life cycle.
      */
     private fun transcribeRemotely(file: File, audioSeconds: Double) {
-        if (!settings.isRemoteConfigured) {
-            postToMain {
-                callbacks.onStatus(
-                    appContext.getString(R.string.stt_not_configured)
-                )
-            }
-            return
-        }
-        val token = settings.tokens.token() ?: run {
-            postToMain {
-                callbacks.onStatus(
-                    appContext.getString(R.string.stt_not_configured)
-                )
-            }
-            return
-        }
-        val audio = try {
-            file.readBytes()
-        } catch (_: Exception) {
-            postToMain {
-                callbacks.onStatus(appContext.getString(R.string.stt_no_audio))
-            }
-            return
-        }
-
-        postToMain {
-            callbacks.onStatus(appContext.getString(R.string.stt_uploading))
-        }
-
-        val http = SttHttp(settings.baseUrl, token)
-        val serialised = SingleFlightUploader { http.transcribe(it) }
-
-        TranscriptionCoordinator(
-            transport = { serialised.upload(it) },
-            health = { http.healthz() },
-            sleeper = { ms ->
-                try {
-                    Thread.sleep(ms)
-                } catch (_: InterruptedException) {
-                    Thread.currentThread().interrupt()
+        RemoteTranscriber(appContext, settings, locale).transcribe(
+            audio = file,
+            audioSeconds = audioSeconds,
+            // Read when the fallback fires, not now: the recogniser's onFinal
+            // can land after the ladder has started, and this value used to be
+            // read at delivery time.
+            localTranscript = { localTranscript },
+            events = object : RemoteTranscriber.Events {
+                override fun onStatus(text: String) {
+                    postToMain { callbacks.onStatus(text) }
                 }
-            },
-            unitRandom = { Math.random() },
-            elapsedMs = { System.currentTimeMillis() },
-            events = object : TranscriptionCoordinator.Events {
-                override fun onRemoteTranscript(text: String) {
+
+                override fun onRemoteTranscript(text: String, status: String) {
                     postToMain {
                         callbacks.onTranscript(
                             text, fromRemote = true, isFinal = true
                         )
-                        callbacks.onStatus(
-                            appContext.getString(R.string.stt_remote_done)
-                        )
+                        callbacks.onStatus(status)
                     }
                 }
 
-                override fun onFellBack(reason: String, recoveryPending: Boolean) {
+                override fun onFellBack(status: String, localTranscript: String) {
                     postToMain {
-                        // 🔴 The user is told the text on screen came from the
-                        // phone, and whether it may still be replaced. A silent
-                        // swap is how a less accurate transcript gets trusted.
-                        callbacks.onStatus(
-                            appContext.getString(
-                                if (recoveryPending) {
-                                    R.string.stt_fell_back_retrying
-                                } else {
-                                    R.string.stt_fell_back
-                                },
-                                reason,
-                            )
-                        )
+                        callbacks.onStatus(status)
                         if (localTranscript.isNotBlank()) {
                             callbacks.onTranscript(
                                 localTranscript, fromRemote = false, isFinal = true
@@ -544,30 +504,9 @@ class DictationSession(
                         }
                     }
                 }
-
-                override fun onStatus(message: String) {
-                    postToMain { callbacks.onStatus(message) }
-                }
             },
-            // 🔴 A fresh budget per recording — the four-upload ceiling is
-            // per-recording, and reusing one across recordings would starve
-            // every recording after the first.
-            budget = UploadBudget(),
-        ).run(
-            audio = audio,
-            audioSeconds = audioSeconds,
-            // 🔴 The bare ISO code, never the BCP-47 tag. toLanguageTag()
-            // returns "en-US" here, which the service passes unvalidated to a
-            // processor that raises ValueError outside its try/except — an
-            // unhandled 500.
-            //
-            // The user's explicit Settings choice wins over the device locale
-            // (issue #7): on an es-CO handset the locale alone made English
-            // dictation impossible, because the service faithfully transcribed
-            // English speech as Spanish — which reads as a broken recogniser
-            // rather than as a setting nobody was offered. null still means
-            // "follow the device", and is still the default.
-            language = SttLanguage.resolve(settings.language, locale),
         )
+        // 🔴 The file is NOT deleted here, exactly as before: destroy() owns
+        // the cache file's life cycle for a recording this session made.
     }
 }
