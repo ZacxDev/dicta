@@ -53,3 +53,16 @@ jobs:
 
       - name: Assemble debug APK
         run: ./gradlew :app:assembleDebug --no-daemon
+
+      # 🔴 COMPILES androidTest, which neither task above does. Without this
+      # step the instrumentation source set is structurally invisible to the
+      # gate: widening an interface that LiveServiceDeviceTest overrides —
+      # TranscriptionCoordinator.Events.onRemoteTranscript went from 1 to 3
+      # parameters in this repo's history — leaves CI fully green while the
+      # breakage waits for the next manual device pass.
+      #
+      # Compiles only; it does NOT run the device tests. Those hit the live
+      # service and need a token at /data/local/tmp plus mesh reachability,
+      # neither of which a GitHub runner has.
+      - name: Compile instrumentation tests
+        run: ./gradlew :app:assembleDebugAndroidTest --no-daemon

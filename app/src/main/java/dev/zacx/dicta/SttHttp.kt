@@ -156,7 +156,9 @@ class SttHttp(
  * Robolectric, and the parsing of `detail` is policy-relevant enough
  * ([SttRetryPolicy.PERMANENT_503_MARKER] is matched against it) that it
  * deserves plain unit tests. So: a tiny hand-rolled extractor, fully tested,
- * that only claims to read top-level string and boolean fields.
+ * that only claims to read string and boolean fields of the **outermost**
+ * object — and now enforces that rather than merely claiming it; see
+ * [topLevelValueStart].
  *
  * 🔴 It returns null rather than throwing on anything it does not understand,
  * including a non-JSON body — which is the common case during a pod roll,
@@ -166,34 +168,19 @@ class SttHttp(
 object JsonLite {
 
     /**
-     * Extracts a top-level string field.
+     * Extracts a **top-level** string field.
      *
      * Handles the escapes that actually occur in these responses (`\"`, `\\`,
      * `\n`, `\t`, `\r`, `\/`, `\uXXXX`). Does not attempt to be a JSON parser:
-     * it finds `"name"`, expects a `:` and then a quoted string, and gives up
-     * on anything else.
+     * it locates the key at depth 1 via [topLevelValueStart], expects a quoted
+     * string, and gives up on anything else.
      */
     fun stringField(json: String, name: String): String? {
-        val needle = "\"$name\""
-        var from = 0
-        while (true) {
-            val keyAt = json.indexOf(needle, from)
-            if (keyAt < 0) return null
-            var i = keyAt + needle.length
-            while (i < json.length && json[i].isWhitespace()) i++
-            if (i >= json.length || json[i] != ':') {
-                // "text" occurred somewhere that is not a key position.
-                from = keyAt + needle.length
-                continue
-            }
-            i++
-            while (i < json.length && json[i].isWhitespace()) i++
-            if (i >= json.length || json[i] != '"') {
-                // A non-string value (null, a number, an object). Not ours.
-                return null
-            }
-            return readQuoted(json, i + 1)
-        }
+        val at = topLevelValueStart(json, name)
+        if (at < 0) return null
+        // A non-string value (null, a number, an object). Not ours.
+        if (json[at] != '"') return null
+        return readQuoted(json, at + 1)
     }
 
     /**
@@ -205,37 +192,115 @@ object JsonLite {
      * fine". `truncated: null` from the service means the server *could not
      * tell*, which is not the same claim as `truncated: false`.
      *
-     * 🔴 Uses [stringField]'s key-position scan rather than a second approach:
-     * a bare `indexOf` would be fooled by the name appearing in a *value*
-     * (`{"text":"truncated","truncated":false}` reads as true-ish to a naive
-     * matcher). A match whose next non-space character is not `:` is skipped
-     * and the scan continues, exactly as above.
+     * 🔴 Shares [stringField]'s scan ([topLevelValueStart]) rather than being
+     * a second approach to the same problem, so the two readers cannot drift.
      *
      * Only a real `true` / `false` literal counts, and only when what follows
      * it is a JSON delimiter — `truest` is not `true`.
      */
     fun boolField(json: String, name: String): Boolean? {
-        val needle = "\"$name\""
-        var from = 0
-        while (true) {
-            val keyAt = json.indexOf(needle, from)
-            if (keyAt < 0) return null
-            var i = keyAt + needle.length
-            while (i < json.length && json[i].isWhitespace()) i++
-            if (i >= json.length || json[i] != ':') {
-                // The name occurred somewhere that is not a key position.
-                from = keyAt + needle.length
-                continue
-            }
-            i++
-            while (i < json.length && json[i].isWhitespace()) i++
-            return when {
-                isLiteralAt(json, i, "true") -> true
-                isLiteralAt(json, i, "false") -> false
-                // null, a number, a string, an object: no signal.
-                else -> null
+        val at = topLevelValueStart(json, name)
+        if (at < 0) return null
+        return when {
+            isLiteralAt(json, at, "true") -> true
+            isLiteralAt(json, at, "false") -> false
+            // null, a number, a string, an object: no signal.
+            else -> null
+        }
+    }
+
+    /**
+     * Index of the first character of the value of the **depth-1** key [name],
+     * or `-1` when the outermost object has no such key.
+     *
+     * 🔴 **The depth check is the safety property, not tidiness.** The reader
+     * this replaced took the first key-position match at *any* depth, which
+     * two probes proved:
+     *
+     * ```
+     * {"segments":[{"unreliable":false}],"unreliable":true}  -> false
+     * {"meta":{"truncated":true},"text":"x"}                 -> true
+     * ```
+     *
+     * The first is the unsafe direction — a nested `false` ahead of the real
+     * `true` renders the plain, reassuring status, i.e. an unmarked
+     * fabrication. And it is reachable by an *additive* server change: this
+     * response is deliberately a moving target (the threshold lives
+     * server-side so it can be retuned without an APK), and per-segment
+     * detail is the shape every Whisper-family API grows.
+     *
+     * Both readers go through here on purpose. `stringField`'s consequence is
+     * milder — a nested `segments[].text` would be a wrong *transcript* rather
+     * than a wrong safety verdict — but it is the same flaw, and two copies of
+     * one predicate is two places for it to be wrong.
+     *
+     * Still not a JSON parser. It tracks `{}`/`[]` nesting, **skips string
+     * contents** so punctuation a user dictated cannot move the depth, and
+     * returns `-1` for anything it does not understand: a body that is not an
+     * object, a truncated body, HTML from a proxy. Key names are compared
+     * raw, which is sound for the plain identifiers this service uses; an
+     * escape sequence inside a *key* would not match and would read as absent.
+     */
+    private fun topLevelValueStart(json: String, name: String): Int {
+        var i = 0
+        while (i < json.length && json[i].isWhitespace()) i++
+        // Not an object: an array, a bare literal, HTML, or empty.
+        if (i >= json.length || json[i] != '{') return -1
+        i++
+        var depth = 1
+        while (i < json.length) {
+            when (val c = json[i]) {
+                '"' -> {
+                    val close = endOfString(json, i + 1)
+                    if (close < 0) return -1   // unterminated: a truncated body
+                    if (depth == 1) {
+                        var j = close + 1
+                        while (j < json.length && json[j].isWhitespace()) j++
+                        if (j < json.length && json[j] == ':') {
+                            val key = json.substring(i + 1, close)
+                            j++
+                            while (j < json.length && json[j].isWhitespace()) j++
+                            if (j >= json.length) return -1
+                            if (key == name) return j
+                            // Not ours. Resume AT the value, so a nested
+                            // object or array moves the depth as it should.
+                            i = j
+                            continue
+                        }
+                    }
+                    // A string in a value position, or any string deeper in.
+                    i = close + 1
+                }
+                '{', '[' -> { depth++; i++ }
+                '}', ']' -> {
+                    depth--
+                    // The outermost object closed without the key.
+                    if (depth == 0) return -1
+                    i++
+                }
+                else -> i++
             }
         }
+        return -1
+    }
+
+    /**
+     * Index of the closing quote of the string starting at [start] (the first
+     * character *inside* the quotes), or `-1` if it is unterminated.
+     *
+     * Only has to find the end, so it skips any escaped character whole rather
+     * than decoding it — [readQuoted] does the decoding.
+     */
+    private fun endOfString(json: String, start: Int): Int {
+        var i = start
+        while (i < json.length) {
+            when (json[i]) {
+                '\\' -> i += 2
+                '"' -> return i
+                else -> i++
+            }
+        }
+        return -1
     }
 
     /**

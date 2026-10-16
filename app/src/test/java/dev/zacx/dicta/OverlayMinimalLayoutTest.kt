@@ -513,43 +513,131 @@ class OverlayMinimalLayoutTest {
     /**
      * The longest string `status_text` can be asked to display.
      *
-     * Read from the resources rather than hardcoded: the point of #9 is that
-     * copy outgrew its container, so a guard pinned to today's longest string
-     * would stop protecting the moment someone writes a longer one.
-     * `DictateActivity` sets this view from the `stt_*` status strings and
-     * `@string/dictate_hint`.
+     * 🔴 **Derived, not listed** — and it previously only claimed to be. The
+     * old version hardcoded five resource names under this same kdoc, and
+     * asserted `names.size == values.size`, which notices a **removed** string
+     * and is blind to an **added** one. Two status strings were then added
+     * (`stt_remote_truncated`, `stt_remote_unreliable`) and the guard measured
+     * neither: it kept reporting the old maximum while silently no longer
+     * covering the set it describes. The sentence was true of the intent and
+     * false of the code, which is the failure mode a reader cannot see.
+     *
+     * So the set is now actually derived: every `R.string.*` the three classes
+     * that write this view reference, resolved against the real resources.
+     * `onStatus` forwards an already-localised string, so there is no single
+     * `getString` call site to enumerate — the reference set in those files is
+     * the honest over-approximation, and over-approximating is the safe
+     * direction for a "longest" bound.
+     *
+     * [theStatusStringLedgerIsDerivedAndNotAStaleList] is its positive
+     * control: a derivation that quietly resolved to nothing would otherwise
+     * report a comfortable zero.
      */
-    private fun longestStatusString(): String {
+    private fun longestStatusString(): String =
+        statusStringValues().maxBy { it.length }
+
+    /** Every candidate status string, `%1$s` filled, as a user would see it. */
+    private fun statusStringValues(): List<String> {
         val ctx = RuntimeEnvironment.getApplication()
-        val names = listOf(
+        return statusStringNames().mapNotNull { name ->
+            val id = ctx.resources.getIdentifier(name, "string", ctx.packageName)
+            if (id == 0) {
+                null
+            } else {
+                // stt_fell_back_retrying and friends carry a %1$s; fill it with
+                // a realistic reason so the measured length is the one a user
+                // actually sees.
+                ctx.resources.getString(id).replace("%1\$s", "the service timed out")
+            }
+        }
+    }
+
+    /**
+     * The resource names referenced by the classes that write `status_text`.
+     *
+     * `BubbleService` is deliberately excluded: its long strings are Toasts,
+     * not this view, and pulling them in would make a Settings-adjacent copy
+     * edit fail a dictation-layout guard for no reason.
+     */
+    private fun statusStringNames(): Set<String> =
+        listOf("DictateActivity", "DictationSession", "RemoteTranscriber")
+            .flatMap { cls ->
+                RESOURCE_REFERENCE
+                    .findAll(readSource("app/src/main/java/dev/zacx/dicta/$cls.kt", cls))
+                    .map { it.groupValues[1] }
+            }
+            .toSet()
+
+    private fun readSource(path: String, what: String): String {
+        val found = listOf(path, path.removePrefix("app/"), "../$path")
+            .map { java.io.File(it) }
+            .firstOrNull { it.exists() }
+        assertTrue(
+            "could not locate $what from ${java.io.File(".").absolutePath} — " +
+                "refusing to report a pass on a file that was never read",
+            found != null,
+        )
+        return found!!.readText()
+    }
+
+    /**
+     * 🔴 The control for the derivation above, and the growth guard the old
+     * hardcoded list could not be.
+     *
+     * Asserts the derived set still contains every name the previous version
+     * listed by hand — so a derivation that breaks, or silently resolves to a
+     * handful of button labels, goes red rather than reporting a comfortably
+     * short "longest" — **and** that it contains the status strings added
+     * since, which is the case the `names.size == values.size` form was blind
+     * to. A new status string is picked up with no edit here; one that the
+     * derivation cannot see fails this.
+     */
+    @Test
+    fun theStatusStringLedgerIsDerivedAndNotAStaleList() {
+        val names = statusStringNames()
+        val mustContain = listOf(
+            // The five the hand-written ledger used to list.
             "dictate_hint",
             "stt_tier_remote_only",
             "stt_fell_back_retrying",
             "stt_not_configured",
             "mic_denied_fallback",
+            // The ones it was blind to, which is why this test exists.
+            "stt_remote_done",
+            "stt_remote_truncated",
+            "stt_remote_unreliable",
         )
-        val values = names.mapNotNull { name ->
-            val id = ctx.resources.getIdentifier(name, "string", ctx.packageName)
-            if (id == 0) null else ctx.resources.getString(id)
+        for (name in mustContain) {
+            assertTrue(
+                "the derived status-string set does not contain <$name>, so " +
+                    "the length bound is being measured over the wrong set. " +
+                    "Derived ${names.size} names: ${names.sorted()}",
+                names.contains(name),
+            )
         }
-        assertEquals(
-            "a status string named in this test no longer exists, so the " +
-                "'longest' it measures is not the real longest",
-            names.size,
-            values.size,
+        // A derivation wired to nothing would satisfy a `maxBy` on an empty
+        // list by throwing, not by passing — but it would satisfy a `<=`
+        // bound trivially. Pin that it resolved real values.
+        val values = statusStringValues()
+        assertTrue(
+            "the derived names resolved to ${values.size} actual strings — " +
+                "the resource lookup is not finding them",
+            values.size >= mustContain.size,
         )
-        // stt_fell_back_retrying carries a %1$s; fill it with a realistic
-        // reason so the measured length is the one a user actually sees.
-        return values
-            .map { it.replace("%1\$s", "the service timed out") }
-            .maxBy { it.length }
     }
 
     private companion object {
         /**
-         * Lines `status_text` must allow. Four, because the longest string it
-         * carries is 154 characters and the card fits roughly
-         * [CHARS_PER_STATUS_LINE] per line.
+         * Lines `status_text` must allow. Four, because the card fits roughly
+         * [CHARS_PER_STATUS_LINE] characters per line and four of those covers
+         * the longest string the view carries.
+         *
+         * ⚠ This kdoc used to assert that longest **is 154 characters**. It is
+         * not, and was not: the set the guard measures maxes out at 123 with a
+         * realistic `%1$s` filler. The number was a stale restatement of a
+         * measurement, so it is gone — `longestStatusString()` measures it,
+         * `noStatusStringOutgrowsItsLineBudget` asserts it fits, and neither
+         * needs a figure copied into prose that nothing re-checks.
          */
         const val REQUIRED_STATUS_LINES = 4
 
@@ -561,6 +649,12 @@ class OverlayMinimalLayoutTest {
          * copy budget stricter, never looser.
          */
         const val CHARS_PER_STATUS_LINE = 48
+
+        /**
+         * `R.string.<name>` as it appears in source. Used to DERIVE the set of
+         * strings `status_text` can carry, instead of restating it by hand.
+         */
+        val RESOURCE_REFERENCE = Regex("""R\.string\.([a-z0-9_]+)""")
     }
 
     /**
@@ -665,6 +759,32 @@ class OverlayMinimalLayoutTest {
             )
             assertEquals(
                 a.getString(R.string.stt_remote_done), badge.text.toString()
+            )
+
+            // 🔴 The badge must never carry a CAVEAT. It is an 11sp pill that
+            // names the engine; the warnings belong on the full-width status
+            // line. `showEngine` is deliberately flag-blind (see its kdoc),
+            // and the hazard that justifies the sharing of stt_remote_done is
+            // that string acquiring a case-specific claim — so pin, here,
+            // that whatever the badge resolves to is neither warning. If
+            // someone routes statusLabel's output into the badge, or makes
+            // stt_remote_done a sentence about THIS transcript, this fails.
+            for (warning in listOf(R.string.stt_remote_truncated, R.string.stt_remote_unreliable)) {
+                assertTrue(
+                    "engine_badge reads \"${badge.text}\", which is the status " +
+                        "line's warning \"${a.getString(warning)}\". The badge " +
+                        "names the ENGINE and has no basis for a claim about " +
+                        "this particular transcript.",
+                    badge.text.toString() != a.getString(warning),
+                )
+            }
+            assertEquals(
+                "the badge diverged from the no-signal case of " +
+                    "RemoteTranscriber.statusLabel. The two deliberately share " +
+                    "one resource; if that is no longer true, showEngine's kdoc " +
+                    "is wrong and the badge may now be making a claim.",
+                a.getString(RemoteTranscriber.statusLabel(truncated = null, unreliable = null)),
+                badge.text.toString(),
             )
 
             // The two engines must be DISTINGUISHABLE, which is the whole point

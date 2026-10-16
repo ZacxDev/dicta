@@ -263,9 +263,35 @@ the service has no TLS listener a phone could validate.
   restart it.
 - Dictation language follows the system locale, mapped through `SttLanguage`'s
   allowlist.
-- Truncation at the service's 256-tokens-per-35 s-chunk limit is **silent** —
-  the response carries no finish-reason field, so the client cannot detect it
-  and does not claim to.
+- The remote status line names the **engine**, never a verdict on the words.
+  It used to read "Transcribed by the server ✓"; the tick was a claim about
+  correctness the client has no basis for, and the service does fabricate
+  fluent transcripts from near-silent input. There is deliberately **no
+  client-side silence/energy gate**: measured against the live service, room
+  tone at peak RMS 0.002023 hallucinated while quiet speech at 0.001891 and
+  clean speech at 0.001825 transcribed correctly — the input that must be
+  rejected is *louder* than the inputs that must be accepted, so no threshold
+  separates them.
+- Truncation **is** detectable and is surfaced: the response carries
+  `finish_reason` and `truncated`, and `truncated: true` shows "cut off at the
+  length limit" instead of the plain status. (This bullet previously said the
+  response "carries no finish-reason field, so the client cannot detect it" —
+  false once the service grew the field, and exactly the shape of claim that
+  gets a working guard deleted as dead code.)
+- Fabrication is reported by the service, not judged here: the response's
+  `unreliable` boolean (with `unreliable_reasons`) is read and shown as "the
+  output may not match what you said". The threshold lives **server-side on
+  purpose** so it can be retuned without shipping an APK, so the client reads
+  the boolean and never re-derives it from `avg_logprob` / `no_speech_prob`.
+- 🔴 Both flags are **three-valued**, and `null` means the server could not
+  check — no threshold configured, or the signal a rule needs is itself null.
+  The client renders `null` exactly like `false`, i.e. with no warning. So a
+  server whose threshold got unset reports `unreliable: null` on every request
+  and the app looks precisely as it does when all is well: a detector that
+  stops working is currently **unobservable from the client**. That is a
+  deliberate trade against warning-fatigue, not an oversight, and the only
+  thing that would notice today is the device test that asserts the live
+  service still answers `false` for ordinary speech and `true` for a tone.
 - `KeystoreCipher` is **not** covered by the unit suite: `AndroidKeyStore` has
   no Robolectric implementation, so the real cipher is device-verified only.
   The `SecretCipher` seam is what the unit tests exercise.

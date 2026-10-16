@@ -153,6 +153,102 @@ class LiveServiceDeviceTest {
             (outcome as SttOutcome.Success).text,
         )
         assertEquals(Disposition.SUCCEEDED, SttRetryPolicy.classify(outcome))
+
+        // 🔴 The trust signals, against the LIVE contract. Every other
+        // assertion about these two fields in this repository runs on a
+        // hand-written fixture, so if the server renames a key, changes its
+        // type or stops emitting it, the whole unit suite stays green and the
+        // warning silently never fires again — the app degrades to exactly its
+        // pre-change behaviour, unobservably. This is the only place that can
+        // notice. MEASURED values, like the transcript above.
+        assertEquals(
+            "the service no longer reports unreliable=false for ordinary " +
+                "speech. Either the key was renamed or its type changed — in " +
+                "which case boolField now returns null for every response and " +
+                "no fabrication will ever be flagged again — or the threshold " +
+                "moved and real speech is now being flagged.",
+            false,
+            outcome.unreliable,
+        )
+        assertEquals(
+            "the service no longer reports truncated=false for a transcript " +
+                "that ends on EOS",
+            false,
+            outcome.truncated,
+        )
+    }
+
+    /**
+     * 🔴 The **positive** control for the fabrication signal, against the live
+     * service: a 200 Hz tone contains no speech, and the service answers with
+     * invented words.
+     *
+     * Without this, `unreliable` is only ever asserted to be `false` — and a
+     * field that is hardwired to `false`, or that boolField reads as `null` on
+     * every response, satisfies that perfectly. The pair is the evidence; the
+     * negative half alone is indistinguishable from a signal wired to nothing.
+     *
+     * Measured against cohere-stt 0.1.12: a tone returns `unreliable=true`
+     * with `unreliable_reasons=["no_speech_prob"]`, and the text is fabricated
+     * (`" you"` was one observed output). The *text* is deliberately not
+     * asserted — it is a hallucination and will vary — only that the server
+     * flagged it and that the client carried the flag.
+     */
+    @Test
+    fun aToneWithNoSpeechIsFlaggedUnreliableByTheServiceAndTheClientCarriesIt() {
+        val outcome = SttHttp(baseUrl, token).transcribe(
+            attempt(toneWavBytes(seconds = 1.0, hz = 200.0), seconds = 1.0)
+        )
+
+        assertTrue(
+            "expected a 200 — the service refuses nothing and reports instead, " +
+                "so a tone must still come back as a Success: $outcome",
+            outcome is SttOutcome.Success,
+        )
+        assertEquals(
+            "🔴 the service did NOT flag a pure tone as unreliable, so the " +
+                "client's whole fabrication warning is wired to a signal that " +
+                "never fires. Either the server-side threshold changed (it is " +
+                "deliberately retunable and WILL move) or the field is no " +
+                "longer being read correctly.",
+            true,
+            (outcome as SttOutcome.Success).unreliable,
+        )
+    }
+
+    /**
+     * A 16-bit mono PCM WAV of a sine tone, built in memory.
+     *
+     * The service identifies the container by content via ffmpeg (see
+     * [SttHttp.AUDIO_FILE_NAME]'s kdoc), so a hand-written WAV header is
+     * accepted the same way the `.wav` asset is. Synthesised rather than
+     * shipped as a second asset because the waveform is three lines and an
+     * asset is a binary blob nobody can review.
+     */
+    private fun toneWavBytes(seconds: Double, hz: Double, rate: Int = 16_000): ByteArray {
+        val frames = (seconds * rate).toInt()
+        val data = java.io.ByteArrayOutputStream()
+        for (n in 0 until frames) {
+            // 0.5 amplitude: loud enough that no reasonable level gate would
+            // call it silence, which is the point — the service hallucinates
+            // on it anyway.
+            val v = (Math.sin(2.0 * Math.PI * hz * n / rate) * 16_000).toInt()
+            data.write(v and 0xFF)
+            data.write((v shr 8) and 0xFF)
+        }
+        val pcm = data.toByteArray()
+        val out = java.io.ByteArrayOutputStream()
+        fun ascii(s: String) = out.write(s.toByteArray(Charsets.US_ASCII))
+        fun le32(v: Int) {
+            out.write(v and 0xFF); out.write((v shr 8) and 0xFF)
+            out.write((v shr 16) and 0xFF); out.write((v shr 24) and 0xFF)
+        }
+        fun le16(v: Int) { out.write(v and 0xFF); out.write((v shr 8) and 0xFF) }
+        ascii("RIFF"); le32(36 + pcm.size); ascii("WAVE")
+        ascii("fmt "); le32(16); le16(1); le16(1)
+        le32(rate); le32(rate * 2); le16(2); le16(16)
+        ascii("data"); le32(pcm.size); out.write(pcm)
+        return out.toByteArray()
     }
 
     @Test

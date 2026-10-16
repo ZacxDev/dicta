@@ -237,9 +237,22 @@ class RemoteTranscriber(
          * #8 is about (`truncated` was measured **false** for both
          * fabrications; it is a real detector of a different fault).
          *
+         * 🟢 **Known blind spot, accepted.** Because `null` and `false` render
+         * identically, a server whose threshold got unset answers
+         * `unreliable: null` on every request and this app looks exactly as it
+         * does when all is well — a detector that stops working produces no
+         * observable change anywhere in the client. That is the price of not
+         * warning on a no-signal response and it is paid deliberately. The
+         * only thing that notices is `LiveServiceDeviceTest`, which asserts
+         * the live service still answers `false` for ordinary speech and
+         * `true` for a tone. If that ever has to be observable in-app rather
+         * than in a device test, this is the comment to come back to.
+         *
          * One function rather than an expression inlined at the delivery site:
          * the predicate is the thing under test, and a second copy of it is a
-         * second place for it to be wrong.
+         * second place for it to be wrong. 🔴 The engine badge
+         * (`DictateActivity.showEngine`) is **not** such a copy — it answers
+         * "which engine", which no flag changes; see its kdoc.
          */
         internal fun statusLabel(truncated: Boolean?, unreliable: Boolean?): Int = when {
             unreliable == true -> R.string.stt_remote_unreliable
