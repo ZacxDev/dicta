@@ -24,12 +24,20 @@ class TranscriptionCoordinatorTest {
 
         /** The `truncated` flag exactly as it reached the consumer, in order. */
         val remoteTruncated = mutableListOf<Boolean?>()
+
+        /** The `unreliable` flag exactly as it reached the consumer, in order. */
+        val remoteUnreliable = mutableListOf<Boolean?>()
         val fellBack = mutableListOf<Pair<String, Boolean>>()
         val statuses = mutableListOf<String>()
 
-        override fun onRemoteTranscript(text: String, truncated: Boolean?) {
+        override fun onRemoteTranscript(
+            text: String,
+            truncated: Boolean?,
+            unreliable: Boolean?,
+        ) {
             remote += text
             remoteTruncated += truncated
+            remoteUnreliable += unreliable
         }
         override fun onFellBack(reason: String, recoveryPending: Boolean) {
             fellBack += reason to recoveryPending
@@ -125,6 +133,73 @@ class TranscriptionCoordinatorTest {
                 h.events.remoteTruncated,
             )
         }
+    }
+
+    /**
+     * 🔴 The same guarantee for `unreliable`, asserted as the **pair** rather
+     * than one flag at a time.
+     *
+     * The nine combinations are walked with the two flags set to *different*
+     * values wherever they can differ, so a pass-through that hands the same
+     * value on for both — the copy-paste error this widening invites — is
+     * caught. Each is checked positionally: a swap of the two arguments at the
+     * delivery site leaves both lists non-empty and both ends green.
+     */
+    @Test
+    fun bothFlagsReachTheConsumerUnchangedAndUnswappedOnTheFastPath() {
+        val values = listOf(true, false, null)
+        for (truncated in values) {
+            for (unreliable in values) {
+                val h = Harness(
+                    listOf(
+                        SttOutcome.Success(
+                            "a scripted transcript",
+                            truncated = truncated,
+                            unreliable = unreliable,
+                        )
+                    )
+                )
+                h.run()
+                assertEquals(
+                    "truncated=$truncated did not survive the coordinator " +
+                        "(unreliable was $unreliable — if these two are " +
+                        "transposed, the user is warned about the wrong fault)",
+                    listOf(truncated),
+                    h.events.remoteTruncated,
+                )
+                assertEquals(
+                    "unreliable=$unreliable did not survive the coordinator " +
+                        "(truncated was $truncated)",
+                    listOf(unreliable),
+                    h.events.remoteUnreliable,
+                )
+            }
+        }
+    }
+
+    @Test
+    fun theUnreliableFlagAlsoSurvivesTheRecoveryPath() {
+        // 🔴 The second delivery site, which is a separate code path and was
+        // the finding of the previous round. The scripted outcome disagrees
+        // across the two flags on purpose, so neither read can stand in for
+        // the other.
+        val h = Harness(
+            outcomes = listOf(
+                coldStart, coldStart, coldStart,
+                SttOutcome.Success("late and suspect", truncated = false, unreliable = true),
+            ),
+            healthAnswers = listOf(false, true),
+        )
+        assertEquals("late and suspect", h.run())
+        assertEquals(
+            "the recovery path dropped the fabrication signal the fast path " +
+                "carries — whether the user is warned about a possibly " +
+                "invented transcript would depend on which rung of the ladder " +
+                "happened to succeed",
+            listOf(true),
+            h.events.remoteUnreliable,
+        )
+        assertEquals(listOf(false), h.events.remoteTruncated)
     }
 
     @Test

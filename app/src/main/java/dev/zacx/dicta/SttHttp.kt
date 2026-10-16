@@ -119,7 +119,15 @@ class SttHttp(
                 // null when it had no EOS id to look for, i.e. it could not
                 // tell. Collapsing that to false would turn "unknown" into
                 // "checked and fine".
-                SttOutcome.Success(text, JsonLite.boolField(body, "truncated"))
+                SttOutcome.Success(
+                    text = text,
+                    truncated = JsonLite.boolField(body, "truncated"),
+                    // 🔴 The server's own verdict, read as the boolean it is.
+                    // NOT re-derived from avg_logprob / no_speech_prob: the
+                    // threshold is deliberately server-side so it can be
+                    // retuned without shipping an APK. One rule, one place.
+                    unreliable = JsonLite.boolField(body, "unreliable"),
+                )
             } else {
                 SttOutcome.Http(status, "200 with no \"text\" field")
             }

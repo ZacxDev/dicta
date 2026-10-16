@@ -65,8 +65,13 @@ class TranscriptionCoordinator(
          *   unchanged — the coordinator applies no threshold and makes no
          *   judgement about it. 🔴 null is "the server could not tell", not
          *   false; the consumer decides what to say.
+         * @param unreliable [SttOutcome.Success.unreliable], likewise passed
+         *   through unchanged. 🔴 null is "nothing could be checked", not
+         *   false. The coordinator must not collapse, combine or re-derive
+         *   either flag: both are the server's own claims, and the only place
+         *   allowed an opinion about them is the one that renders a status.
          */
-        fun onRemoteTranscript(text: String, truncated: Boolean?)
+        fun onRemoteTranscript(text: String, truncated: Boolean?, unreliable: Boolean?)
 
         /**
          * The remote path has given up for now and the on-device transcript
@@ -135,7 +140,7 @@ class TranscriptionCoordinator(
             when (disposition) {
                 Disposition.SUCCEEDED -> {
                     val success = outcome as SttOutcome.Success
-                    events.onRemoteTranscript(success.text, success.truncated)
+                    events.onRemoteTranscript(success.text, success.truncated, success.unreliable)
                     return success.text
                 }
                 // Neither of these is worth another byte on the wire.
@@ -176,7 +181,7 @@ class TranscriptionCoordinator(
                     )
                 )
                 return if (outcome is SttOutcome.Success) {
-                    events.onRemoteTranscript(outcome.text, outcome.truncated)
+                    events.onRemoteTranscript(outcome.text, outcome.truncated, outcome.unreliable)
                     outcome.text
                 } else {
                     // The reserved slot is spent. Say so instead of leaving

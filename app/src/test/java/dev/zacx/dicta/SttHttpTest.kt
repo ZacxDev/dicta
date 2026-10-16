@@ -270,6 +270,123 @@ class SttHttpTest {
         assertNull((outcome as SttOutcome.Success).truncated)
     }
 
+    // --- the unreliability signal -------------------------------------------
+    //
+    // 🔴 This is the field that does issue #8's work. `truncated` is a real
+    // detector of a real fault, but it was measured FALSE for BOTH
+    // fabrications, so it cannot fire on them. The bodies below are the shapes
+    // measured against cohere-stt 0.1.12 — including `unreliable_reasons`
+    // sitting immediately after `unreliable`, the adjacent-key trap as it
+    // actually occurs.
+
+    @Test
+    fun theMeasuredFabricationBodyCarriesUnreliableTrue() {
+        // 200 Hz tone, en: the service returned the fabricated text " you".
+        val (outcome, _) = post(
+            200,
+            """{"text":" you","duration_s":0.4,"elapsed_s":0.15,""" +
+                """"unreliable":true,"unreliable_reasons":["no_speech_prob"],""" +
+                """"finish_reason":"stop","truncated":false,""" +
+                """"avg_logprob":-0.3622,"compression_ratio":0.333,""" +
+                """"no_speech_prob":1.79886e-08}""",
+        )
+        assertEquals(
+            "the server flagged this transcript as unreliable and the outcome " +
+                "does not carry it — the fabrication reaches the screen with " +
+                "nothing said about it, which is the whole of issue #8",
+            SttOutcome.Success(" you", truncated = false, unreliable = true),
+            outcome,
+        )
+    }
+
+    @Test
+    fun theMeasuredGoodSpeechBodyCarriesUnreliableFalse() {
+        // Synthetic speech, 4.81 s, transcribed correctly.
+        val (outcome, _) = post(
+            200,
+            """{"text":"the measured good transcript","duration_s":4.81,""" +
+                """"elapsed_s":1.07,"unreliable":false,"unreliable_reasons":[],""" +
+                """"finish_reason":"stop","truncated":false,""" +
+                """"avg_logprob":-0.1184,"compression_ratio":1.62,""" +
+                """"no_speech_prob":0.004135}""",
+        )
+        assertEquals(
+            SttOutcome.Success(
+                "the measured good transcript",
+                truncated = false,
+                unreliable = false,
+            ),
+            outcome,
+        )
+    }
+
+    @Test
+    fun anUnreliableNullIsNoSignalAndNotFalse() {
+        // 🔴 The server sends null when NOTHING COULD BE CHECKED — no
+        // threshold configured, or the signal a rule needs is itself null.
+        // "Could not check" and "checked and found nothing" are different
+        // claims, and only one of them may ever be rendered as reassurance.
+        val (outcome, _) = post(
+            200,
+            """{"text":"an unchecked transcript","duration_s":2.17,""" +
+                """"elapsed_s":0.63,"unreliable":null,"unreliable_reasons":[],""" +
+                """"truncated":false,"avg_logprob":null,"no_speech_prob":null}""",
+        )
+        assertEquals(
+            "unreliable:null was read as a decision rather than as an absence",
+            SttOutcome.Success(
+                "an unchecked transcript",
+                truncated = false,
+                unreliable = null,
+            ),
+            outcome,
+        )
+        assertNull((outcome as SttOutcome.Success).unreliable)
+    }
+
+    @Test
+    fun aPreChangeBodyWithNoUnreliableFieldIsNoSignal() {
+        // cohere-stt before 0.1.12, and any response that drops the field.
+        val (outcome, _) = post(
+            200,
+            """{"text":"a pre-change transcript","duration_s":3.28,"truncated":true}""",
+        )
+        val success = outcome as SttOutcome.Success
+        assertNull("an absent unreliable field must not read as false", success.unreliable)
+        assertEquals(
+            "the older field must still be read when the newer one is absent",
+            true,
+            success.truncated,
+        )
+    }
+
+    @Test
+    fun theTwoFlagsAreReadIndependentlyOfEachOther() {
+        // 🔴 The pair that proves neither read is standing in for the other:
+        // in the first body they agree, in the second they disagree, and the
+        // values are pairwise distinct from each other across the two.
+        val (both, _) = post(
+            200,
+            """{"text":"cut off and also suspect","unreliable":true,""" +
+                """"unreliable_reasons":["no_speech_prob","avg_logprob"],""" +
+                """"finish_reason":"length","truncated":true}""",
+        )
+        assertEquals(
+            SttOutcome.Success("cut off and also suspect", truncated = true, unreliable = true),
+            both,
+        )
+        val (disagreeing, _) = post(
+            200,
+            """{"text":"whole and also suspect","unreliable":true,""" +
+                """"finish_reason":"stop","truncated":false}""",
+        )
+        assertEquals(
+            "one flag's value leaked into the other's read",
+            SttOutcome.Success("whole and also suspect", truncated = false, unreliable = true),
+            disagreeing,
+        )
+    }
+
     @Test
     fun a401YieldsTheServersOwnDetail() {
         // The measured body from a no-token POST.

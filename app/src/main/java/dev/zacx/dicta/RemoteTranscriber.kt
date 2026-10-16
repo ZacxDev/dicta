@@ -161,19 +161,15 @@ class RemoteTranscriber(
             unitRandom = unitRandom,
             elapsedMs = elapsedMs,
             events = object : TranscriptionCoordinator.Events {
-                override fun onRemoteTranscript(text: String, truncated: Boolean?) {
-                    // 🔴 `== true` and nothing wider. truncated=false means
-                    // the server checked and the transcript is whole;
-                    // truncated=null means it could not tell. Both keep the
-                    // plain label — a warning shown on every dictation,
-                    // including the ones that carry no signal at all, is a
-                    // warning the user learns to scroll past.
-                    val label = if (truncated == true) {
-                        R.string.stt_remote_truncated
-                    } else {
-                        R.string.stt_remote_done
-                    }
-                    events.onRemoteTranscript(text, appContext.getString(label))
+                override fun onRemoteTranscript(
+                    text: String,
+                    truncated: Boolean?,
+                    unreliable: Boolean?,
+                ) {
+                    events.onRemoteTranscript(
+                        text,
+                        appContext.getString(statusLabel(truncated, unreliable)),
+                    )
                 }
 
                 override fun onFellBack(reason: String, recoveryPending: Boolean) {
@@ -220,6 +216,36 @@ class RemoteTranscriber(
     }
 
     internal companion object {
+
+        /**
+         * Which status accompanies a remote transcript, given the server's two
+         * self-reported flags.
+         *
+         * 🔴 **Both branches are `== true` and nothing wider.** For either
+         * flag, `false` is the server saying it checked and found nothing, and
+         * `null` is the server saying **nothing could be checked** — no
+         * threshold configured, or the signal a rule needs is itself null.
+         * Neither is a reason to warn. `!= null` or `!= false` here would warn
+         * on a no-signal response, which is the ✓ defect inverted: a claim
+         * about a check that did not happen. And a warning shown on every
+         * dictation is one the user learns to scroll past, which costs the
+         * real warnings their meaning.
+         *
+         * 🔴 **Precedence: `unreliable` wins over `truncated`.** A transcript
+         * that may be fabricated is a worse problem than one that is merely
+         * cut off — and it is the only one of the two that fires on what issue
+         * #8 is about (`truncated` was measured **false** for both
+         * fabrications; it is a real detector of a different fault).
+         *
+         * One function rather than an expression inlined at the delivery site:
+         * the predicate is the thing under test, and a second copy of it is a
+         * second place for it to be wrong.
+         */
+        internal fun statusLabel(truncated: Boolean?, unreliable: Boolean?): Int = when {
+            unreliable == true -> R.string.stt_remote_unreliable
+            truncated == true -> R.string.stt_remote_truncated
+            else -> R.string.stt_remote_done
+        }
 
         /**
          * The production transport: one `SttHttp` per call, wrapped so that

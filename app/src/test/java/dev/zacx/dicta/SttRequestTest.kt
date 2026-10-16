@@ -424,6 +424,21 @@ class SttRequestTest {
     }
 
     @Test
+    fun aLongerKeyThatStartsWithTheNameIsNotMistakenForIt() {
+        // 🔴 Not hypothetical: the live response puts "unreliable_reasons"
+        // immediately after "unreliable". A needle built without its closing
+        // quote matches the LONGER key first, finds a `[` after the colon, and
+        // answers "no signal" for a response that said true — a fabrication
+        // warning silently lost to an adjacent field name.
+        val body = """{"text":" you","unreliable":true,""" +
+            """"unreliable_reasons":["no_speech_prob"],"truncated":false}"""
+        assertEquals(true, JsonLite.boolField(body, "unreliable"))
+        assertEquals(false, JsonLite.boolField(body, "truncated"))
+        // Read on its own the longer key is an array, i.e. no signal.
+        assertNull(JsonLite.boolField(body, "unreliable_reasons"))
+    }
+
+    @Test
     fun whitespaceAroundTheColonIsToleratedForBooleans() {
         assertEquals(true, JsonLite.boolField("""{"truncated"   :   true}""", "truncated"))
     }
