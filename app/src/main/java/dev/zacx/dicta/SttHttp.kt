@@ -115,7 +115,11 @@ class SttHttp(
             // A 200 whose body has no "text" is not a success — treating it as
             // one would put an empty transcript on screen and report done.
             return if (text != null) {
-                SttOutcome.Success(text)
+                // 🔴 Three-valued, and null is NOT false: the server reports
+                // null when it had no EOS id to look for, i.e. it could not
+                // tell. Collapsing that to false would turn "unknown" into
+                // "checked and fine".
+                SttOutcome.Success(text, JsonLite.boolField(body, "truncated"))
             } else {
                 SttOutcome.Http(status, "200 with no \"text\" field")
             }
@@ -144,7 +148,7 @@ class SttHttp(
  * Robolectric, and the parsing of `detail` is policy-relevant enough
  * ([SttRetryPolicy.PERMANENT_503_MARKER] is matched against it) that it
  * deserves plain unit tests. So: a tiny hand-rolled extractor, fully tested,
- * that only claims to read top-level string fields.
+ * that only claims to read top-level string and boolean fields.
  *
  * 🔴 It returns null rather than throwing on anything it does not understand,
  * including a non-JSON body — which is the common case during a pod roll,
@@ -182,6 +186,61 @@ object JsonLite {
             }
             return readQuoted(json, i + 1)
         }
+    }
+
+    /**
+     * Extracts a top-level JSON **boolean** field.
+     *
+     * Three-valued on purpose, and the third value is load-bearing: `null`
+     * means **no signal** — the field was absent, was JSON `null`, or was not
+     * a boolean literal — and a caller must never read it as "checked, and
+     * fine". `truncated: null` from the service means the server *could not
+     * tell*, which is not the same claim as `truncated: false`.
+     *
+     * 🔴 Uses [stringField]'s key-position scan rather than a second approach:
+     * a bare `indexOf` would be fooled by the name appearing in a *value*
+     * (`{"text":"truncated","truncated":false}` reads as true-ish to a naive
+     * matcher). A match whose next non-space character is not `:` is skipped
+     * and the scan continues, exactly as above.
+     *
+     * Only a real `true` / `false` literal counts, and only when what follows
+     * it is a JSON delimiter — `truest` is not `true`.
+     */
+    fun boolField(json: String, name: String): Boolean? {
+        val needle = "\"$name\""
+        var from = 0
+        while (true) {
+            val keyAt = json.indexOf(needle, from)
+            if (keyAt < 0) return null
+            var i = keyAt + needle.length
+            while (i < json.length && json[i].isWhitespace()) i++
+            if (i >= json.length || json[i] != ':') {
+                // The name occurred somewhere that is not a key position.
+                from = keyAt + needle.length
+                continue
+            }
+            i++
+            while (i < json.length && json[i].isWhitespace()) i++
+            return when {
+                isLiteralAt(json, i, "true") -> true
+                isLiteralAt(json, i, "false") -> false
+                // null, a number, a string, an object: no signal.
+                else -> null
+            }
+        }
+    }
+
+    /**
+     * True iff [literal] starts at [at] and is not merely the prefix of a
+     * longer bare word, so `truest` and `falsey` are rejected rather than
+     * read as the literal they begin with.
+     */
+    private fun isLiteralAt(json: String, at: Int, literal: String): Boolean {
+        if (!json.startsWith(literal, at)) return false
+        val next = at + literal.length
+        if (next >= json.length) return true
+        val c = json[next]
+        return !(c.isLetterOrDigit() || c == '_' || c == '.' || c == '-' || c == '+')
     }
 
     /** @param start index of the first character *inside* the quotes. */

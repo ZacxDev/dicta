@@ -173,7 +173,9 @@ class LiveServiceDeviceTest {
             unitRandom = { 0.5 },
             elapsedMs = { System.currentTimeMillis() },
             events = object : TranscriptionCoordinator.Events {
-                override fun onRemoteTranscript(text: String) { remote += text }
+                override fun onRemoteTranscript(text: String, truncated: Boolean?) {
+                    remote += text
+                }
                 override fun onFellBack(reason: String, recoveryPending: Boolean) {
                     fellBack += reason
                 }
@@ -241,7 +243,9 @@ class LiveServiceDeviceTest {
             unitRandom = { 0.5 },
             elapsedMs = { System.currentTimeMillis() },
             events = object : TranscriptionCoordinator.Events {
-                override fun onRemoteTranscript(text: String) { remote += text }
+                override fun onRemoteTranscript(text: String, truncated: Boolean?) {
+                    remote += text
+                }
                 override fun onFellBack(reason: String, recoveryPending: Boolean) {
                     fellBack += reason to recoveryPending
                 }

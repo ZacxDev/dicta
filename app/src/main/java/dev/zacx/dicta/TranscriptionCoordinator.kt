@@ -58,8 +58,15 @@ class TranscriptionCoordinator(
     }
 
     interface Events {
-        /** The authoritative remote transcript. May arrive after [onFellBack]. */
-        fun onRemoteTranscript(text: String)
+        /**
+         * The authoritative remote transcript. May arrive after [onFellBack].
+         *
+         * @param truncated [SttOutcome.Success.truncated], passed through
+         *   unchanged — the coordinator applies no threshold and makes no
+         *   judgement about it. 🔴 null is "the server could not tell", not
+         *   false; the consumer decides what to say.
+         */
+        fun onRemoteTranscript(text: String, truncated: Boolean?)
 
         /**
          * The remote path has given up for now and the on-device transcript
@@ -127,9 +134,9 @@ class TranscriptionCoordinator(
 
             when (disposition) {
                 Disposition.SUCCEEDED -> {
-                    val text = (outcome as SttOutcome.Success).text
-                    events.onRemoteTranscript(text)
-                    return text
+                    val success = outcome as SttOutcome.Success
+                    events.onRemoteTranscript(success.text, success.truncated)
+                    return success.text
                 }
                 // Neither of these is worth another byte on the wire.
                 Disposition.FAIL_FAST, Disposition.PERMANENT -> return null
@@ -169,7 +176,7 @@ class TranscriptionCoordinator(
                     )
                 )
                 return if (outcome is SttOutcome.Success) {
-                    events.onRemoteTranscript(outcome.text)
+                    events.onRemoteTranscript(outcome.text, outcome.truncated)
                     outcome.text
                 } else {
                     // The reserved slot is spent. Say so instead of leaving

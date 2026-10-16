@@ -326,4 +326,105 @@ class SttRequestTest {
     fun whitespaceAroundTheColonIsTolerated() {
         assertEquals("x", JsonLite.stringField("""{"detail"   :   "x"}""", "detail"))
     }
+
+    // --- the boolean extractor (truncated) ----------------------------------
+    //
+    // 🔴 Three-valued, and the third value is the point: null means the server
+    // gave NO SIGNAL. Every one of these asserts which of the three came back,
+    // because a reader that collapses null to false turns "could not tell"
+    // into "checked and fine".
+
+    @Test
+    fun aTrueBooleanFieldReadsAsTrue() {
+        assertEquals(
+            true,
+            JsonLite.boolField(
+                """{"text":"a cut-off sentence","truncated":true,"duration_s":9.37}""",
+                "truncated",
+            ),
+        )
+    }
+
+    @Test
+    fun aFalseBooleanFieldReadsAsFalseAndNotAsNull() {
+        // false is a POSITIVE claim by the server: it looked for the EOS token
+        // and found one. It must be distinguishable from "no signal".
+        assertEquals(
+            false,
+            JsonLite.boolField(
+                """{"text":"a whole sentence","truncated":false,"duration_s":4.81}""",
+                "truncated",
+            ),
+        )
+    }
+
+    @Test
+    fun anAbsentBooleanFieldIsNullRatherThanFalse() {
+        // The pre-change server, and any future response that drops the field.
+        assertNull(
+            JsonLite.boolField(
+                """{"text":"a whole sentence","duration_s":2.46}""",
+                "truncated",
+            ),
+        )
+    }
+
+    @Test
+    fun anExplicitJsonNullIsNullAndNotFalse() {
+        // 🔴 The server sends this when it had no EOS id to look for, i.e. it
+        // COULD NOT TELL. Reading it as false would be a verification claim
+        // nobody made.
+        assertNull(JsonLite.boolField("""{"truncated":null}""", "truncated"))
+    }
+
+    @Test
+    fun aNonBooleanValueIsNull() {
+        assertNull(JsonLite.boolField("""{"truncated":"true"}""", "truncated"))
+        assertNull(JsonLite.boolField("""{"truncated":1}""", "truncated"))
+        assertNull(JsonLite.boolField("""{"truncated":{"why":"cap"}}""", "truncated"))
+        assertNull(JsonLite.boolField("""{"truncated":[true]}""", "truncated"))
+    }
+
+    @Test
+    fun aNonJsonBodyIsNullRatherThanAThrowForBooleans() {
+        assertNull(JsonLite.boolField("<html><body>502 Bad Gateway</body></html>", "truncated"))
+        assertNull(JsonLite.boolField("", "truncated"))
+        assertNull(JsonLite.boolField("truncated", "truncated"))
+        // A key position with nothing after it at all.
+        assertNull(JsonLite.boolField("""{"truncated":""", "truncated"))
+    }
+
+    @Test
+    fun theBooleanNameAppearingInAValueIsNotMistakenForTheKey() {
+        // 🔴 The trap stringField's own comment documents, in the shape this
+        // field actually meets it: the transcript TEXT is the word, and the
+        // real key says the opposite. A naive indexOf reads the value's quotes
+        // and answers with whatever literal follows — here, the wrong one.
+        assertEquals(
+            false,
+            JsonLite.boolField(
+                """{"text":"truncated","truncated":false}""",
+                "truncated",
+            ),
+        )
+        // And the mirror image, so neither answer can be right by accident.
+        assertEquals(
+            true,
+            JsonLite.boolField(
+                """{"text":"not truncated at all","truncated":true}""",
+                "truncated",
+            ),
+        )
+    }
+
+    @Test
+    fun aBareWordThatMerelyStartsWithALiteralIsNotThatLiteral() {
+        assertNull(JsonLite.boolField("""{"truncated":truest}""", "truncated"))
+        assertNull(JsonLite.boolField("""{"truncated":falsehood}""", "truncated"))
+    }
+
+    @Test
+    fun whitespaceAroundTheColonIsToleratedForBooleans() {
+        assertEquals(true, JsonLite.boolField("""{"truncated"   :   true}""", "truncated"))
+    }
 }

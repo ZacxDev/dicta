@@ -9,8 +9,21 @@ package dev.zacx.dicta
  */
 sealed class SttOutcome {
 
-    /** 200 with a transcript. */
-    data class Success(val text: String) : SttOutcome()
+    /**
+     * 200 with a transcript.
+     *
+     * @param truncated the service's `truncated` field: true when generation
+     *   hit the `max_new_tokens` cap, so the transcript is **cut off**.
+     *   🔴 `null` is "no signal", not false — the server returns null when it
+     *   had no EOS id to look for, i.e. it could not tell. A consumer must
+     *   branch on `== true` and must never read null as "checked and fine".
+     *   The default is null so a construction that knows nothing claims
+     *   nothing.
+     */
+    data class Success(
+        val text: String,
+        val truncated: Boolean? = null,
+    ) : SttOutcome()
 
     /**
      * A response arrived with a non-2xx status.

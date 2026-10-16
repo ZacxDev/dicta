@@ -21,10 +21,16 @@ class TranscriptionCoordinatorTest {
     /** Records everything the coordinator did, in order. */
     private class Recorder : TranscriptionCoordinator.Events {
         val remote = mutableListOf<String>()
+
+        /** The `truncated` flag exactly as it reached the consumer, in order. */
+        val remoteTruncated = mutableListOf<Boolean?>()
         val fellBack = mutableListOf<Pair<String, Boolean>>()
         val statuses = mutableListOf<String>()
 
-        override fun onRemoteTranscript(text: String) { remote += text }
+        override fun onRemoteTranscript(text: String, truncated: Boolean?) {
+            remote += text
+            remoteTruncated += truncated
+        }
         override fun onFellBack(reason: String, recoveryPending: Boolean) {
             fellBack += reason to recoveryPending
         }
@@ -96,6 +102,48 @@ class TranscriptionCoordinatorTest {
         assertTrue("no fallback should have been reported", h.events.fellBack.isEmpty())
         assertTrue("nothing should have been slept", h.sleeps.isEmpty())
         assertEquals(0, h.healthCalls)
+    }
+
+    /**
+     * 🔴 The `truncated` flag crosses the coordinator **unchanged**, on every
+     * path that can deliver a transcript.
+     *
+     * The coordinator applies no threshold and makes no judgement: it is the
+     * seam between the transport that read the field and the consumer that
+     * decides what to say. All three values are asserted — a pass-through that
+     * collapses null to false, or drops the flag entirely and always hands on
+     * null, is a defect neither end's own tests can see.
+     */
+    @Test
+    fun theTruncatedFlagReachesTheConsumerUnchangedOnTheFastPath() {
+        for (flag in listOf(true, false, null)) {
+            val h = Harness(listOf(SttOutcome.Success("a scripted transcript", flag)))
+            h.run()
+            assertEquals(
+                "truncated=$flag did not survive the coordinator",
+                listOf(flag),
+                h.events.remoteTruncated,
+            )
+        }
+    }
+
+    @Test
+    fun theTruncatedFlagAlsoSurvivesTheRecoveryPath() {
+        // The late path: the fast ladder fails, /healthz comes back, and the
+        // reserved slot returns a TRUNCATED transcript. Separately correct
+        // paths are exactly where a pass-through gets added to one of them.
+        val h = Harness(
+            outcomes = listOf(refused, refused, refused, SttOutcome.Success("late and cut off", true)),
+            healthAnswers = listOf(false, true),
+        )
+        assertEquals("late and cut off", h.run())
+        assertEquals(
+            "the recovery path dropped the truncation signal the fast path " +
+                "carries — the user is warned or not depending on which " +
+                "rung of the ladder happened to succeed",
+            listOf(true),
+            h.events.remoteTruncated,
+        )
     }
 
     @Test

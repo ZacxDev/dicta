@@ -161,11 +161,19 @@ class RemoteTranscriber(
             unitRandom = unitRandom,
             elapsedMs = elapsedMs,
             events = object : TranscriptionCoordinator.Events {
-                override fun onRemoteTranscript(text: String) {
-                    events.onRemoteTranscript(
-                        text,
-                        appContext.getString(R.string.stt_remote_done),
-                    )
+                override fun onRemoteTranscript(text: String, truncated: Boolean?) {
+                    // 🔴 `== true` and nothing wider. truncated=false means
+                    // the server checked and the transcript is whole;
+                    // truncated=null means it could not tell. Both keep the
+                    // plain label — a warning shown on every dictation,
+                    // including the ones that carry no signal at all, is a
+                    // warning the user learns to scroll past.
+                    val label = if (truncated == true) {
+                        R.string.stt_remote_truncated
+                    } else {
+                        R.string.stt_remote_done
+                    }
+                    events.onRemoteTranscript(text, appContext.getString(label))
                 }
 
                 override fun onFellBack(reason: String, recoveryPending: Boolean) {

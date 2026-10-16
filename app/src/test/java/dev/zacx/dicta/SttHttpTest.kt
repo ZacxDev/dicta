@@ -208,6 +208,68 @@ class SttHttpTest {
         assertEquals(Disposition.SUCCEEDED, SttRetryPolicy.classify(outcome))
     }
 
+    // --- the truncation signal ----------------------------------------------
+    //
+    // 🔴 The whole seam, not either side of it: the body goes in as bytes and
+    // what comes out is the three-valued flag on SttOutcome.Success. A
+    // boolField unit test (SttRequestTest) plus a status-selection test
+    // (RemoteTranscriberTest) can both be green while nothing ever wires the
+    // field into the outcome.
+
+    @Test
+    fun a200WithTruncatedTrueCarriesTheFlagOnTheOutcome() {
+        val (outcome, _) = post(
+            200,
+            """{"text":"a sentence that stops mid","duration_s":9.37,""" +
+                """"elapsed_s":2.14,"finish_reason":"length","truncated":true}""",
+        )
+        assertEquals(
+            "the server said the transcript is CUT OFF and the outcome does " +
+                "not carry it — nothing downstream can tell the user",
+            SttOutcome.Success("a sentence that stops mid", true),
+            outcome,
+        )
+    }
+
+    @Test
+    fun a200WithTruncatedFalseCarriesFalseRatherThanNull() {
+        val (outcome, _) = post(
+            200,
+            """{"text":"a whole sentence","duration_s":4.81,"elapsed_s":1.33,""" +
+                """"finish_reason":"stop","truncated":false}""",
+        )
+        assertEquals(
+            SttOutcome.Success("a whole sentence", false),
+            outcome,
+        )
+    }
+
+    @Test
+    fun a200WithTruncatedNullIsNoSignalAndNotFalse() {
+        // 🔴 The server sends null when it had no EOS id to look for. "The
+        // server could not tell" and "the server checked and it is whole" are
+        // different claims, and only one of them may ever be shown as such.
+        val (outcome, _) = post(
+            200,
+            """{"text":"a whole sentence","duration_s":2.46,"elapsed_s":0.9,""" +
+                """"finish_reason":"unknown","truncated":null}""",
+        )
+        assertEquals(
+            "truncated:null was read as a decision rather than as an absence",
+            SttOutcome.Success("a whole sentence", null),
+            outcome,
+        )
+        assertNull((outcome as SttOutcome.Success).truncated)
+    }
+
+    @Test
+    fun aPreChangeBodyWithNoTruncatedFieldIsNoSignal() {
+        // The server before this field existed, and any response that drops
+        // it. Must not read as false.
+        val (outcome, _) = post(200, """{"text":"the quick brown fox","duration_s":5.4}""")
+        assertNull((outcome as SttOutcome.Success).truncated)
+    }
+
     @Test
     fun a401YieldsTheServersOwnDetail() {
         // The measured body from a no-token POST.

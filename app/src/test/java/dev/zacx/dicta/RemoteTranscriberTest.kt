@@ -213,6 +213,101 @@ class RemoteTranscriberTest {
         assertTrue("a first-try success must not be slept on", stub.sleeps.isEmpty())
     }
 
+    // --- (d) the truncation status ------------------------------------------
+    //
+    // 🔴 The branch is `truncated == true` and nothing wider. Asserted on all
+    // three input values, with the two labels asserted to DIFFER, so a mutant
+    // that returns one constant for every case cannot pass.
+
+    @Test
+    fun truncatedTrueShowsTheCutOffStatusInsteadOfThePlainOne() {
+        val status = statusFor(SttOutcome.Success("a sentence that stops mid", true))
+        assertEquals(
+            "the server said the transcript is CUT OFF and the status line " +
+                "still reads like a complete one — the user has no way to " +
+                "know text is missing",
+            ctx.getString(R.string.stt_remote_truncated),
+            status,
+        )
+    }
+
+    @Test
+    fun truncatedFalseKeepsThePlainStatus() {
+        val status = statusFor(SttOutcome.Success("a whole sentence", false))
+        assertEquals(
+            "truncated=false is the server saying the transcript is WHOLE; " +
+                "warning on it is a false alarm",
+            ctx.getString(R.string.stt_remote_done),
+            status,
+        )
+    }
+
+    @Test
+    fun truncatedNullKeepsThePlainStatusBecauseNullIsNoSignal() {
+        val status = statusFor(SttOutcome.Success("a whole sentence", null))
+        assertEquals(
+            "truncated=null means the server COULD NOT TELL. A warning on " +
+                "every no-signal dictation is a warning the user learns to " +
+                "ignore, which costs the real ones their meaning",
+            ctx.getString(R.string.stt_remote_done),
+            status,
+        )
+    }
+
+    @Test
+    fun theTwoRemoteStatusesAreDistinguishable() {
+        // Otherwise the branch above is unobservable and every assertion in
+        // this section passes against a single constant.
+        val plain = ctx.getString(R.string.stt_remote_done)
+        val cutOff = ctx.getString(R.string.stt_remote_truncated)
+        assertTrue(
+            "the truncated status reads \"$cutOff\", identical to the plain " +
+                "one — the distinction exists in the code and not on screen",
+            plain != cutOff,
+        )
+    }
+
+    /**
+     * 🔴 The ✓ was a **verification claim the server does not earn**.
+     *
+     * The service fabricates fluent transcripts from near-silent input
+     * (reproduced 2/2 on device; one output was a racial slur), and the client
+     * rendered those under "Transcribed by the server ✓". The client knows
+     * which *engine* produced the text and nothing whatsoever about whether it
+     * is right, so the string may name the engine and may not tick it.
+     *
+     * Pinned as the WHOLE normalised string rather than "contains no ✓": a
+     * guard on one character is walkable by any other mark of approval
+     * (✔, ✅, "verified"), and the hazard is the claim, not the glyph. A
+     * cosmetic reword of this string is therefore meant to fail here.
+     *
+     * An **invariant guard**, not regression coverage of a logic defect: it is
+     * red at `origin/main` because the resource itself changed.
+     */
+    @Test
+    fun theRemoteDoneStatusMakesNoVerificationClaim() {
+        assertEquals(
+            "the remote status line asserts something about CORRECTNESS. The " +
+                "server hallucinates on quiet input, so a tick here is a " +
+                "claim the client cannot support.",
+            "Transcribed by the server",
+            ctx.getString(R.string.stt_remote_done),
+        )
+    }
+
+    /** Runs the ladder over one scripted outcome and returns the status shown. */
+    private fun statusFor(outcome: SttOutcome): String {
+        val events = Recorder()
+        transcriber(configuredSettings(), Stub(listOf(outcome))).transcribe(
+            audio = recordingFile(),
+            audioSeconds = 13.0,
+            localTranscript = { "the phone's guess" },
+            events = events,
+        )
+        val (_, status) = events.remote.single()
+        return status
+    }
+
     @Test
     fun theLanguageAndAudioBytesReachTheTransportUnchanged() {
         val stub = Stub(listOf(SttOutcome.Success("x")))
