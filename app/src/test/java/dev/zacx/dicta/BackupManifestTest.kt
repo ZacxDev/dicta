@@ -12,8 +12,9 @@ import java.io.File
  * ## The failure this exists to make loud
  *
  * A dictation-history store lives in `noBackupFilesDir`, and the platform
- * default for `allowBackup` is `true`. With the default in place, up to 200 MB
- * of the user's **recorded voice** plus **every transcript** is eligible for
+ * default for `allowBackup` is `true`. With the default in place, up to 2 GiB
+ * of the user's **recorded voice** — a year of it, at the raised retention
+ * bounds — plus **every transcript** is eligible for
  * cloud auto-backup and for `adb backup` — a data-egress change that raises no
  * lint error, no build warning and no runtime symptom. Nothing would ever go
  * red; the only observable is the recording leaving the device.

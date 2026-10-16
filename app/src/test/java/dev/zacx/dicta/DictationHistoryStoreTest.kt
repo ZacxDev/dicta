@@ -53,8 +53,10 @@ class DictationHistoryStoreTest {
     private val historyDir: File by lazy { temp.newFolder("history") }
     private val sourceDir: File by lazy { temp.newFolder("sources") }
 
-    private fun store(dir: File = historyDir): DictationHistoryStore =
-        DictationHistoryStore(dir, { clock })
+    private fun store(
+        dir: File = historyDir,
+        bounds: HistoryRetention.Bounds = HistoryRetention.Bounds.DEFAULT,
+    ): DictationHistoryStore = DictationHistoryStore(dir, { clock }, bounds)
 
     /** A source recording, outside the history directory, as production has. */
     private fun recording(name: String = "dictation-1.ogg", bytes: Int = 64): File =
@@ -198,13 +200,45 @@ class DictationHistoryStoreTest {
     }
 
     // --- retention is delegated, and then actually enforced on disk ---------
+    //
+    // 🔴 These run at INJECTED SMALL BOUNDS, and that is not a shortcut.
+    //
+    // add() rewrites the whole JSON index on every call, so driving eviction
+    // at the production MAX_ITEMS = 1000 would be ~1001 real file copies and
+    // ~1001 full-index serialisations — quadratic, about half a million JSON
+    // object writes for one test. The eviction mechanism does not depend on
+    // the size of the bound: what is under test is that the store asks
+    // HistoryRetention, deletes the files it is told to, and rewrites the
+    // index to match. Five items exercises every one of those.
+    //
+    // What small bounds CANNOT see is whether the shipped store uses the real
+    // policy at all — DictationHistoryBoundsSeamTest owns exactly that, and is
+    // the reason this file is allowed to be fast.
+    //
+    // All three bounds are driven through the real add() path, not just the
+    // count: a store that read HistoryRetention's constants directly for bytes
+    // or age — ignoring two thirds of what it was handed — would otherwise be
+    // green here and merely slow.
+
+    private val tinyBounds = HistoryRetention.Bounds(
+        maxItems = 5,
+        // 203 bytes against 64-byte recordings: three fit (192), four do not
+        // (256). Deliberately not a multiple of 64, so the bound is straddled
+        // rather than landed on and a mutant that moves the comparison by one
+        // still has somewhere to be wrong.
+        maxBytes = 203L,
+        maxAgeMs = 30_000L,
+    )
 
     @Test
-    fun addingPastMaxItemsDeletesTheOldestFromDiskAndFromTheIndex() {
-        val store = store()
+    fun addingPastTheItemBoundDeletesTheOldestFromDiskAndFromTheIndex() {
+        // Byte and age bounds lifted clear so the COUNT is the only thing in
+        // play; six 64-byte recordings is 384 bytes and six seconds.
+        val bounds = tinyBounds.copy(maxBytes = HistoryRetention.MAX_BYTES, maxAgeMs = 600_000L)
+        val store = store(bounds = bounds)
         val ids = mutableListOf<String>()
         val names = mutableListOf<String>()
-        repeat(HistoryRetention.MAX_ITEMS + 1) { i ->
+        repeat(bounds.maxItems + 1) { i ->
             clock += 1_000
             val id = store.add(recording("r$i.ogg"), "t$i", fromRemote = false, audioSeconds = 1.0)
             ids += id
@@ -214,8 +248,8 @@ class DictationHistoryStoreTest {
         val oldest = ids.first()
         val oldestName = names.first()
         assertEquals(
-            "history kept more than MAX_ITEMS entries",
-            HistoryRetention.MAX_ITEMS,
+            "history kept more than maxItems entries",
+            bounds.maxItems,
             store.recent(1_000).size,
         )
         assertFalse(
@@ -231,8 +265,74 @@ class DictationHistoryStoreTest {
         )
         assertEquals(
             "the number of audio files on disk does not match the index",
-            HistoryRetention.MAX_ITEMS,
+            bounds.maxItems,
             audioFiles().size,
+        )
+    }
+
+    @Test
+    fun addingPastTheByteBoundDeletesTheOldestFromDiskAndFromTheIndex() {
+        // 🔴 This path now RUNS IN PRODUCTION. At MAX_BYTES = 200 MiB against
+        // 50 items the byte stage was unreachable on a real device; at 2 GiB
+        // against 1000 items a long-dictation user can get there. So the store
+        // must honour the byte bound it is handed, not only the count.
+        val store = store(bounds = tinyBounds.copy(maxItems = 100, maxAgeMs = 600_000L))
+        val ids = mutableListOf<String>()
+        val names = mutableListOf<String>()
+        repeat(4) { i ->
+            clock += 1_000
+            val id = store.add(
+                recording("b$i.ogg", bytes = 64),
+                "t$i",
+                fromRemote = false,
+                audioSeconds = 1.0,
+            )
+            ids += id
+            names += store.recent(1).single().audioFile
+        }
+
+        assertEquals(
+            "4 x 64 = 256 bytes against a 203-byte budget must keep the three " +
+                "newest, dropping the oldest. More survivors means the store " +
+                "ignored the byte bound it was given (probably by reading " +
+                "HistoryRetention.MAX_BYTES directly); fewer means it is " +
+                "evicting inside the budget. Index: ${indexText()}",
+            ids.drop(1),
+            store.recent(10).map { it.id }.reversed(),
+        )
+        assertFalse(
+            "the byte-evicted entry's audio ${names.first()} is still on disk: " +
+                "${audioFiles()}",
+            File(historyDir, names.first()).exists(),
+        )
+        assertEquals(
+            "disk does not match the index after a byte eviction",
+            3,
+            audioFiles().size,
+        )
+    }
+
+    @Test
+    fun addingAfterTheAgeBoundDeletesTheExpiredEntryFromDiskAndFromTheIndex() {
+        val store = store(bounds = tinyBounds.copy(maxItems = 100, maxBytes = HistoryRetention.MAX_BYTES))
+        val stale = store.add(recording("stale.ogg"), "stale", fromRemote = false, audioSeconds = 1.0)
+        val staleName = store.recent(1).single().audioFile
+
+        // One millisecond past the 30 s age bound, so the next add expires it.
+        clock += tinyBounds.maxAgeMs + 1
+        val fresh = store.add(recording("fresh.ogg"), "fresh", fromRemote = false, audioSeconds = 1.0)
+
+        assertEquals(
+            "the expired entry survived, so the store ignored the age bound " +
+                "it was given. Age is absolute: it must evict with count and " +
+                "byte room to spare. Index: ${indexText()}",
+            listOf(fresh),
+            store.recent(10).map { it.id },
+        )
+        assertFalse("the expired entry is still in the index", indexText().contains(stale))
+        assertFalse(
+            "the expired entry's audio $staleName is still on disk: ${audioFiles()}",
+            File(historyDir, staleName).exists(),
         )
     }
 

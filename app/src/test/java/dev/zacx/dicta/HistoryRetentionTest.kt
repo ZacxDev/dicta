@@ -76,10 +76,30 @@ class HistoryRetentionTest {
 
     @Test
     fun twoItemsTotallingOverTheByteBoundEvictTheOlder() {
-        // 110 MiB + 91 MiB = 201 MiB against a 200 MiB budget. Newest first,
-        // so the newer one is kept and the older is what gives way.
-        val newer = Entry("new", now, 110 * mib)
-        val older = Entry("old", now - 1_000L, 91 * mib)
+        // 🔴 Sized from MAX_BYTES, not from a remembered 200 MiB. These were
+        // 110 + 91 MiB when the budget was 200 MiB; at 2 GiB that pair is a
+        // tenth of the bound and the case stops being about the byte bound at
+        // all — it would assert an eviction that no longer happens, and a
+        // smaller-sized variant would pass VACUOUSLY. So: 1200 MiB + 900 MiB
+        // = 2100 MiB against 2048 MiB. Overshoots by 52 MiB rather than
+        // landing on a multiple of either size.
+        val newer = Entry("new", now, 1_200 * mib)
+        val older = Entry("old", now - 1_000L, 900 * mib)
+        // 🔴 Fixture control, so raising MAX_BYTES again cannot quietly turn
+        // this into a test of nothing: the pair MUST straddle the bound, and
+        // the newest alone must NOT reach it (otherwise the oversize carve-out
+        // is what is being observed, not the byte bound).
+        assertTrue(
+            "fixture is vacuous: ${newer.audioBytes + older.audioBytes} bytes " +
+                "does not exceed MAX_BYTES=$MAX_BYTES, so nothing can be " +
+                "evicted on bytes and this case asserts nothing about the bound",
+            newer.audioBytes + older.audioBytes > MAX_BYTES,
+        )
+        assertTrue(
+            "fixture is wrong: the newest entry alone exceeds MAX_BYTES, so " +
+                "this exercises the oversize carve-out instead",
+            newer.audioBytes <= MAX_BYTES,
+        )
         assertEquals(
             "the byte bound must give way oldest-first; evicting the newer " +
                 "entry means the recording the user just made is the one " +
@@ -91,10 +111,18 @@ class HistoryRetentionTest {
 
     @Test
     fun exactlyTheByteBoundEvictsNothing() {
-        val newer = Entry("new", now, 110 * mib)
-        val older = Entry("old", now - 1_000L, 90 * mib)
+        // Deliberately exact, unlike its sibling above: this case IS the
+        // boundary. 1200 + 848 = 2048 MiB = 2 GiB.
+        val newer = Entry("new", now, 1_200 * mib)
+        val older = Entry("old", now - 1_000L, 848 * mib)
         assertEquals(
-            "110 MiB + 90 MiB is exactly MAX_BYTES, which is a ceiling that " +
+            "fixture is stale: the pair must total EXACTLY MAX_BYTES for this " +
+                "to be the > vs >= boundary at all",
+            MAX_BYTES,
+            newer.audioBytes + older.audioBytes,
+        )
+        assertEquals(
+            "1200 MiB + 848 MiB is exactly MAX_BYTES, which is a ceiling that " +
                 "may be reached — this is the > vs >= boundary on the byte " +
                 "accumulator",
             emptyList<String>(),
@@ -193,17 +221,28 @@ class HistoryRetentionTest {
         // first. Pinning the whole list is what makes the documented pipeline
         // order a machine-checkable claim rather than a comment.
         //
-        // 52 live entries (2 over the count bound) + 3 expired.
-        val live = (0..51).map { i -> entry(id(i), ageMs = i * 1_000L) }
-        val expired = (52..54).map { i ->
-            entry(id(i), ageMs = MAX_AGE_MS + 1_000L + (i - 52) * 1_000L)
+        // MAX_ITEMS + 2 live entries (2 over the count bound) + 3 expired.
+        // 🔴 Derived from MAX_ITEMS rather than the literal 52 these were when
+        // the bound was 50: hard-coded counts are how a case that USED to
+        // straddle the bound ends up a tenth of the way to it and asserts an
+        // eviction list that no longer has a count stage in it.
+        val overBy = 2
+        val liveCount = MAX_ITEMS + overBy
+        val expiredCount = 3
+        val live = (0 until liveCount).map { i -> entry(id(i), ageMs = i * 1_000L) }
+        val expired = (liveCount until liveCount + expiredCount).map { i ->
+            entry(id(i), ageMs = MAX_AGE_MS + 1_000L + (i - liveCount) * 1_000L)
         }
+        // Age-evictions first, newest-first within the stage, then the two
+        // entries past the count bound (the oldest live ones), newest-first.
+        val expectedAgeStage = (liveCount until liveCount + expiredCount).map { id(it) }
+        val expectedCountStage = (MAX_ITEMS until liveCount).map { id(it) }
         assertEquals(
             "the eviction list must run age-evictions first (newest-first " +
                 "within the stage), then count, then bytes — this is the " +
                 "documented pipeline order, and a reordered pipeline " +
                 "produces the same SET so nothing else can detect it",
-            listOf(id(52), id(53), id(54), id(50), id(51)),
+            expectedAgeStage + expectedCountStage,
             HistoryRetention.evict(live + expired, now),
         )
     }
@@ -217,12 +256,31 @@ class HistoryRetentionTest {
         // function non-deterministic across devices and across calls. That
         // fails one run in N and reads as CI noise rather than as a bug.
         //
-        // 49 distinct-timestamp entries + 2 sharing the oldest timestamp
-        // = MAX_ITEMS + 1, so exactly one of the tied pair must go and the
-        // tie-break is the only thing that can choose.
-        val distinct = (0..48).map { i -> entry(id(i), ageMs = i * 1_000L) }
-        val tiedA = entry("aaa-tied", ageMs = 100_000L)
-        val tiedZ = entry("zzz-tied", ageMs = 100_000L)
+        // MAX_ITEMS - 1 distinct-timestamp entries + 2 sharing the OLDEST
+        // timestamp = MAX_ITEMS + 1, so exactly one of the tied pair must go
+        // and the tie-break is the only thing that can choose.
+        //
+        // 🔴 Both counts and the tied age are derived from MAX_ITEMS. At the
+        // old bound these were 49 entries and a 100 s age, which happened to
+        // make the tied pair the oldest; at MAX_ITEMS = 1000 the distinct
+        // entries reach ~1000 s, the tied pair would no longer be oldest, and
+        // the case would silently stop being about the eviction boundary.
+        val tiedAgeMs = MAX_ITEMS * 1_000L + 500_000L
+        val distinct = (0 until MAX_ITEMS - 1).map { i -> entry(id(i), ageMs = i * 1_000L) }
+        val tiedA = entry("aaa-tied", ageMs = tiedAgeMs)
+        val tiedZ = entry("zzz-tied", ageMs = tiedAgeMs)
+        assertTrue(
+            "fixture is broken: the tied pair must be the OLDEST entries, " +
+                "or the count bound evicts somebody else and the tie-break is " +
+                "never consulted",
+            distinct.all { it.createdAtMs > tiedA.createdAtMs },
+        )
+        assertTrue(
+            "fixture is broken: the tied pair must be INSIDE the age bound, " +
+                "or they are evicted on age and the tie-break is never " +
+                "consulted",
+            now - tiedA.createdAtMs <= MAX_AGE_MS,
+        )
 
         val aFirst = HistoryRetention.evict(distinct + listOf(tiedA, tiedZ), now)
         val zFirst = HistoryRetention.evict(distinct + listOf(tiedZ, tiedA), now)
@@ -246,12 +304,26 @@ class HistoryRetentionTest {
     fun shufflingTheWholeInputCannotChangeTheResult() {
         // Broader positive control on the same hazard, with ties spread
         // through the list rather than only at the eviction boundary.
+        //
+        // 🔴 Sized over MAX_ITEMS. At 60 entries of 3 MiB this case evicted
+        // NOTHING once the bounds were raised: the reference was the empty
+        // list, every shuffle also returned the empty list, and a function
+        // that read list position everywhere would have passed. A determinism
+        // guard over an input that triggers no eviction is a guard over
+        // `emptyList() == emptyList()`.
         val rng = Random(97_003L)
-        val entries = (0..59).map { i ->
-            // Deliberate collisions: 60 entries over 20 distinct timestamps.
+        val count = MAX_ITEMS + 61
+        val entries = (0 until count).map { i ->
+            // Deliberate collisions: timestamps repeat every 20 entries, so
+            // ties are spread through the list and also land on the boundary.
             entry(id(i), ageMs = (i % 20) * 1_000L, bytes = 3L * mib + i)
         }
         val reference = HistoryRetention.evict(entries, now)
+        assertTrue(
+            "fixture is vacuous: evict() returned nothing, so every shuffle " +
+                "trivially agrees and this proves nothing about input order",
+            reference.isNotEmpty(),
+        )
         repeat(12) { round ->
             val shuffled = entries.shuffled(rng)
             assertEquals(
@@ -324,9 +396,18 @@ class HistoryRetentionTest {
     fun aClockBeforeEveryEntryStillAppliesTheCountBound() {
         // Age is unobservable here, so this pins that the OTHER bounds keep
         // working rather than the whole pass bailing out.
+        // 🔴 The offset must exceed MAX_ITEMS * 1_000 or the oldest entries
+        // stop being in the future and the premise ("a clock before EVERY
+        // entry") quietly stops holding — at MAX_ITEMS = 1000 the old
+        // 1_000_000 ms offset put the last entry exactly on `now`.
         val entries = (0..MAX_ITEMS).map { i ->
-            Entry(id(i), now + 1_000_000L - i * 1_000L, small)
+            Entry(id(i), now + 2_000_000L - i * 1_000L, small)
         }
+        assertTrue(
+            "fixture is broken: not every entry is in the future, so this is " +
+                "no longer a backwards-clock case",
+            entries.all { it.createdAtMs > now },
+        )
         assertEquals(
             "a backwards clock must disable only the age bound, not the pass",
             listOf(id(MAX_ITEMS)),
@@ -338,10 +419,73 @@ class HistoryRetentionTest {
 
     @Test
     fun theBoundsAreTheBriefsNumbers() {
-        // Literals, so changing a bound is a visible decision.
-        assertEquals(50, MAX_ITEMS)
-        assertEquals(200L * 1024 * 1024, MAX_BYTES)
-        assertEquals(14L * 24 * 60 * 60 * 1000, MAX_AGE_MS)
+        // Literals, so changing a bound is a visible decision. This is the ONE
+        // place the numbers are written down; everything else, including
+        // DictationHistoryBoundsSeamTest, compares against the constants.
+        assertEquals(1_000, MAX_ITEMS)
+        assertEquals(2L * 1024 * 1024 * 1024, MAX_BYTES)
+        assertEquals(365L * 24 * 60 * 60 * 1000, MAX_AGE_MS)
+    }
+
+    @Test
+    fun theDefaultBoundsValueIsExactlyTheConstants() {
+        // evict()'s default argument. A Bounds.DEFAULT that drifted from the
+        // constants would change the policy for every caller that does not
+        // pass bounds — which is all of production — while leaving the
+        // literals above green.
+        assertEquals(
+            "HistoryRetention.Bounds.DEFAULT is not the constants on this " +
+                "object, so the policy every default-argument caller gets is " +
+                "not the policy documented here",
+            HistoryRetention.Bounds(MAX_ITEMS, MAX_BYTES, MAX_AGE_MS),
+            HistoryRetention.Bounds.DEFAULT,
+        )
+    }
+
+    @Test
+    fun anExplicitBoundsOverridesTheConstantsForEveryStage() {
+        // The injection seam itself, in the pure object: all three bounds must
+        // actually be read from the argument. A stage that kept reading its
+        // constant would be invisible — at the production numbers the small
+        // bounds the store's tests pass would simply never bite.
+        // One stage tightened at a time, the other two left at the production
+        // constants: a shared tiny Bounds made the byte stage evict the entry
+        // the count assertion was about, which is a mutant-that-removes-the-
+        // guard-with-its-enclosing-condition in fixture form — it fails, but
+        // for the wrong stage.
+        val tinyItems = HistoryRetention.Bounds(maxItems = 2)
+        val tinyBytes = HistoryRetention.Bounds(maxBytes = 203L)
+        val tinyAge = HistoryRetention.Bounds(maxAgeMs = 30_000L)
+
+        assertEquals(
+            "maxItems was not read from the supplied Bounds",
+            listOf(id(2)),
+            HistoryRetention.evict(
+                (0..2).map { i -> entry(id(i), ageMs = i * 1_000L) },
+                now,
+                tinyItems,
+            ),
+        )
+        assertEquals(
+            "maxBytes was not read from the supplied Bounds",
+            listOf("b"),
+            HistoryRetention.evict(
+                // 150 + 100 = 250 against 203: overshoots, and neither size
+                // is a divisor of the bound.
+                listOf(Entry("a", now, 150L), Entry("b", now - 1_000L, 100L)),
+                now,
+                tinyBytes,
+            ),
+        )
+        assertEquals(
+            "maxAgeMs was not read from the supplied Bounds",
+            listOf("stale"),
+            HistoryRetention.evict(
+                listOf(entry("fresh", ageMs = 0), entry("stale", ageMs = 30_001L)),
+                now,
+                tinyAge,
+            ),
+        )
     }
 
     // --- properties over randomised input -----------------------------------
@@ -432,16 +576,36 @@ class HistoryRetentionTest {
 
     // --- fixtures -----------------------------------------------------------
 
-    /** Zero-padded so `id ASC` and index order agree, making ties readable. */
-    private fun id(i: Int) = "rec-%03d".format(i)
+    /**
+     * Zero-padded so `id ASC` and index order agree, making ties readable.
+     * Four digits because MAX_ITEMS is now 1000 and `%03d` would make
+     * `rec-1000` sort before `rec-999`.
+     */
+    private fun id(i: Int) = "rec-%04d".format(i)
 
     /**
      * Sizes deliberately overshoot every bound and are NOT multiples of the
      * step: a fixture that can only land exactly on a bound cannot see a
      * mutant that moves the comparison by one.
+     *
+     * 🔴 Re-derived for the raised bounds, and both changes were load-bearing
+     * rather than cosmetic — each one turned a positive control from firing to
+     * silent:
+     *
+     *  - **Count.** `n` was up to 80 entries, which cannot pressure
+     *    MAX_ITEMS = 1000 at all; `sawCountPressure` would have been 0 and the
+     *    count half of the property suite vacuous.
+     *  - **Age.** The age span was `nextInt(2_000_000_003)` ms ≈ 23 days,
+     *    which overshot a 14-day bound but is a *sixteenth* of 365 days —
+     *    `java.util.Random.nextInt` is Int-typed so it cannot reach a year on
+     *    its own. Expired entries are now drawn from an explicit branch
+     *    instead, which also keeps most entries recent so the count bound can
+     *    still be reached in the same trial.
      */
     private fun randomEntries(rng: Random): List<Entry> {
-        val n = rng.nextInt(81)
+        // Up to 1426 entries: overshoots MAX_ITEMS = 1000 even after ~1 in 8
+        // are expired, and is not a multiple of it.
+        val n = rng.nextInt(1_427)
         return (0 until n).map { i ->
             val bytes = if (rng.nextInt(8) == 0) {
                 // Occasionally a single recording bigger than the whole
@@ -450,12 +614,17 @@ class HistoryRetentionTest {
             } else {
                 rng.nextInt(31_000_003).toLong()
             }
+            // ~1 in 8 past the age bound by up to ~23 days, the rest within
+            // ~23 days of now and so comfortably inside it. Plus up to ~1 day
+            // forward, which keeps future-dated entries in the mix.
+            val ageMs = if (rng.nextInt(8) == 0) {
+                MAX_AGE_MS + 86_400_001L + rng.nextInt(2_000_000_003)
+            } else {
+                rng.nextInt(2_000_000_003).toLong()
+            }
             Entry(
-                id = "r-%03d".format(i),
-                // Up to ~23 days back and ~1 day forward. Bounded by
-                // Int.MAX_VALUE because java.util.Random.nextInt is Int-typed;
-                // ~23 days comfortably overshoots the 14-day age bound.
-                createdAtMs = now - rng.nextInt(2_000_000_003) + rng.nextInt(86_400_011),
+                id = "r-%04d".format(i),
+                createdAtMs = now - ageMs + rng.nextInt(86_400_011),
                 audioBytes = bytes,
             )
         }

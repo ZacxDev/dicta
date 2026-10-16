@@ -47,8 +47,9 @@ class DictationHistoryLocationTest {
             "the history directory is not the platform's no-backup directory. " +
                 "That exclusion is the half of the backup fix that survives " +
                 "someone flipping android:allowBackup back to true, and " +
-                "without it up to 200 MB of the user's recorded voice is " +
-                "eligible for cloud backup and device transfer.",
+                "without it up to 2 GiB of the user's recorded voice — a " +
+                "year's worth, at the raised retention bounds — is eligible " +
+                "for cloud backup and device transfer.",
             File(ctx.noBackupFilesDir, DictationHistoryStore.DIR).canonicalFile,
             store.dir.canonicalFile,
         )

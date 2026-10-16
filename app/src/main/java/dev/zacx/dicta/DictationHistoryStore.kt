@@ -68,11 +68,32 @@ class DictationHistoryStore internal constructor(
     /** The history directory itself. Injected so tests can use a temp dir. */
     internal val dir: File,
     private val now: () -> Long,
+    /**
+     * The retention policy this store enforces, defaulting to the real one.
+     *
+     * 🔴 Injected for a performance reason that is really a correctness one.
+     * [add] rewrites the whole index on every call, so a test that drove
+     * eviction at the production [HistoryRetention.MAX_ITEMS] would do ~1001
+     * file copies and ~1001 full-index serialisations against a real
+     * filesystem — quadratic, on the order of half a million JSON object
+     * writes. The alternatives are all worse than injecting: deleting the test
+     * loses the only coverage that eviction reaches *disk*, shrinking the
+     * constant makes the product worse to make a test fast, and `@Ignore`
+     * reads as coverage while providing none. The eviction *mechanism* does
+     * not depend on the size of the bound, so tests drive it with small ones.
+     *
+     * 🔴 Which makes this default the ONLY thing tying the store to the real
+     * policy. `DictationHistoryBoundsSeamTest` asserts it IS
+     * [HistoryRetention.Bounds.DEFAULT]'s three values; without that guard the
+     * mechanism would be tested at 5 items while the shipped app used anything
+     * at all, and every test here would still be green.
+     */
+    internal val bounds: HistoryRetention.Bounds = HistoryRetention.Bounds.DEFAULT,
 ) {
 
     /**
      * The production constructor: rooted under [Context.getNoBackupFilesDir],
-     * for the reasons on the class.
+     * for the reasons on the class, and on the real retention policy.
      */
     constructor(
         context: Context,
@@ -242,6 +263,7 @@ class DictationHistoryStore internal constructor(
         val condemned = HistoryRetention.evict(
             items.map { HistoryRetention.Entry(it.id, it.createdAtMs, it.audioBytes) },
             nowMs,
+            bounds,
         ).toSet()
         if (condemned.isEmpty()) return items
         items.filter { it.id in condemned }.forEach { File(dir, it.audioFile).delete() }
