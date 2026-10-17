@@ -440,12 +440,16 @@ class DictationHistoryStoreTest {
             store.recent(10).map { it.id },
         )
 
-        // 🔴 The SWEEP moved, deliberately. It used to ride every `recent()`,
+        // 🔴 The read path no longer sweeps. It used to ride every `recent()`,
         // which is what made a four-chip reveal stat the whole store and then
-        // REWRITE the index. It now rides `usage()` — the Settings read, which
-        // runs when a human opens a screen rather than on every long-press.
-        // The user-visible invariant above is unchanged; only who pays for the
-        // cleanup moved. `recentDoesNotRewriteTheIndex` pins the other half.
+        // REWRITE the index.
+        //
+        // ⚠ This comment said the sweep "now rides usage()" — FALSE, and the
+        // same false claim was in #20's body and commit. `usage()` ALREADY
+        // called `visible()` before the change; nothing moved there. A sweeper
+        // was deleted and a rarer pre-existing one left. Audit round 0 of #20.
+        // The user-visible invariant above is unchanged.
+        // `recentDoesNotRewriteTheIndex` pins the other half.
         assertTrue(
             "fixture: the dangling entry should still be indexed until a " +
                 "sweeping path runs: ${indexText()}",
@@ -506,45 +510,54 @@ class DictationHistoryStoreTest {
         )
     }
 
-    @Test
-    fun recentStopsStattingOnceItHasEnoughItems() {
-        // The cost fix, asserted behaviourally rather than by counting syscalls:
-        // with the NEWEST items present, a small limit must be satisfiable
-        // without the older ones mattering at all — so deleting their audio
-        // changes nothing about the answer. Pre-change this was false: the old
-        // `visible()` statted every item before sorting, so a missing OLD file
-        // still altered the index and the usage figures on a read for 2.
-        val store = store()
-        val ids = (1..6).map {
-            clock += 1_000
-            store.add(recording("a$it.ogg"), "t$it", fromRemote = false, audioSeconds = 1.0)
-        }
-        // Delete the audio of the three OLDEST; the two newest are untouched.
-        store.recent(10).filter { it.id in ids.take(3) }
-            .forEach { assertTrue(File(historyDir, it.audioFile).delete()) }
-
-        assertEquals(
-            "a limit the newest present items already satisfy must not depend " +
-                "on anything older",
-            ids.takeLast(2).reversed(),
-            store.recent(2).map { it.id },
-        )
-    }
-
     // --- recovering from the temp file --------------------------------------
 
     private val tempIndex: File get() = File(historyDir, "${DictationHistoryStore.INDEX}.tmp")
 
-    /**
-     * Reproduces the state `writeIndex`'s rename-refused fallback leaves when
-     * its in-place `writeText` throws part-way: the temp holds the complete,
-     * `fsync`'d payload, and `index.json` has been truncated on open.
-     *
-     * 🔴 Zero-length specifically, because that is the shape
-     * `FileOutputStream(file)` produces the instant it opens — the most likely
-     * torn index there is, and the one the round-1 comment described as "a
-     * stale one", i.e. harmless.
-     */
+    @Test
+    fun aDeadRowCannotEvictALiveRecording() {
+        // 🔴 Replaces `recentStopsStattingOnceItHasEnoughItems`, DELETED as
+        // vacuous: it asserted only recent(2)'s ids, which the pre-change
+        // `visible().sorted().take(2)` returns identically, so it was green on
+        // the code it claimed to be a cost regression guard for. Audit round 0
+        // of #20, D2. A guard that reads as coverage while providing none is
+        // worse than none, because it stops anyone looking.
+        //
+        // What this pins instead is a REAL defect the read-path change made
+        // reachable. A dead row (indexed, audio gone) keeps its audioBytes in
+        // the index, and `add` passes the index to HistoryRetention — so under
+        // a byte bound the phantom bytes evict a LIVE recording. Before the
+        // change every long-press swept those rows away; afterwards nothing on
+        // the hot path does, so `add` has to.
+        // 🔴 The dead row must be NEWER than its victim. HistoryRetention
+        // accumulates newest-first and drops the tail, so a dead row that is
+        // the OLDEST simply evicts itself and the hazard never fires — the
+        // first version of this test made exactly that mistake and stayed
+        // GREEN with the fix reverted. Order: live(oldest) → ghost → live.
+        val store = store(bounds = HistoryRetention.Bounds(maxBytes = 500L))
+
+        clock += 1_000
+        val victim = store.add(recording("victim.ogg", bytes = 200), "victim", false, 1.0)
+        clock += 1_000
+        val ghost = store.add(recording("ghost.ogg", bytes = 200), "ghost", false, 1.0)
+        val ghostFile = store.recent(10).first { it.id == ghost }.audioFile
+        assertTrue("fixture: ghost audio was never written", File(historyDir, ghostFile).delete())
+
+        clock += 1_000
+        val newest = store.add(recording("newest.ogg", bytes = 200), "newest", false, 1.0)
+
+        // Unswept: newest(200) + ghost(200) + victim(200) = 600 > 500, so the
+        // tail — `victim`, a real recording — is deleted to make room for 200
+        // bytes that are not on disk. Swept: 400 <= 500 and nothing is evicted.
+        assertEquals(
+            "a LIVE recording was evicted to make room for a dead row's " +
+                "phantom bytes: ${indexText()}",
+            listOf(newest, victim),
+            store.recent(10).map { it.id },
+        )
+        assertNotNull("the victim's audio was deleted from disk", store.audioFor(victim))
+    }
+
     @Test
     fun aZeroLengthIndexIsRecoveredFromTheTempRatherThanWipingHistory() {
         val store = store()

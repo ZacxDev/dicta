@@ -263,7 +263,13 @@ class DictationHistoryStore internal constructor(
                 fromRemote = fromRemote,
                 audioSeconds = audioSeconds,
             )
-            writeIndex(evict(existing + item, createdAtMs))
+            // 🔴 `existing` is swept, not raw. A dead row (indexed, audio
+            // gone) carries phantom `audioBytes` into HistoryRetention, so an
+            // unswept index can evict a LIVE recording to stay under MAX_BYTES.
+            // That was latent before the read path stopped sweeping — every
+            // long-press used to clean it up — so this is the write-side half
+            // of that change, not an unrelated fix. Audit round 0 of #20.
+            writeIndex(evict(existing.filter { File(dir, it.audioFile).isFile } + item, createdAtMs))
         } catch (t: Throwable) {
             // Deleted, then rethrown unchanged: the caller still has to learn
             // the add failed. Not `runCatching` on the delete — `File.delete`
@@ -307,9 +313,14 @@ class DictationHistoryStore internal constructor(
         // rewrote the index whenever it found a missing file, and a read path
         // that writes is why every reveal paid for the whole store. Callers
         // still never see an item whose audio is gone — that is the `isFile`
-        // check below — but the dead ROW now survives in `index.json` until a
-        // write path ([add], [updateText], [clearAll]) next rewrites it.
-        // Pinned by `recentDoesNotRewriteTheIndex`.
+        // check below — but the dead ROW survives until a write sweeps it.
+        //
+        // ⚠ An earlier draft of this comment, and of #20's body and commit,
+        // said the sweep "MOVED to usage()". That was FALSE: [usage] already
+        // called [visible] before this change and the diff added nothing to it.
+        // A sweeper was DELETED and a rarer pre-existing one left standing —
+        // which is a different claim with a different consequence, and the
+        // consequence is handled in [add], not here. Audit round 0 of #20.
         val out = ArrayList<Item>(want)
         for (item in sortedNewestFirst(load())) {
             if (out.size == want) break
@@ -410,8 +421,20 @@ class DictationHistoryStore internal constructor(
 
     /**
      * The indexed items whose audio is present, sweeping the index when any
-     * were not. The sweep is the write half of [recent]'s contract, shared with
-     * [usage] so both report the same set.
+     * were not.
+     *
+     * ⚠ This kdoc read *"The sweep is the write half of [recent]'s contract,
+     * shared with [usage] so both report the same set"* until 2026-10-17.
+     * [recent] no longer calls this at all — it does its own bounded `isFile`
+     * filter — so the sentence described a contract that had stopped existing.
+     * Left behind by the change that removed the caller; found by audit round 0
+     * of #20, which is the shape to expect: the deletion is in the diff and the
+     * sentence resting on it is not.
+     *
+     * The callers now are [usage] and [add]. Both already do IO and neither is
+     * on the long-press path, which is the point: a sweep costs a full stat of
+     * the store, so it belongs where it is paid once per dictation or once per
+     * Settings open — never once per reveal.
      */
     private fun visible(): List<Item> {
         val items = load()
