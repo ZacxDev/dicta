@@ -23,6 +23,7 @@ import android.view.WindowManager
 import android.widget.FrameLayout
 import android.widget.ImageButton
 import android.widget.LinearLayout
+import android.widget.ListView
 import android.widget.Toast
 import kotlin.math.abs
 
@@ -102,7 +103,10 @@ class BubbleService : Service() {
      * its own [OverlayVisibility] sink; forgetting the last of those is PR #4's
      * bug, which put Dicta's own UI inside the user's screenshots.
      */
-    private var historyRow: LinearLayout? = null
+    private var historyRow: ListView? = null
+
+    /** One adapter for the service's lifetime; [HistoryAdapter.submit] swaps rows. */
+    private val historyAdapter = HistoryAdapter()
 
     private val main = Handler(Looper.getMainLooper())
     private val machine = BubbleDictation()
@@ -158,7 +162,8 @@ class BubbleService : Service() {
 
     /**
      * How much taller the window is while the history row is shown — the sum
-     * of the chips actually rendered, not of [REVEAL_SLOTS].
+     * of the chips ON SCREEN (`min(count, REVEAL_SLOTS)`), not of every row the
+     * scrollable list holds.
      *
      * 🔴 Feeds [BubbleChrome.clampY]. Leaving it out of the clamp is the
      * mutation that re-opens the unreachable-control defect from the other
@@ -378,16 +383,41 @@ class BubbleService : Service() {
         // point of the feature. Stacked, each chip gets the full width the
         // window can afford and the row reads as a menu rising out of the
         // bubble.
-        val recents = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.END
+        //
+        // 🔴 A framework ListView, NOT a RecyclerView and NOT a ScrollView.
+        //  - RecyclerView would be the obvious choice and is FORBIDDEN here:
+        //    `app/build.gradle.kts` has an EMPTY runtime `dependencies {}`
+        //    block by explicit, re-measured decision, and androidx.recyclerview
+        //    drags in annotation/lifecycle/collection/customview. ListView is
+        //    in the platform at minSdk 26 and costs nothing.
+        //  - A ScrollView would scroll but NOT recycle, so 50 chips would be
+        //    50 live views. ListView's `convertView` IS the virtualization:
+        //    only the ~4 on screen plus a scrap view ever exist.
+        //
+        // 🔴 The height is set EXPLICITLY in renderReveal, never WRAP_CONTENT.
+        // WRAP_CONTENT asks a ListView to measure every row, which both defeats
+        // recycling and unbounds the window — the two things this is for.
+        val recents = ListView(this).apply {
             layoutParams = LinearLayout.LayoutParams(
                 revealWidthPx,
-                LinearLayout.LayoutParams.WRAP_CONTENT,
+                // Replaced per-reveal by renderReveal. Zero, not WRAP_CONTENT,
+                // so a reveal that somehow renders before the adapter is set
+                // contributes no height rather than an unbounded one.
+                0,
             // Same field renderReveal adds to revealBlockPx — one rule, one
             // place. Computing it twice is how F4 got in.
             ).apply { bottomMargin = revealRowMarginPx }
             visibility = View.GONE
+            // The chips carry their own separation via chipBlockPx; a divider
+            // would add height the clamp arithmetic does not know about.
+            divider = null
+            dividerHeight = 0
+            isVerticalScrollBarEnabled = false
+            // Chips are the tap targets and each sets its own click listener;
+            // ListView's own selector would draw a second highlight over them.
+            selector = android.graphics.drawable.ColorDrawable(0)
+            // Overscroll glow on a tiny floating window reads as a glitch.
+            overScrollMode = View.OVER_SCROLL_NEVER
         }
 
         val container = LinearLayout(this).apply {
@@ -893,7 +923,7 @@ class BubbleService : Service() {
                 // An unreadable store is "no history", never a crash in a
                 // foreground service: the reveal degrades to its empty state,
                 // which already has copy for exactly this.
-                val items = runCatching { provider(REVEAL_SLOTS) }.getOrDefault(emptyList())
+                val items = runCatching { provider(REVEAL_MAX_ITEMS) }.getOrDefault(emptyList())
                 main.post { if (root != null) then(items) }
             }
         }
@@ -909,17 +939,31 @@ class BubbleService : Service() {
      */
     private fun renderReveal(items: List<DictationHistoryStore.Item>) {
         val row = historyRow ?: return
-        row.removeAllViews()
         val nowMs = System.currentTimeMillis()
-        if (items.isEmpty()) {
-            row.addView(chip(getString(R.string.bubble_history_empty), null, null))
-        } else {
-            for (item in items) {
-                val label = HistoryLabel.shortLabel(item.text, item.createdAtMs, nowMs)
-                row.addView(
-                    chip(label, getString(R.string.bubble_history_chip, label), item.id)
-                )
-            }
+        val labelled = items.map { item ->
+            val label = HistoryLabel.shortLabel(item.text, item.createdAtMs, nowMs)
+            ChipModel(label, getString(R.string.bubble_history_chip, label), item.id)
+        }
+        // The empty case is a chip-shaped label rather than an empty row, for
+        // the reason in the kdoc above. It is one UNCLICKABLE row, so it also
+        // occupies exactly one slot of height.
+        val rows = labelled.ifEmpty {
+            listOf(ChipModel(getString(R.string.bubble_history_empty), null, null))
+        }
+        historyAdapter.submit(rows)
+        if (row.adapter == null) row.adapter = historyAdapter
+        // Scrolling is per-reveal, not sticky: a reveal always opens on the
+        // newest item, never wherever the last one was left.
+        row.setSelection(0)
+
+        // 🔴 ONLY the chips that are ON SCREEN count toward the window. This
+        // is the whole reason scrolling is a contained change: for four items
+        // or fewer this is identical to the pre-scroll `childCount *
+        // chipBlockPx`, so the clamp evidence carries over unchanged.
+        val onScreen = minOf(rows.size, REVEAL_SLOTS)
+        val listHeightPx = onScreen * chipBlockPx
+        row.layoutParams = (row.layoutParams as LinearLayout.LayoutParams).apply {
+            height = listHeightPx
         }
         // 🔴 Plus the ROW's own bottomMargin, which counts toward the
         // container's height while the row is VISIBLE and is skipped when it
@@ -928,7 +972,54 @@ class BubbleService : Service() {
         // one CHIP_GAP (measured 318 vs 300), which both shoved the bubble
         // down on every reveal and told clampY the window was shorter than it
         // is. Audit round 1 of #17, F4.
-        revealBlockPx = row.childCount * chipBlockPx + revealRowMarginPx
+        revealBlockPx = listHeightPx + revealRowMarginPx
+    }
+
+    /** What one chip renders. Pure data so the adapter can rebind on recycle. */
+    private data class ChipModel(
+        val label: String,
+        val describedAs: String?,
+        val id: String?,
+    )
+
+    /**
+     * Recycling adapter for the reveal.
+     *
+     * 🔴 **Every field a chip carries is rebound on EVERY `getView`, including
+     * the ones being set to null.** A recycled convertView arrives carrying the
+     * PREVIOUS item's click listener, contentDescription and clickability; the
+     * bug that shape produces is a chip that opens the wrong dictation, which
+     * looks like a store bug and is not. `bindChip` sets all of them
+     * unconditionally for exactly that reason — see its own comment.
+     */
+    private inner class HistoryAdapter : android.widget.BaseAdapter() {
+        private var rows: List<ChipModel> = emptyList()
+
+        fun submit(next: List<ChipModel>) {
+            rows = next
+            notifyDataSetChanged()
+        }
+
+        override fun getCount(): Int = rows.size
+
+        override fun getItem(position: Int): ChipModel = rows[position]
+
+        override fun getItemId(position: Int): Long = position.toLong()
+
+        /** Chips are not uniformly enabled: the empty-state row is not tappable. */
+        override fun areAllItemsEnabled(): Boolean = false
+
+        override fun isEnabled(position: Int): Boolean = rows[position].id != null
+
+        override fun getView(
+            position: Int,
+            convertView: View?,
+            parent: android.view.ViewGroup?,
+        ): View {
+            val view = convertView ?: newChip()
+            bindChip(view, rows[position])
+            return view
+        }
     }
 
     /**
@@ -941,31 +1032,60 @@ class BubbleService : Service() {
      *   label — which must not be clickable, because a control that accepts a
      *   tap and does nothing is worse than a caption.
      */
-    private fun chip(label: String, describedAs: String?, id: String?): View {
+    /**
+     * A chip with everything that does NOT vary per item.
+     *
+     * 🔴 Height is [CHIP_DP] plus [CHIP_GAP_DP] of TOP PADDING, not a margin.
+     * `AbsListView.LayoutParams` has no margins, so the gap a `LinearLayout`
+     * used to contribute has to live inside the row or the rendered pitch
+     * stops matching `chipBlockPx` — and `chipBlockPx` is what the window
+     * height and therefore `clampY` are computed from. The two must agree by
+     * construction; `aChipRowIsExactlyOneChipBlockTall` pins it.
+     */
+    private fun newChip(): View {
         val density = resources.displayMetrics.density
+        val gapPx = (CHIP_GAP_DP * density).toInt()
+        val sidePx = (14 * density).toInt()
         return android.widget.TextView(this).apply {
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                (CHIP_DP * density).toInt(),
-            ).apply { topMargin = (CHIP_GAP_DP * density).toInt() }
-            text = label
+            layoutParams = android.widget.AbsListView.LayoutParams(
+                android.widget.AbsListView.LayoutParams.MATCH_PARENT,
+                (CHIP_DP * density).toInt() + gapPx,
+            )
             maxLines = 1
             // A backstop only. The label is short BY CONSTRUCTION — see
             // HistoryLabel, and the measured reason the JVM cannot assert
             // anything about rendered width.
             ellipsize = android.text.TextUtils.TruncateAt.END
             gravity = Gravity.CENTER_VERTICAL
-            setPadding((14 * density).toInt(), 0, (14 * density).toInt(), 0)
+            setPadding(sidePx, gapPx, sidePx, 0)
             textSize = 13f
             setTextColor(getColor(R.color.dicta_on_surface))
             background = getDrawable(R.drawable.history_chip_bg)
-            if (id == null) {
-                isClickable = false
-            } else {
-                contentDescription = describedAs
-                tooltipText = describedAs
-                setOnClickListener { openHistoryItem(id) }
-            }
+        }
+    }
+
+    /**
+     * Binds one item onto a chip that may be RECYCLED.
+     *
+     * 🔴 **Every per-item field is set on every call, including when the new
+     * value is null.** A recycled view arrives wearing the previous item's
+     * click listener, `contentDescription`, `tooltipText` and clickability. An
+     * `if (id != null)` that only ever SETS those leaves a scrolled-away chip's
+     * listener in place, so tapping the empty-state row — or any chip that
+     * reused its view — opens whatever dictation the old one pointed at. That
+     * reads as a history-store bug and is not one.
+     */
+    private fun bindChip(view: View, model: ChipModel) {
+        val chip = view as android.widget.TextView
+        chip.text = model.label
+        chip.contentDescription = model.describedAs
+        chip.tooltipText = model.describedAs
+        val id = model.id
+        if (id == null) {
+            chip.setOnClickListener(null)
+            chip.isClickable = false
+        } else {
+            chip.setOnClickListener { openHistoryItem(id) }
         }
     }
 
@@ -1049,7 +1169,18 @@ class BubbleService : Service() {
             row.visibility = View.GONE
             params.y += revealBlockPx
             revealBlockPx = 0
-            row.removeAllViews()
+            // 🔴 Empty the ADAPTER; never `row.removeAllViews()`. An
+            // AdapterView throws `UnsupportedOperationException` on that, and it
+            // would throw from inside the HIDE path — i.e. while dismissing,
+            // which is the one moment the user cannot retry. The chips must
+            // still be dropped here: each holds a click listener closed over a
+            // history id, and a stale one opens a dictation nobody picked.
+            historyAdapter.submit(emptyList())
+            // The height goes with them, so a row shown again before its next
+            // load lands contributes no window height.
+            row.layoutParams = (row.layoutParams as LinearLayout.LayoutParams).apply {
+                height = 0
+            }
         }
         // 🔴 Scoped to the revealed state, NOT set once at window creation.
         // FLAG_WATCH_OUTSIDE_TOUCH delivers an ACTION_OUTSIDE for every touch
@@ -1331,14 +1462,37 @@ class BubbleService : Service() {
         private const val CANCEL_GAP_DP = 6
 
         /**
-         * How many recent dictations the reveal offers.
+         * How many chips are **on screen at once**. The reveal SCROLLS, so this
+         * is the window's height in chips, not how many items it offers — that
+         * is [REVEAL_MAX_ITEMS].
          *
-         * Deliberately separate from `HistoryRetention.MAX_ITEMS` — how much
-         * is *kept* and how much is reachable from a thumb-sized gesture are
-         * different questions, and tying them would put fifty chips on screen.
-         * A full history screen is a separate feature and is not this one.
+         * 🔴 **Keeping this at 4 is what makes scrolling a contained change.**
+         * The window grows by `min(count, REVEAL_SLOTS) * chipBlockPx`, so for
+         * any history of 4 or fewer the geometry is identical to the
+         * pre-scroll build and every piece of clamp arithmetic — including
+         * `#17` audit round 1's F4 fix — keeps its existing evidence. Raising
+         * it re-opens all of that, so raise it deliberately or not at all.
+         *
+         * ⚠ This kdoc used to read *"tying them would put fifty chips on
+         * screen. A full history screen is a separate feature and is not this
+         * one."* The first half is **retired**: fifty chips are now reachable
+         * precisely because only four are ever laid out. The second half
+         * stands — this is a quick-access affordance, not a browser.
          */
         private const val REVEAL_SLOTS = 4
+
+        /**
+         * How many recent dictations the reveal offers, scrollably.
+         *
+         * Still deliberately separate from `HistoryRetention.MAX_ITEMS` (1000):
+         * how much is *kept* and how much is worth scrolling from a thumb-sized
+         * gesture are different questions. 50 is the operator's call
+         * (2026-10-17) and is a one-line change — nothing depends on the value,
+         * only on it being finite. It is also what bounds the store read:
+         * [DictationHistoryStore.recent] stats only as many files as it
+         * returns, so this constant is the syscall budget per reveal.
+         */
+        private const val REVEAL_MAX_ITEMS = 50
 
         /** One chip's height. 44 dp is the cancel button's, and the floor. */
         private const val CHIP_DP = 44

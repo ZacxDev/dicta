@@ -439,12 +439,96 @@ class DictationHistoryStoreTest {
             listOf(kept),
             store.recent(10).map { it.id },
         )
-        assertFalse(
-            "the dangling entry is still in the index, so it will be " +
-                "re-offered on every read: ${indexText()}",
+
+        // 🔴 The SWEEP moved, deliberately. It used to ride every `recent()`,
+        // which is what made a four-chip reveal stat the whole store and then
+        // REWRITE the index. It now rides `usage()` — the Settings read, which
+        // runs when a human opens a screen rather than on every long-press.
+        // The user-visible invariant above is unchanged; only who pays for the
+        // cleanup moved. `recentDoesNotRewriteTheIndex` pins the other half.
+        assertTrue(
+            "fixture: the dangling entry should still be indexed until a " +
+                "sweeping path runs: ${indexText()}",
             indexText().contains(lost),
         )
         assertEquals(DictationHistoryStore.Usage(1, 64L), store.usage())
+        assertFalse(
+            "usage() did not sweep the dangling entry, so nothing does and it " +
+                "is re-read forever: ${indexText()}",
+            indexText().contains(lost),
+        )
+    }
+
+    @Test
+    fun itemReturnsNullForAnEntryWhoseAudioIsGone() {
+        // 🔴 Added because mutation M5 SURVIVED: deleting the isFile guard in
+        // item() left all 582 tests green. The card's whole history path goes
+        // through item(), so without this an entry whose audio vanished opens a
+        // card offering Re-transcribe on a file that is not there.
+        val store = store()
+        clock += 1_000
+        val kept = store.add(recording("keep.ogg"), "keep", fromRemote = false, audioSeconds = 1.0)
+        clock += 1_000
+        val lost = store.add(recording("lose.ogg"), "lose", fromRemote = false, audioSeconds = 1.0)
+        val lostName = store.recent(10).first { it.id == lost }.audioFile
+        assertTrue("fixture setup: the audio was never written", File(historyDir, lostName).delete())
+
+        assertNotNull("a live entry must still resolve", store.item(kept))
+        assertEquals(kept, store.item(kept)?.id)
+        assertNull(
+            "item() returned an entry whose audio is gone, so the card offers " +
+                "Re-transcribe on a missing file",
+            store.item(lost),
+        )
+        assertNull("an unknown id is null, not a crash", store.item("no-such-id"))
+    }
+
+    @Test
+    fun recentDoesNotRewriteTheIndex() {
+        // The read path is READ-ONLY by design: a reveal is the hottest caller
+        // in the app and it used to rewrite index.json whenever any audio file
+        // was missing. Watched red against the pre-change tree, where
+        // `visible()` swept on every read.
+        val store = store()
+        clock += 1_000
+        store.add(recording("keep.ogg"), "keep", fromRemote = false, audioSeconds = 1.0)
+        clock += 1_000
+        val lost = store.add(recording("lose.ogg"), "lose", fromRemote = false, audioSeconds = 1.0)
+        val lostName = store.recent(10).first { it.id == lost }.audioFile
+        assertTrue("fixture setup: the audio was never written", File(historyDir, lostName).delete())
+
+        val before = indexText()
+        repeat(3) { store.recent(4) }
+        assertEquals(
+            "recent() rewrote the index; the hot read path must not write",
+            before,
+            indexText(),
+        )
+    }
+
+    @Test
+    fun recentStopsStattingOnceItHasEnoughItems() {
+        // The cost fix, asserted behaviourally rather than by counting syscalls:
+        // with the NEWEST items present, a small limit must be satisfiable
+        // without the older ones mattering at all — so deleting their audio
+        // changes nothing about the answer. Pre-change this was false: the old
+        // `visible()` statted every item before sorting, so a missing OLD file
+        // still altered the index and the usage figures on a read for 2.
+        val store = store()
+        val ids = (1..6).map {
+            clock += 1_000
+            store.add(recording("a$it.ogg"), "t$it", fromRemote = false, audioSeconds = 1.0)
+        }
+        // Delete the audio of the three OLDEST; the two newest are untouched.
+        store.recent(10).filter { it.id in ids.take(3) }
+            .forEach { assertTrue(File(historyDir, it.audioFile).delete()) }
+
+        assertEquals(
+            "a limit the newest present items already satisfy must not depend " +
+                "on anything older",
+            ids.takeLast(2).reversed(),
+            store.recent(2).map { it.id },
+        )
     }
 
     // --- recovering from the temp file --------------------------------------

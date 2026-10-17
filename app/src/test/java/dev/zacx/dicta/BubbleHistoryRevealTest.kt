@@ -10,6 +10,7 @@ import android.view.WindowManager
 import android.widget.LinearLayout
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
@@ -116,8 +117,23 @@ class BubbleHistoryRevealTest {
     private fun bubble(service: BubbleService): View =
         requireNotNull(field<View?>(service, "bubble")) { "no bubble view" }
 
-    private fun row(service: BubbleService): LinearLayout =
-        requireNotNull(field<LinearLayout?>(service, "historyRow")) { "no history row" }
+    private fun row(service: BubbleService): android.widget.ListView =
+        requireNotNull(field<android.widget.ListView?>(service, "historyRow")) { "no history row" }
+
+    /**
+     * 🔴 Assertions go through the ADAPTER, not through `getChildAt`.
+     *
+     * The reveal is a recycling [android.widget.ListView], so its children are
+     * whatever a layout pass happened to inflate — under Robolectric usually
+     * none — while the adapter is the state the view renders FROM. Same reason
+     * this suite never asserts rendered text metrics: assert the state, not the
+     * layout. `getView(i, null, row)` is also exactly what a cold bind does.
+     */
+    private fun adapter(service: BubbleService): android.widget.Adapter =
+        requireNotNull(row(service).adapter) { "no history adapter" }
+
+    private fun chipAt(service: BubbleService, index: Int): android.widget.TextView =
+        adapter(service).getView(index, null, row(service)) as android.widget.TextView
 
     private fun params(service: BubbleService): WindowManager.LayoutParams =
         field(service, "params")
@@ -183,7 +199,7 @@ class BubbleHistoryRevealTest {
         assertEquals(
             "the reveal must show one chip per recent dictation",
             2,
-            row(service).childCount,
+            adapter(service).count,
         )
         assertEquals(
             "a long press started a recording — it must not; the tap is the " +
@@ -198,12 +214,131 @@ class BubbleHistoryRevealTest {
         )
     }
 
+    // --- scrolling and recycling ---------------------------------------------
+
+    private fun manyItems(n: Int) = (1..n).map {
+        item("id$it", "dictation number $it", it * 60_000L)
+    }
+
+    @Test
+    fun theWindowGrowsByTheChipsONSCREENNotByEveryItemTheListHolds() {
+        // 🔴 THE claim that makes scrolling a contained change. The reveal
+        // offers up to REVEAL_MAX_ITEMS (50) but is only ever REVEAL_SLOTS (4)
+        // chips tall, so the clamp arithmetic -- and every bit of device
+        // evidence behind it, including #17 audit round 1's F4 -- is unchanged.
+        //
+        // The mutation this kills: `rows.size * chipBlockPx`, i.e. forgetting
+        // the min(). With 12 items that is a window three times too tall, which
+        // on a bubble near the bottom edge is the unreachable-control defect
+        // F4 was written to close.
+        val service = start(manyItems(12))
+        longPress(service)
+
+        val chipBlock = field<Int>(service, "chipBlockPx")
+        val rowMargin = field<Int>(service, "revealRowMarginPx")
+        val slots = BubbleService::class.java.getDeclaredField("REVEAL_SLOTS")
+            .let { it.isAccessible = true; it.getInt(null) }
+
+        assertEquals(
+            "the window grew by every item instead of by the visible slots",
+            slots * chipBlock + rowMargin,
+            field<Int>(service, "revealBlockPx"),
+        )
+        assertEquals(
+            "the list height must match the block it claims, or clampY is lied to",
+            slots * chipBlock,
+            row(service).layoutParams.height,
+        )
+    }
+
+    @Test
+    fun allTheOfferedItemsAreScrollableEvenThoughOnlyFourAreTall() {
+        // The other half: bounding the HEIGHT must not bound the CONTENT. If
+        // this returns 4 the list is not scrollable, it is just truncated --
+        // which is the pre-change behaviour wearing a ListView.
+        val service = start(manyItems(12))
+        longPress(service)
+        assertEquals(
+            "the adapter holds only what fits on screen, so nothing scrolls",
+            12,
+            adapter(service).count,
+        )
+    }
+
+    @Test
+    fun theRevealAsksForMoreThanItCanShow() {
+        // Pins REVEAL_MAX_ITEMS as the store limit, not REVEAL_SLOTS. Asking
+        // for 4 would make the list unscrollable no matter how tall the
+        // adapter claims to be, and the defect would look like a store bug.
+        var asked = -1
+        ShadowSettings.setCanDrawOverlays(true)
+        shadowOf(RuntimeEnvironment.getApplication())
+            .grantPermissions(Manifest.permission.RECORD_AUDIO)
+        val c = Robolectric.buildService(BubbleService::class.java)
+        controller = c
+        c.get().sessionFactory = { fake }
+        c.get().historyProvider = { limit -> asked = limit; manyItems(limit) }
+        c.get().historyExecutor = java.util.concurrent.Executor { it.run() }
+        val service = c.create().get()
+        longPress(service)
+
+        val max = BubbleService::class.java.getDeclaredField("REVEAL_MAX_ITEMS")
+            .let { it.isAccessible = true; it.getInt(null) }
+        assertEquals("the reveal asked the store for the wrong number", max, asked)
+    }
+
+    @Test
+    fun arecycledChipCarriesTheNewItemsIdAndNotThePreviousOnes() {
+        // 🔴 The recycling hazard, and the reason bindChip sets every per-item
+        // field unconditionally. A convertView arrives wearing the PREVIOUS
+        // row's click listener; rebinding only the label leaves a chip that
+        // opens a dictation the user did not choose.
+        //
+        // Mutation that must kill this: make bindChip skip setOnClickListener
+        // when the id is unchanged, or restore the old `if (id != null)` shape
+        // that never clears a listener.
+        val service = start(manyItems(12))
+        longPress(service)
+        val list = row(service)
+
+        val scrap = adapter(service).getView(5, null, list)
+        val reused = adapter(service).getView(0, scrap, list)
+        assertSame("the adapter did not recycle the view it was handed", scrap, reused)
+
+        shadowOf(RuntimeEnvironment.getApplication()).clearNextStartedActivities()
+        reused.performClick()
+        val started = shadowOf(RuntimeEnvironment.getApplication()).nextStartedActivity
+        assertEquals(
+            "a recycled chip opened the item its view used to show",
+            "id1",
+            started?.getStringExtra(DictateLaunch.EXTRA_HISTORY_ID),
+        )
+    }
+
+    @Test
+    fun theEmptyStateRowIsNotClickableEvenWhenItRecyclesARealChip() {
+        // The same hazard from the other end: the empty-state row has no id, so
+        // a bind that only ever SETS a listener leaves the recycled one live
+        // and "no history yet" opens a dictation.
+        val service = start(manyItems(3))
+        longPress(service)
+        val realChip = adapter(service).getView(0, null, row(service))
+
+        val empty = start(emptyList())
+        longPress(empty)
+        val emptyRow = adapter(empty).getView(0, realChip, row(empty))
+        assertFalse(
+            "the empty-state row kept a recycled chip's click listener",
+            emptyRow.hasOnClickListeners(),
+        )
+    }
+
     @Test
     fun theChipsCarryTheirLabelAndSayWhatTappingThemDoes() {
         val service = start()
         longPress(service)
 
-        val chip = row(service).getChildAt(0) as android.widget.TextView
+        val chip = chipAt(service, 0)
         assertTrue(
             "the chip's label does not contain the transcript's opening " +
                 "words: \"${chip.text}\"",
@@ -230,8 +365,8 @@ class BubbleHistoryRevealTest {
         longPress(service)
 
         assertEquals(View.VISIBLE, row(service).visibility)
-        assertEquals(1, row(service).childCount)
-        val label = row(service).getChildAt(0) as android.widget.TextView
+        assertEquals(1, adapter(service).count)
+        val label = chipAt(service, 0)
         assertEquals(
             RuntimeEnvironment.getApplication().getString(R.string.bubble_history_empty),
             label.text.toString(),
@@ -366,7 +501,7 @@ class BubbleHistoryRevealTest {
     fun tappingAChipOpensTheCardOnThatDictationThroughDictateLaunch() {
         val service = start()
         longPress(service)
-        row(service).getChildAt(1).performClick()
+        chipAt(service, 1).performClick()
 
         val intent = nextActivity(service)
         assertNotNull("tapping a chip started nothing", intent)

@@ -288,10 +288,51 @@ class DictationHistoryStore internal constructor(
      * tapped.
      */
     fun recent(limit: Int): List<Item> = synchronized(LOCK) {
-        visible().sortedWith(
-            compareByDescending<Item> { it.createdAtMs }.thenBy { it.id },
-        ).take(limit.coerceAtLeast(0))
+        val want = limit.coerceAtLeast(0)
+        if (want == 0) return@synchronized emptyList()
+        // 🔴 Sort FIRST, then stat only as far down the list as `want` needs.
+        //
+        // This was `visible().sorted().take(limit)`, and [visible] stats EVERY
+        // item in order to drop the ones whose audio has gone. At
+        // `HistoryRetention.MAX_ITEMS` = 1000 that is up to 1000 syscalls to
+        // render four chips, on every long-press. The order above is the whole
+        // fix: the newest `want` PRESENT items are a prefix of the sorted list,
+        // so nothing past them is ever looked at.
+        //
+        // ⚠ Worst case is still O(n) — a store whose every audio file is
+        // missing walks all of it — but that is the degenerate case, and it is
+        // bounded by the same `MAX_ITEMS` as before.
+        //
+        // 🔴 BEHAVIOUR CHANGE, stated: this no longer SWEEPS the index. [visible]
+        // rewrote the index whenever it found a missing file, and a read path
+        // that writes is why every reveal paid for the whole store. Callers
+        // still never see an item whose audio is gone — that is the `isFile`
+        // check below — but the dead ROW now survives in `index.json` until a
+        // write path ([add], [updateText], [clearAll]) next rewrites it.
+        // Pinned by `recentDoesNotRewriteTheIndex`.
+        val out = ArrayList<Item>(want)
+        for (item in sortedNewestFirst(load())) {
+            if (out.size == want) break
+            if (File(dir, item.audioFile).isFile) out.add(item)
+        }
+        out
     }
+
+    /**
+     * One item by id, or null when it is unknown or its audio has gone.
+     *
+     * 🔴 Exists so callers stop spelling this `recent(Int.MAX_VALUE).firstOrNull
+     * { it.id == id }` — asking for EVERY item, with the stat sweep and the full
+     * sort that implied, to answer a question about one. [audioFor] already had
+     * the cheap shape; this is its sibling for the metadata.
+     */
+    fun item(id: String): Item? = synchronized(LOCK) {
+        load().firstOrNull { it.id == id }?.takeIf { File(dir, it.audioFile).isFile }
+    }
+
+    /** Newest first, ties broken on id so the order is total and stable. */
+    private fun sortedNewestFirst(items: List<Item>): List<Item> =
+        items.sortedWith(compareByDescending<Item> { it.createdAtMs }.thenBy { it.id })
 
     /** The audio for [id], or null when the entry or its file is gone. */
     fun audioFor(id: String): File? = synchronized(LOCK) {
