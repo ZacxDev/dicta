@@ -54,25 +54,20 @@ class DictateActivity : Activity() {
     private var historyItem: DictationHistoryStore.Item? = null
 
     /**
-     * True from the moment this card becomes a HISTORY card, before the
-     * stored item has been read.
+     * Which revision of this card the views belong to.
      *
-     * 🔴 Separate from [historyItem] on purpose, and the separation is the
-     * fix: `historyItem` is written by the worker, so between
-     * `populateFromHistory` and the read landing it is still null — exactly
-     * the window a late callback from the capture we just stopped arrives in.
-     * This flag is set SYNCHRONOUSLY, so [SessionCallbacks] can refuse from
-     * the first instruction.
+     * 🔴 Bumped whenever the card is re-purposed — today only by
+     * [populateFromHistory]. A [SessionCallbacks] captures it at construction
+     * and refuses once the two differ, so a late callback from a session the
+     * card has abandoned cannot write views that now belong to something
+     * else. See [SessionCallbacks.stale] for the sequence that a
+     * "is this a history card" flag could not survive.
      *
-     * Audit round 2 of #17: `stopAnyLiveCapture()` closes the microphone but
-     * `DictationSession.stop()` keeps the session alive to finish its upload,
-     * and nothing detached the callbacks — so the live transcript replaced
-     * the stored one the user had just tapped, the upload status replaced
-     * "Saved dictation", and `onTier` turned the level meter VISIBLE on a
-     * card with no capture. Round 1's choice of `stop()` over `discard()`
-     * turned that from contingent into certain.
+     * Bumped SYNCHRONOUSLY, before the async store read: between
+     * `populateFromHistory` and that read landing, the stopped session is
+     * still finishing its upload and is still wired.
      */
-    private var historyMode = false
+    private var cardGeneration = 0
 
     /**
      * Reads and re-uploads of stored dictations.
@@ -250,8 +245,6 @@ class DictateActivity : Activity() {
      * what is on screen.
      */
     private fun attachToBubbleSession() {
-        // Leaving history mode: the bubble's live session owns the card.
-        historyMode = false
         statusText.text = getString(R.string.stt_uploading)
         micButton.text = getString(R.string.start_dictation)
         levelMeter.visibility = View.INVISIBLE
@@ -300,8 +293,8 @@ class DictateActivity : Activity() {
         // 🔴 Immediately after the stop and BEFORE the async read: the
         // session we just stopped is still alive finishing its upload, and
         // its transcript/status/level callbacks are still wired. See
-        // [historyMode].
-        historyMode = true
+        // [cardGeneration].
+        cardGeneration++
         historyItem = null
         levelMeter.visibility = View.INVISIBLE
         micButton.visibility = View.GONE
@@ -641,8 +634,6 @@ class DictateActivity : Activity() {
      * exact zeros with no error.
      */
     private fun startDictation() {
-        // Leaving history mode: a live capture owns the card again.
-        historyMode = false
         haveRemoteTranscript = false
         // 🔴 The path this method has to refuse: the bubble is RECORDING and
         // by design nothing is on screen. The user pulls down the shade and
@@ -876,14 +867,35 @@ class DictateActivity : Activity() {
     /** Bridges [DictationSession] to the card's views. */
     private inner class SessionCallbacks : DictationSession.Callbacks {
 
+        /** The card revision this instance was built for. See [stale]. */
+        private val bornAt = cardGeneration
+
         /**
-         * 🔴 ONE gate for every callback, not a check repeated in six of
-         * them. A stopped session stays alive to finish its upload, so a card
-         * that has since become a HISTORY card is still wired to it — and
-         * every one of these methods writes a view the history card owns.
-         * See [historyMode]. Audit round 2 of #17.
+         * Whether this callbacks object belongs to a card revision that has
+         * since been replaced.
+         *
+         * **Six call sites, one predicate** — written out in each override
+         * because the interface offers no single choke point.
+         * [SessionCallbacksGateTest] is what keeps the set honest; without a
+         * ledger a seventh method would be ungated silently, which round 3 of
+         * #17 demonstrated by deleting the gate from `onClientSilenced` and
+         * watching all 568 tests stay green.
+         *
+         * 🔴 Keyed to a GENERATION, not to "is this a history card". Round 2
+         * of #17 used the latter and round 3 measured the cost: attach →
+         * history → start another bubble dictation left the card muted **for
+         * the rest of its life**, because the attach intent carries no
+         * history id, `onNewIntent` returns early by design, and nothing ever
+         * cleared the flag. `micButton` is GONE on a history card, so the
+         * only recovery was closing it.
+         *
+         * A generation cannot wedge that way: [attachToBubbleSession] and
+         * [startDictation] build a NEW callbacks object, which is born
+         * current by construction. Same shape as `BubbleService.generation`,
+         * which `MicOpenerSeamTest` already names as the thing this class
+         * lacked.
          */
-        private fun stale(): Boolean = historyMode
+        private fun stale(): Boolean = bornAt != cardGeneration
 
         override fun onTranscript(text: String, fromRemote: Boolean, isFinal: Boolean) {
             if (stale()) return

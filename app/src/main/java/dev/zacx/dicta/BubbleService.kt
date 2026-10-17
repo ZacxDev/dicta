@@ -1026,9 +1026,17 @@ class BubbleService : Service() {
             //
             // Round 1 of #17 changed this to a recorded post-clamp shift, and
             // round 2 measured what that cost: reveal near the top edge, DRAG
-            // the bubble down, dismiss — and it teleported 608 px back up,
+            // the bubble down, dismiss — and the bubble teleports back up,
             // because a recorded number pins the window ORIGIN while the drag
-            // had since moved it. Round 1 justified the change with "290 px,
+            // had since moved it.
+            //
+            // ⚠ The jump is `revealBlockPx - y_at_reveal` and does NOT scale
+            // with how far the user drags; the drag is what makes the wrong
+            // position VISIBLE, not what sizes it. Measured 608 px with a
+            // full REVEAL_SLOTS=4 row (block 618) and 308 px in the
+            // two-chip test fixture (block 318) — round 3 of #17 flagged the
+            // first figure as unreproducible because round 2 quoted it
+            // without naming which row it came from. Round 1 justified the change with "290 px,
             // repeatable, so successive reveals walk it down the screen";
             // that was measured FALSE. The behaviour it replaced is a
             // ONE-TIME bounded drop of `revealBlockPx - y`, stable from the

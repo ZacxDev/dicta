@@ -359,6 +359,42 @@ class DictateHistoryCardTest {
     }
 
     @Test
+    fun aFreshSessionAfterAHistorySwitchIsNotMuted() {
+        // 🔴 THE OTHER HALF, and the one round 2 got wrong. Round 2 gated on
+        // "is this a history card", so after attach → history → start another
+        // bubble dictation the card was muted FOR THE REST OF ITS LIFE: the
+        // attach intent carries no history id, onNewIntent returns early by
+        // design, and nothing ever cleared the flag. micButton is GONE on a
+        // history card, so there was no recovery but closing it.
+        //
+        // A generation cannot wedge that way — a NEW callbacks object is born
+        // current. Suppressing the stale sink is worthless if the live one is
+        // suppressed with it, so both directions are pinned.
+        val id = store("the stored dictation")
+        val controller = open(Intent(ctx, DictateActivity::class.java))
+        try {
+            val a = controller.get()
+            controller.newIntent(DictateLaunch.historyIntent(ctx, id))
+            awaitStatusChange("") { transcriptOf(a) }
+
+            // A new session attaches and reports in.
+            val fresh = a.uiCallbacks()
+            fresh.onTranscript("TEXT FROM THE NEW DICTATION", true, true)
+            shadowOf(Looper.getMainLooper()).idle()
+
+            assertEquals(
+                "a session created AFTER the history switch was muted too, " +
+                    "so the card is permanently dead and the user's new " +
+                    "dictation never appears",
+                "TEXT FROM THE NEW DICTATION",
+                transcriptOf(a),
+            )
+        } finally {
+            controller.close()
+        }
+    }
+
+    @Test
     fun aLateTranscriptFromTheStoppedSessionCannotOverwriteTheHistoryCard() {
         // 🔴 BEHAVIOURAL, through the seam the comment above once claimed did
         // not exist. `stopAnyLiveCapture()` calls DictationSession.stop(),
@@ -368,16 +404,21 @@ class DictateHistoryCardTest {
         // Audit round 2 of #17: round 1's choice of stop() over discard()
         // made this certain rather than contingent.
         val id = store("the stored dictation")
-        val controller = open(DictateLaunch.historyIntent(ctx, id))
+        // 🔴 Open LIVE first and capture the callbacks the live session owns,
+        // THEN switch the card to history. Capturing them afterwards builds a
+        // fresh object that is born current and is correctly not stale — the
+        // round-2 version of this test did exactly that and only passed
+        // because the gate was a global flag rather than a generation.
+        val controller = open(Intent(ctx, DictateActivity::class.java))
         try {
             val a = controller.get()
-            shadowOf(Looper.getMainLooper()).idle()
-            val storedText = transcriptOf(a)
+            val late = a.uiCallbacks()          // the live session's sink
+
+            controller.newIntent(DictateLaunch.historyIntent(ctx, id))
+            val storedText = awaitStatusChange("") { transcriptOf(a) }
             val storedStatus = statusOf(a)
             assertTrue("precondition: the stored text is shown", storedText.isNotEmpty())
 
-            // The stopped session finishes its upload and reports in.
-            val late = a.uiCallbacks()
             late.onTranscript("THE LIVE DICTATION TEXT", true, true)
             late.onStatus("uploading the live one")
             late.onTier(AudioCaptureLogic.Tier.REMOTE_ONLY_NO_API)

@@ -236,7 +236,7 @@ class MicOpenerSeamTest {
      * **directly** — including `isFinal = true` — rather than through
      * `postToMain`, so a destroyed session's late local final reached whatever
      * was listening. [BubbleService] has a generation gate of its own and
-     * happens to drop it; `DictateActivity.SessionCallbacks` has none and
+     * happens to drop it; `DictateActivity.SessionCallbacks` now has one (`cardGeneration`, added by #17 round 3) but did not when this was written, and and
      * writes the card's views. The consumer here deliberately has no gate,
      * which is the case the session's own flag is supposed to cover.
      */

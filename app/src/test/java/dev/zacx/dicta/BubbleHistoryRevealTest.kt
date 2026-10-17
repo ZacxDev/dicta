@@ -568,7 +568,7 @@ class BubbleHistoryRevealTest {
         // 🔴 Asserts the BUBBLE's position, not the window origin — and that
         // distinction is the whole finding. Round 1 wrote a guard here that
         // pinned `params.y` back to its pre-reveal value, which is the window
-        // ORIGIN; round 2 measured that this teleports the bubble 608 px when
+        // ORIGIN; round 2 measured that this teleports the bubble when
         // the user drags while the row is up. The bubble sits revealBlockPx
         // below the window top while revealed and AT the top once hidden, so
         // the only invariant worth pinning is "the bubble did not move".
@@ -612,13 +612,33 @@ class BubbleHistoryRevealTest {
 
         longPress(service)
         val block: Int = field(service, "revealBlockPx")
+
+        // 🔴 THE PROPERTY THE WHOLE ARGUMENT RESTS ON, asserted first: while
+        // the row is up it must be ON SCREEN. Round 3 of #17 found the
+        // earlier version of this test survived a mutant that removed the
+        // reveal-side clamp entirely — the row ran off the top of the
+        // display, the "drop" vanished, and every assertion still passed. A
+        // one-sided `drop <= block` bound is satisfied by a ZERO drop, so a
+        // test called DropsTheBubbleOnce never asserted a drop at all.
+        assertTrue(
+            "the revealed row is off the top of the display — the reveal " +
+                "side is not clamping, which is the one thing the " +
+                "one-time-drop argument assumes it does",
+            params(service).y >= 0,
+        )
+
         bubble(service).performClick()      // dismiss
         idle(0)
         val afterFirst = params(service).y
 
         assertTrue(
-            "the one-time drop should be bounded by the row's height",
+            "the drop should be BOUNDED by the row's height, not unbounded",
             afterFirst - 10 <= block,
+        )
+        assertTrue(
+            "no drop happened at all, so this fixture is not exercising the " +
+                "clamped case the test is named for",
+            afterFirst > 10,
         )
 
         longPress(service)
