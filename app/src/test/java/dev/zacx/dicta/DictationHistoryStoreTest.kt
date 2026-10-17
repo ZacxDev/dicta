@@ -278,13 +278,17 @@ class DictationHistoryStoreTest {
         // MAX_RECORDING_MS caps an item at ~352-469 KiB, so 1000 of them is
         // 343-458 MiB against a 2 GiB bound: count always binds first. See
         // HistoryRetention's kdoc and the arithmetic pinned by
-        // theByteBoundCannotBindAtTheCurrentConstants.
+        // theByteBoundIsLoadBearingAtTheCurrentConstants.
         //
-        // The test is still worth having, and this is the honest reason: it
-        // pins that the store honours WHATEVER byte bound it is handed, which
-        // is what makes the stage correct on the day MAX_RECORDING_MS rises
-        // and the bound goes live. It is a guard on a dormant path, not
-        // evidence that the path is hot.
+        // 🔴 THAT DAY CAME. This comment used to end "a guard on a dormant
+        // path, not evidence that the path is hot", and justified itself as
+        // pinning that the store honours WHATEVER byte bound it is handed —
+        // "which is what makes the stage correct on the day MAX_RECORDING_MS
+        // rises and the bound goes live". MAX_RECORDING_MS rose to 600 s on
+        // 2026-10-17 and the bound now binds in production, so this is no
+        // longer a guard on a dormant path: it is coverage of a live one, and
+        // the foresight it was written with is the reason no new test was
+        // needed here.
         val store = store(bounds = tinyBounds.copy(maxItems = 100, maxAgeMs = 600_000L))
         val ids = mutableListOf<String>()
         val names = mutableListOf<String>()

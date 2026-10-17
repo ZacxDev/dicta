@@ -80,7 +80,7 @@ package dev.zacx.dicta
  * map from `(entries, nowMs)` to a list — the same set of entries in any
  * input order gives byte-identical output.
  *
- * ## 🔴 The bounds are large, and the byte bound CANNOT BIND
+ * ## 🔴 The bounds are large, and the byte bound IS NOW LOAD-BEARING
  *
  * Measured on the handset this ships to (SM-G991W): history lives in
  * `/data/data/<pkg>/no_backup/history/`, where `/data` has **18 GB free of
@@ -95,13 +95,21 @@ package dev.zacx.dicta
  *    "Delete all history" control is therefore load-bearing, not a
  *    convenience — see [DictationHistoryStore.clearAll], which is why that
  *    method deletes every file in the directory rather than the indexed ones.
- *  - 🔴 **The byte bound CANNOT BIND at the current constants, and this is
- *    arithmetic rather than an estimate.** An earlier draft of this comment
- *    claimed the opposite — that raising [MAX_BYTES] to 2 GiB made the byte
- *    stage "a production code path". That was false, and it was false in the
- *    commit that wrote it. `BubbleDictation.MAX_RECORDING_MS` caps every
- *    recording at 120 s, and `AudioCaptureLogic` offers exactly two encoders
- *    (`OPUS_BITRATE` 24 kbps, `AAC_BITRATE` 32 kbps), so a single item cannot
+ *  - 🔴 **The byte bound BINDS at the current constants — as of 2026-10-17,
+ *    and this is the THIRD state this sentence has been in. Read the history
+ *    before writing a fourth.** (1) An early draft claimed raising [MAX_BYTES]
+ *    to 2 GiB made the byte stage "a production code path": FALSE in the commit
+ *    that wrote it. (2) It was corrected to "cannot bind", which was true while
+ *    `BubbleDictation.MAX_RECORDING_MS` was 120 s: two encoders
+ *    (`OPUS_BITRATE` 24 kbps, `AAC_BITRATE` 32 kbps) capped [MAX_ITEMS] items
+ *    at ~458 MiB. (3) The cap is now **600 s**, so the worst case is ~2.4 GB
+ *    against a 2 GiB budget and the stage trims for real. The arithmetic — not
+ *    the prose — is pinned by
+ *    [HistoryRetentionTest.theByteBoundIsLoadBearingAtTheCurrentConstants],
+ *    which inverted along with this claim and will fire again if a constant
+ *    moves back. What follows describes the OLD regime and is kept because the
+ *    arithmetic is still the right way to check which regime you are in: a
+ *    single item cannot
  *    exceed ~352–469 KiB. The worst case this store can hold is therefore
  *    [MAX_ITEMS] items each recorded to the full cap: **343–458 MiB, against a
  *    2048 MiB bound.** Count binds first by 4.5–6×, in every regime — not
@@ -112,7 +120,7 @@ package dev.zacx.dicta
  *    The stage is KEPT, and the reason is narrow and specific: it is the
  *    backstop for a change to `MAX_RECORDING_MS`. Long-form recording is an
  *    openly contemplated direction, and it is exactly the change that would
- *    make this bound load-bearing overnight. [theByteBoundCannotBindAtTheCurrentConstants]
+ *    make this bound load-bearing overnight. [theByteBoundIsLoadBearingAtTheCurrentConstants]
  *    pins the arithmetic above so this comment cannot quietly go stale again
  *    — if someone raises the recording cap, that test fails and tells them the
  *    byte stage has just become live.
@@ -152,13 +160,15 @@ object HistoryRetention {
      * Re-derived here rather than copied — an earlier figure of "~185 hours"
      * matched neither encoder.
      *
-     * 🔴 **Dormant at the current constants, not a live code path.** This kdoc
-     * used to end "it is reachable, so this code path runs in production",
-     * which the commit above it had already retracted as false: a 120 s
-     * recording cap times two encoders means [MAX_ITEMS] items total at most
-     * ~458 MiB, so the count bound always binds first. See the object kdoc for
-     * the full arithmetic and for why the stage is kept anyway, and
-     * [HistoryRetentionTest.theByteBoundCannotBindAtTheCurrentConstants] for
+     * 🔴 **LIVE at the current constants, as of 2026-10-17.** This sentence has
+     * now said "reachable" (false when written), then "dormant" (true at a
+     * 120 s recording cap, where [MAX_ITEMS] items totalled at most ~458 MiB),
+     * and now "live" again — because the cap is 600 s and the worst case is
+     * ~2.4 GB against this 2 GiB budget. It is live for a DIFFERENT reason than
+     * the first draft claimed, which is why that draft was wrong and this is
+     * not: the constant that moved is the recording cap, not this one. See the
+     * object kdoc for the arithmetic, and
+     * [HistoryRetentionTest.theByteBoundIsLoadBearingAtTheCurrentConstants] for
      * the assertion that keeps these sentences honest.
      *
      * 🔴 Subject to the one-oversize-item carve-out documented on the object;

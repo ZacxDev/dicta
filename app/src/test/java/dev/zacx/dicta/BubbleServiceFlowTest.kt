@@ -746,4 +746,60 @@ class BubbleServiceFlowTest {
     private fun feedLevel(service: BubbleService, level: Double) {
         callbacksOf(service).onLevel(level)
     }
+    // --- the recording chronometer (#14 item 6 mitigation) --------------------
+
+    private fun buildNotif(service: BubbleService, recording: Boolean): android.app.Notification {
+        val m = BubbleService::class.java.getDeclaredMethod(
+            "buildNotification", Int::class.javaPrimitiveType, Boolean::class.javaPrimitiveType,
+        )
+        m.isAccessible = true
+        val textRes = if (recording) R.string.bubble_recording else R.string.bubble_active
+        return m.invoke(service, textRes, recording) as android.app.Notification
+    }
+
+    private fun longField(service: BubbleService, name: String): Long {
+        val f = BubbleService::class.java.getDeclaredField(name)
+        f.isAccessible = true
+        return f.getLong(service)
+    }
+
+    @Test
+    fun theRecordingNotificationCountsUpFromWhenCaptureStarted() {
+        // 🔴 This is the mitigation for #14 item 6, not decoration. That item
+        // says a bubble left recording in a pocket uploads its audio, and
+        // MAX_RECORDING_MS exists because nothing on screen reminds you the mic
+        // is open. Raising the cap 120s -> 600s multiplies that by five, so the
+        // one always-visible surface has to say how long it has been running.
+        val service = start()
+        bubble(service).performClick()
+
+        val startedAt = longField(service, "recordingStartedAtMs")
+        assertTrue("recordingStartedAtMs was never stamped", startedAt > 0L)
+
+        val notif = buildNotif(service, recording = true)
+        assertTrue(
+            "the recording notification does not show a chronometer, so it " +
+                "reads identically at 3 s and at 9 min",
+            notif.extras.getBoolean(android.app.Notification.EXTRA_SHOW_CHRONOMETER),
+        )
+        assertEquals(
+            "the chronometer's origin is not when capture started, so it " +
+                "restarts at every promote and always reads ~0",
+            startedAt,
+            notif.`when`,
+        )
+    }
+
+    @Test
+    fun theIdleNotificationHasNoChronometer() {
+        // The other direction: a bubble that is NOT recording must not show a
+        // running clock, or the one signal that the mic is open means nothing.
+        val service = start()
+        val notif = buildNotif(service, recording = false)
+        assertTrue(
+            "the idle notification shows a chronometer",
+            !notif.extras.getBoolean(android.app.Notification.EXTRA_SHOW_CHRONOMETER),
+        )
+    }
+
 }
