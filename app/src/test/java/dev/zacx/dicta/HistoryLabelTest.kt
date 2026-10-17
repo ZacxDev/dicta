@@ -101,7 +101,8 @@ class HistoryLabelTest {
         // What it does pin is the COSMETIC choice: an absurd age renders
         // "99d+" rather than widening.
         //
-        // 🔴 Scope, MEASURED by removing the cap and running all 556 tests —
+        // 🔴 Scope, MEASURED by removing the cap and running the whole suite
+        // (556 tests at the time it was measured; it has grown since) —
         // an earlier draft of this comment said "deleting the cap fails THIS
         // assertion and nothing else" and that was FALSE. It fails TWO:
         // this one, and `theLabelUsesTheRoomTheShorterAgeLeaves`, which uses

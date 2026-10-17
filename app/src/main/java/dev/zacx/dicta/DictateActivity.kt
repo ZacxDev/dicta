@@ -54,6 +54,27 @@ class DictateActivity : Activity() {
     private var historyItem: DictationHistoryStore.Item? = null
 
     /**
+     * True from the moment this card becomes a HISTORY card, before the
+     * stored item has been read.
+     *
+     * 🔴 Separate from [historyItem] on purpose, and the separation is the
+     * fix: `historyItem` is written by the worker, so between
+     * `populateFromHistory` and the read landing it is still null — exactly
+     * the window a late callback from the capture we just stopped arrives in.
+     * This flag is set SYNCHRONOUSLY, so [SessionCallbacks] can refuse from
+     * the first instruction.
+     *
+     * Audit round 2 of #17: `stopAnyLiveCapture()` closes the microphone but
+     * `DictationSession.stop()` keeps the session alive to finish its upload,
+     * and nothing detached the callbacks — so the live transcript replaced
+     * the stored one the user had just tapped, the upload status replaced
+     * "Saved dictation", and `onTier` turned the level meter VISIBLE on a
+     * card with no capture. Round 1's choice of `stop()` over `discard()`
+     * turned that from contingent into certain.
+     */
+    private var historyMode = false
+
+    /**
      * Reads and re-uploads of stored dictations.
      *
      * Separate from [captureWorker], which is created on demand for a single
@@ -229,6 +250,8 @@ class DictateActivity : Activity() {
      * what is on screen.
      */
     private fun attachToBubbleSession() {
+        // Leaving history mode: the bubble's live session owns the card.
+        historyMode = false
         statusText.text = getString(R.string.stt_uploading)
         micButton.text = getString(R.string.start_dictation)
         levelMeter.visibility = View.INVISIBLE
@@ -274,6 +297,11 @@ class DictateActivity : Activity() {
         // Stop rather than discard, for the reason requestScreenshot already
         // gives: a finalised recording is uploaded, an abandoned one is lost.
         stopAnyLiveCapture()
+        // 🔴 Immediately after the stop and BEFORE the async read: the
+        // session we just stopped is still alive finishing its upload, and
+        // its transcript/status/level callbacks are still wired. See
+        // [historyMode].
+        historyMode = true
         historyItem = null
         levelMeter.visibility = View.INVISIBLE
         micButton.visibility = View.GONE
@@ -613,6 +641,8 @@ class DictateActivity : Activity() {
      * exact zeros with no error.
      */
     private fun startDictation() {
+        // Leaving history mode: a live capture owns the card again.
+        historyMode = false
         haveRemoteTranscript = false
         // 🔴 The path this method has to refuse: the bubble is RECORDING and
         // by design nothing is on screen. The user pulls down the shade and
@@ -846,7 +876,17 @@ class DictateActivity : Activity() {
     /** Bridges [DictationSession] to the card's views. */
     private inner class SessionCallbacks : DictationSession.Callbacks {
 
+        /**
+         * 🔴 ONE gate for every callback, not a check repeated in six of
+         * them. A stopped session stays alive to finish its upload, so a card
+         * that has since become a HISTORY card is still wired to it — and
+         * every one of these methods writes a view the history card owns.
+         * See [historyMode]. Audit round 2 of #17.
+         */
+        private fun stale(): Boolean = historyMode
+
         override fun onTranscript(text: String, fromRemote: Boolean, isFinal: Boolean) {
+            if (stale()) return
             // 🔴 The remote transcript wins, and keeps winning: the phone's
             // final result can arrive after it, and overwriting the server's
             // text with the phone's would silently downgrade the result.
@@ -865,20 +905,24 @@ class DictateActivity : Activity() {
         }
 
         override fun onStatus(text: String) {
+            if (stale()) return
             statusText.text = text
         }
 
         override fun onLevel(level: Double) {
+            if (stale()) return
             levelMeter.progress = (level * 100).toInt().coerceIn(0, 100)
         }
 
         override fun onTier(tier: AudioCaptureLogic.Tier) {
+            if (stale()) return
             // The meter matters most in the remote-only tiers, where no
             // partial text ever appears.
             levelMeter.visibility = View.VISIBLE
         }
 
         override fun onClientSilenced(silenced: Boolean) {
+            if (stale()) return
             // Surfaced as a real state rather than logged: the user can act
             // on "another app has the microphone", and cannot act on a dead
             // level meter.
@@ -886,6 +930,7 @@ class DictateActivity : Activity() {
         }
 
         override fun onRecordingStopped() {
+            if (stale()) return
             micButton.text = getString(R.string.start_dictation)
             levelMeter.progress = 0
         }

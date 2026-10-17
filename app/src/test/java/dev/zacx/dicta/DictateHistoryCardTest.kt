@@ -326,13 +326,17 @@ class DictateHistoryCardTest {
         // while the status line said the microphone was off.
         //
         // 🔴 WHAT IT DOES NOT PROVE: that the capture actually stops. A live
-        // DictationSession is not constructible under Robolectric and the
-        // activity exposes no session seam — adding one purely for this test
-        // is the production-change-for-testability that round 0 questioned
-        // elsewhere (D3). This guard can therefore pass while
-        // `stopAnyLiveCapture` is gutted. The behavioural check is a DEVICE
-        // step: start a dictation from the QS tile, long-press the bubble,
-        // tap a chip, and confirm the recording indicator goes away.
+        // DictationSession is not constructible under Robolectric, so the
+        // stop itself is a DEVICE check: start a dictation from the QS tile,
+        // long-press the bubble, tap a chip, confirm the recording indicator
+        // goes away.
+        //
+        // ⚠ An earlier version of this comment also said the activity
+        // "exposes no session seam". That was FALSE — `uiCallbacks()` is
+        // `internal` and already driven by OverlayMinimalLayoutTest — and it
+        // was written in the same commit that retracted an identical
+        // "no JVM path" claim elsewhere. The consequence of believing it is
+        // the test below, which that sentence said could not be written.
         val src = File("src/main/java/dev/zacx/dicta/DictateActivity.kt")
         assertTrue("cannot read ${src.absolutePath}", src.isFile)
         val body = src.readText()
@@ -352,5 +356,53 @@ class DictateHistoryCardTest {
                 "reachable control",
             hideAt >= 0 && stopAt < hideAt,
         )
+    }
+
+    @Test
+    fun aLateTranscriptFromTheStoppedSessionCannotOverwriteTheHistoryCard() {
+        // 🔴 BEHAVIOURAL, through the seam the comment above once claimed did
+        // not exist. `stopAnyLiveCapture()` calls DictationSession.stop(),
+        // which keeps the session alive to finish its upload — so the card
+        // that has since become a history card is still wired to callbacks
+        // that write its transcript, its status line and its level meter.
+        // Audit round 2 of #17: round 1's choice of stop() over discard()
+        // made this certain rather than contingent.
+        val id = store("the stored dictation")
+        val controller = open(DictateLaunch.historyIntent(ctx, id))
+        try {
+            val a = controller.get()
+            shadowOf(Looper.getMainLooper()).idle()
+            val storedText = transcriptOf(a)
+            val storedStatus = statusOf(a)
+            assertTrue("precondition: the stored text is shown", storedText.isNotEmpty())
+
+            // The stopped session finishes its upload and reports in.
+            val late = a.uiCallbacks()
+            late.onTranscript("THE LIVE DICTATION TEXT", true, true)
+            late.onStatus("uploading the live one")
+            late.onTier(AudioCaptureLogic.Tier.REMOTE_ONLY_NO_API)
+            shadowOf(Looper.getMainLooper()).idle()
+
+            assertEquals(
+                "a late transcript from the stopped capture replaced the " +
+                    "stored dictation the user had just tapped",
+                storedText,
+                transcriptOf(a),
+            )
+            assertEquals(
+                "a late status from the stopped capture replaced the " +
+                    "history card's own status line",
+                storedStatus,
+                statusOf(a),
+            )
+            assertEquals(
+                "onTier turned the level meter on for a card that owns no " +
+                    "capture",
+                View.INVISIBLE,
+                a.findViewById<View>(R.id.level_meter).visibility,
+            )
+        } finally {
+            controller.close()
+        }
     }
 }

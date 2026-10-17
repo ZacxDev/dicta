@@ -564,24 +564,71 @@ class BubbleHistoryRevealTest {
     }
 
     @Test
-    fun aRevealAndDismissNearTheTopEdgeLeavesTheBubbleWhereItStarted() {
-        // 🔴 y is asserted against the value it STARTED at — an independent
-        // fact — not against the service's own revealBlockPx field. Deriving
-        // the expectation from the implementation is what made the previous
-        // round-trip test blind to this.
+    fun dismissingTheRowAfterADragLeavesTheBubbleWhereTheUserDraggedIt() {
+        // 🔴 Asserts the BUBBLE's position, not the window origin — and that
+        // distinction is the whole finding. Round 1 wrote a guard here that
+        // pinned `params.y` back to its pre-reveal value, which is the window
+        // ORIGIN; round 2 measured that this teleports the bubble 608 px when
+        // the user drags while the row is up. The bubble sits revealBlockPx
+        // below the window top while revealed and AT the top once hidden, so
+        // the only invariant worth pinning is "the bubble did not move".
+        val service = start()
+        params(service).y = 10          // near the top, so the reveal clamps
+
+        longPress(service)
+        assertEquals("precondition: the row is up", View.VISIBLE, row(service).visibility)
+
+        val block: Int = field(service, "revealBlockPx")
+        assertTrue("precondition: the row has height", block > 0)
+
+        // The user drags the bubble well away from the clamped position.
+        params(service).y = 400
+        val bubbleBeforeDismiss = params(service).y + block
+
+        val t = SystemClock.uptimeMillis()
+        rootOf(service).dispatchTouchEvent(
+            MotionEvent.obtain(t, t, MotionEvent.ACTION_OUTSIDE, 0f, 0f, 0)
+        )
+        idle(0)
+
+        assertEquals(
+            "dismissing the row moved the bubble away from where the user " +
+                "dragged it — the hide side gave back a recorded shift " +
+                "instead of the row's height",
+            bubbleBeforeDismiss,
+            params(service).y,
+        )
+    }
+
+    @Test
+    fun aRevealNearTheTopEdgeDropsTheBubbleOnceAndThenStopsMoving() {
+        // 🔴 The POSITIVE framing of what round 1 mistook for a bug. The drop
+        // is the clamp keeping the row on screen; it is bounded by
+        // revealBlockPx and happens ONCE, because after the first cycle the
+        // bubble is no longer within revealBlockPx of the top. Pinning it
+        // stops the next reader "fixing" it back into a teleport.
         val service = start()
         params(service).y = 10
 
         longPress(service)
-        assertEquals("precondition: the row is up", View.VISIBLE, row(service).visibility)
+        val block: Int = field(service, "revealBlockPx")
+        bubble(service).performClick()      // dismiss
+        idle(0)
+        val afterFirst = params(service).y
+
+        assertTrue(
+            "the one-time drop should be bounded by the row's height",
+            afterFirst - 10 <= block,
+        )
+
+        longPress(service)
         bubble(service).performClick()
         idle(0)
 
         assertEquals(
-            "reveal+dismiss near the top edge moved the bubble: the clamp " +
-                "absorbed part of the upward shift and the hide side gave " +
-                "back the full amount",
-            10,
+            "the bubble moved again on a later cycle, so the drop is " +
+                "cumulative after all",
+            afterFirst,
             params(service).y,
         )
     }

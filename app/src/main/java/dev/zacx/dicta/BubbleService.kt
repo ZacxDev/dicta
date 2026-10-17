@@ -181,12 +181,6 @@ class BubbleService : Service() {
     private var revealRowMarginPx = 0
 
     /**
-     * How much [showReveal] actually moved `y` by, AFTER the clamp had its
-     * say — the amount the hide side must give back. See [showReveal].
-     */
-    private var revealShiftAppliedPx = 0
-
-    /**
      * Bumped on every reveal and every dismissal, so an in-flight async
      * history load can tell that the reveal it belongs to is gone. See
      * [revealHistory].
@@ -996,6 +990,16 @@ class BubbleService : Service() {
      * pinned at `y`, so a child added above the bubble would otherwise shove
      * the bubble down by the row's height.
      *
+     * ⚠ **"Stays put" is exact on the hide side and approximate on the reveal
+     * side, and the difference is the clamp, not a defect.** Hiding always
+     * gives back the full `revealBlockPx`, so the bubble returns to wherever
+     * it currently is — including after a drag. Revealing can move it: if the
+     * row would go off the top of the display, [clampWindow] pins the window
+     * and the bubble drops by whatever the clamp absorbed. That is visible at
+     * reveal time, is bounded by `revealBlockPx`, and happens once rather
+     * than cumulatively. Round 1 of #17 read it as a hide-side bug and
+     * "corrected" it into a 608 px teleport; see the hide arm.
+     *
      * Idempotent. The machine clears its own reveal flag on the next event, so
      * a chip tap (which hides the row directly, outside the machine) is
      * followed by a [BubbleDictation.Effect.HideHistory] for a row that is
@@ -1012,21 +1016,26 @@ class BubbleService : Service() {
         if ((row.visibility == View.VISIBLE) == show) return
         if (show) {
             row.visibility = View.VISIBLE
-            val before = params.y
             params.y -= revealBlockPx
-            // 🔴 Record what the clamp ABSORBS, because the hide side has to
-            // undo the shift that was actually APPLIED, not the one that was
-            // asked for. Near the top edge `y - revealBlockPx` goes negative,
-            // clampY pins it to 0, and an unconditional `y += revealBlockPx`
-            // on hide then leaves the bubble LOWER than it started — 290 px
-            // at y=10, repeatable, so successive reveals walk it down the
-            // screen. Audit round 1 of #17, F2.
-            clampWindow()
-            revealShiftAppliedPx = before - params.y
         } else {
+            // 🔴 ALWAYS the full `revealBlockPx`, never "the shift the clamp
+            // left". The bubble sits `revealBlockPx` below the window top
+            // while the row is up and AT the top once it is away, so
+            // `y += revealBlockPx` is exactly what holds the BUBBLE still —
+            // the invariant the user can actually see.
+            //
+            // Round 1 of #17 changed this to a recorded post-clamp shift, and
+            // round 2 measured what that cost: reveal near the top edge, DRAG
+            // the bubble down, dismiss — and it teleported 608 px back up,
+            // because a recorded number pins the window ORIGIN while the drag
+            // had since moved it. Round 1 justified the change with "290 px,
+            // repeatable, so successive reveals walk it down the screen";
+            // that was measured FALSE. The behaviour it replaced is a
+            // ONE-TIME bounded drop of `revealBlockPx - y`, stable from the
+            // second cycle on, and it is the clamp legitimately keeping the
+            // row on screen rather than a hide-side bug.
             row.visibility = View.GONE
-            params.y += revealShiftAppliedPx
-            revealShiftAppliedPx = 0
+            params.y += revealBlockPx
             revealBlockPx = 0
             row.removeAllViews()
         }
