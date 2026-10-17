@@ -174,6 +174,25 @@ class BubbleService : Service() {
     /** One chip plus the gap under it. */
     private var chipBlockPx = 0
 
+    /**
+     * The chip row's own `bottomMargin`, which is part of the height the
+     * window gains while the row is VISIBLE. See [renderReveal].
+     */
+    private var revealRowMarginPx = 0
+
+    /**
+     * How much [showReveal] actually moved `y` by, AFTER the clamp had its
+     * say — the amount the hide side must give back. See [showReveal].
+     */
+    private var revealShiftAppliedPx = 0
+
+    /**
+     * Bumped on every reveal and every dismissal, so an in-flight async
+     * history load can tell that the reveal it belongs to is gone. See
+     * [revealHistory].
+     */
+    private var revealGeneration = 0
+
     /** Off-main-thread reads of the history index. See [loadRecentHistory]. */
     private val worker = java.util.concurrent.Executors.newSingleThreadExecutor()
 
@@ -280,6 +299,7 @@ class BubbleService : Service() {
         cancelBlockPx = ((CANCEL_DP + CANCEL_GAP_DP) * density).toInt()
         revealWidthPx = (REVEAL_WIDTH_DP * density).toInt()
         chipBlockPx = ((CHIP_DP + CHIP_GAP_DP) * density).toInt()
+        revealRowMarginPx = (CHIP_GAP_DP * density).toInt()
 
         params = WindowManager.LayoutParams(
             // 🔴 WRAP_CONTENT, not the old fixed 60 dp square. The window has
@@ -370,7 +390,9 @@ class BubbleService : Service() {
             layoutParams = LinearLayout.LayoutParams(
                 revealWidthPx,
                 LinearLayout.LayoutParams.WRAP_CONTENT,
-            ).apply { bottomMargin = (CHIP_GAP_DP * density).toInt() }
+            // Same field renderReveal adds to revealBlockPx — one rule, one
+            // place. Computing it twice is how F4 got in.
+            ).apply { bottomMargin = revealRowMarginPx }
             visibility = View.GONE
         }
 
@@ -850,7 +872,19 @@ class BubbleService : Service() {
      * `SettingsActivity` uses for its usage line.
      */
     private fun revealHistory() {
+        // 🔴 The store read is ASYNC, so the reveal it belongs to can be
+        // dismissed before the items land. Without this the late callback
+        // shows a row nobody asked for any more — and that row is then
+        // PERMANENT: the machine cleared `historyRevealed` when it dismissed,
+        // so no later event emits HideHistory, `Event.TouchedOutside` returns
+        // an empty list, and the window keeps FLAG_WATCH_OUTSIDE_TOUCH armed
+        // device-wide. Found by audit round 1 of #17; it is the same "a row
+        // with no way to close it" defect this PR's outside-touch commit was
+        // written to fix, arriving by the async route that commit did not
+        // touch.
+        val generation = ++revealGeneration
         loadRecentHistory { items ->
+            if (generation != revealGeneration) return@loadRecentHistory
             renderReveal(items)
             showReveal(true)
         }
@@ -893,7 +927,14 @@ class BubbleService : Service() {
                 )
             }
         }
-        revealBlockPx = row.childCount * chipBlockPx
+        // 🔴 Plus the ROW's own bottomMargin, which counts toward the
+        // container's height while the row is VISIBLE and is skipped when it
+        // is GONE — so it is part of the block the window grows by, exactly
+        // like each chip's topMargin. Omitting it understated the height by
+        // one CHIP_GAP (measured 318 vs 300), which both shoved the bubble
+        // down on every reveal and told clampY the window was shorter than it
+        // is. Audit round 1 of #17, F4.
+        revealBlockPx = row.childCount * chipBlockPx + revealRowMarginPx
     }
 
     /**
@@ -963,13 +1004,29 @@ class BubbleService : Service() {
     private fun showReveal(show: Boolean) {
         if (root == null) return
         val row = historyRow ?: return
+        // 🔴 BEFORE the idempotence check, and that ordering is the whole
+        // point: in the race this guards, the row is still GONE when the
+        // dismissal arrives, so a bump placed after the early return would
+        // never execute in exactly the case it exists for.
+        if (!show) revealGeneration++
         if ((row.visibility == View.VISIBLE) == show) return
         if (show) {
             row.visibility = View.VISIBLE
+            val before = params.y
             params.y -= revealBlockPx
+            // 🔴 Record what the clamp ABSORBS, because the hide side has to
+            // undo the shift that was actually APPLIED, not the one that was
+            // asked for. Near the top edge `y - revealBlockPx` goes negative,
+            // clampY pins it to 0, and an unconditional `y += revealBlockPx`
+            // on hide then leaves the bubble LOWER than it started — 290 px
+            // at y=10, repeatable, so successive reveals walk it down the
+            // screen. Audit round 1 of #17, F2.
+            clampWindow()
+            revealShiftAppliedPx = before - params.y
         } else {
             row.visibility = View.GONE
-            params.y += revealBlockPx
+            params.y += revealShiftAppliedPx
+            revealShiftAppliedPx = 0
             revealBlockPx = 0
             row.removeAllViews()
         }

@@ -314,4 +314,43 @@ class DictateHistoryCardTest {
             controller.close()
         }
     }
+
+    @Test
+    fun populateFromHistoryClosesTheMicrophoneBeforeItHidesTheStopControl() {
+        // 🔴 A STRUCTURAL guard, and the weaker kind — say so rather than let
+        // the name imply more. What it pins: that `populateFromHistory` stops
+        // any live capture, and that it does so BEFORE hiding `micButton`,
+        // which is the card's only stop control. Audit round 1 of #17, F3:
+        // without it a history intent arriving at a card with a live
+        // dictation left the recording running with no reachable control
+        // while the status line said the microphone was off.
+        //
+        // 🔴 WHAT IT DOES NOT PROVE: that the capture actually stops. A live
+        // DictationSession is not constructible under Robolectric and the
+        // activity exposes no session seam — adding one purely for this test
+        // is the production-change-for-testability that round 0 questioned
+        // elsewhere (D3). This guard can therefore pass while
+        // `stopAnyLiveCapture` is gutted. The behavioural check is a DEVICE
+        // step: start a dictation from the QS tile, long-press the bubble,
+        // tap a chip, and confirm the recording indicator goes away.
+        val src = File("src/main/java/dev/zacx/dicta/DictateActivity.kt")
+        assertTrue("cannot read ${src.absolutePath}", src.isFile)
+        val body = src.readText()
+            .substringAfter("private fun populateFromHistory(")
+            .substringBefore("\n    private fun ")
+
+        val stopAt = body.indexOf("stopAnyLiveCapture()")
+        val hideAt = body.indexOf("micButton.visibility = View.GONE")
+        assertTrue(
+            "populateFromHistory does not stop a live capture at all — it " +
+                "hides the only stop control and leaves the microphone open",
+            stopAt >= 0,
+        )
+        assertTrue(
+            "populateFromHistory hides micButton BEFORE stopping the " +
+                "capture, so there is a window with an open mic and no " +
+                "reachable control",
+            hideAt >= 0 && stopAt < hideAt,
+        )
+    }
 }

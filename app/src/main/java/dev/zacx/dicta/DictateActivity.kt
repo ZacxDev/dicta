@@ -259,6 +259,21 @@ class DictateActivity : Activity() {
      * which is the same shape `SettingsActivity`'s usage line uses.
      */
     private fun populateFromHistory(id: String) {
+        // 🔴 CLOSE THE MICROPHONE FIRST. This hides `micButton`, which is the
+        // card's ONLY stop control — so without this a history intent
+        // arriving at a card with a live dictation left the recording running
+        // with no reachable way to stop it, its partials interleaving into
+        // the text area, while the status line read "the microphone is off."
+        //
+        // Reachable because the bubble's machine and the card's session are
+        // independent: open the card from the QS tile (which starts a
+        // dictation), the bubble machine stays IDLE so a long press still
+        // reveals, and a chip tap delivers onNewIntent to the card on top.
+        // Audit round 1 of #17, F3.
+        //
+        // Stop rather than discard, for the reason requestScreenshot already
+        // gives: a finalised recording is uploaded, an abandoned one is lost.
+        stopAnyLiveCapture()
         historyItem = null
         levelMeter.visibility = View.INVISIBLE
         micButton.visibility = View.GONE
@@ -544,6 +559,26 @@ class DictateActivity : Activity() {
                 statusText.text = getString(R.string.mic_denied_fallback)
                 micButton.text = getString(R.string.use_system_voice_typing)
             }
+        }
+    }
+
+    /**
+     * Stops any capture this card owns — the upload session and the phone
+     * recogniser — and resets the mic button's label.
+     *
+     * One rule, one place: both callers need "the microphone must not still
+     * be open after this", and a second open-coded copy is how the two drift.
+     * `stop()` rather than `discard()`: a finalised recording is uploaded, an
+     * abandoned one is lost.
+     */
+    private fun stopAnyLiveCapture() {
+        session?.takeIf { it.isRecording }?.let {
+            it.stop()
+            micButton.text = getString(R.string.start_dictation)
+        }
+        speech?.takeIf { it.isListening }?.let {
+            stopPhoneRecogniser()
+            micButton.text = getString(R.string.start_dictation)
         }
     }
 
@@ -966,14 +1001,7 @@ class DictateActivity : Activity() {
         // arbitration, so the capture would be fed silence mid-utterance.
         // Stopping explicitly means the recording is finalised and uploaded
         // rather than abandoned.
-        session?.takeIf { it.isRecording }?.let {
-            it.stop()
-            micButton.text = getString(R.string.start_dictation)
-        }
-        speech?.takeIf { it.isListening }?.let {
-            stopPhoneRecogniser()
-            micButton.text = getString(R.string.start_dictation)
-        }
+        stopAnyLiveCapture()
         val mpm = getSystemService(MediaProjectionManager::class.java)
         if (mpm == null) {
             statusText.text = getString(R.string.screenshot_unsupported)

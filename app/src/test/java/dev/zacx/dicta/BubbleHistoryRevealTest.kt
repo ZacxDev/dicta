@@ -502,4 +502,178 @@ class BubbleHistoryRevealTest {
 
         assertEquals(300, params(service).y)
     }
+
+    // --- audit round 1 of #17: the async race, the clamp asymmetry, the
+    // --- understated height, and the shell-side outside-touch wiring -------
+
+    private val watchOutside = WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH
+
+    private fun rootOf(service: BubbleService): LinearLayout =
+        requireNotNull(field<LinearLayout?>(service, "root")) { "no root view" }
+
+    /** Starts a service whose history load is QUEUED, not run. */
+    private fun startDeferred(
+        queue: MutableList<Runnable>,
+        items: List<DictationHistoryStore.Item> = twoItems(),
+    ): BubbleService {
+        ShadowSettings.setCanDrawOverlays(true)
+        shadowOf(RuntimeEnvironment.getApplication())
+            .grantPermissions(Manifest.permission.RECORD_AUDIO)
+        val c = Robolectric.buildService(BubbleService::class.java)
+        controller = c
+        c.get().sessionFactory = { fake }
+        c.get().historyProvider = { limit -> items.take(limit) }
+        c.get().historyExecutor = java.util.concurrent.Executor { queue.add(it) }
+        return c.create().get()
+    }
+
+    @Test
+    fun aRevealDismissedBeforeItsLoadLandsNeverAppears() {
+        // 🔴 The blocker. The store read is async; if the reveal is dismissed
+        // while it is in flight, the late callback used to show the row
+        // anyway — and that row was PERMANENT, because the machine had
+        // already cleared `historyRevealed`, so nothing would ever emit
+        // HideHistory for it.
+        val queue = mutableListOf<Runnable>()
+        val service = startDeferred(queue)
+
+        longPress(service)
+        assertEquals("precondition: the load is queued, not run", 1, queue.size)
+        assertEquals(
+            "precondition: nothing is shown yet", View.GONE, row(service).visibility,
+        )
+
+        bubble(service).performClick()   // dismiss while the load is in flight
+        idle(0)
+
+        queue.forEach { it.run() }
+        idle(0)
+
+        assertEquals(
+            "the row appeared AFTER it was dismissed — and nothing can close " +
+                "it, because the machine already cleared its reveal flag",
+            View.GONE,
+            row(service).visibility,
+        )
+        assertEquals(
+            "FLAG_WATCH_OUTSIDE_TOUCH was left armed device-wide by a row " +
+                "that is not even on screen",
+            0,
+            params(service).flags and watchOutside,
+        )
+    }
+
+    @Test
+    fun aRevealAndDismissNearTheTopEdgeLeavesTheBubbleWhereItStarted() {
+        // 🔴 y is asserted against the value it STARTED at — an independent
+        // fact — not against the service's own revealBlockPx field. Deriving
+        // the expectation from the implementation is what made the previous
+        // round-trip test blind to this.
+        val service = start()
+        params(service).y = 10
+
+        longPress(service)
+        assertEquals("precondition: the row is up", View.VISIBLE, row(service).visibility)
+        bubble(service).performClick()
+        idle(0)
+
+        assertEquals(
+            "reveal+dismiss near the top edge moved the bubble: the clamp " +
+                "absorbed part of the upward shift and the hide side gave " +
+                "back the full amount",
+            10,
+            params(service).y,
+        )
+    }
+
+    @Test
+    fun theWindowShiftMatchesTheHeightTheRowActuallyAdds() {
+        // 🔴 MEASURES the container both ways instead of trusting
+        // revealBlockPx. The old guards reflected that field out and compared
+        // it with itself, so an understated height was invisible to them.
+        val service = start()
+        val root = rootOf(service)
+        val spec = View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)
+
+        root.measure(spec, spec)
+        val collapsed = root.measuredHeight
+        val before = params(service).y
+
+        longPress(service)
+        root.measure(spec, spec)
+        val expanded = root.measuredHeight
+
+        assertEquals(
+            "the window moved by a different amount than the row actually " +
+                "added, so the bubble shifts on reveal and clampY is told " +
+                "the window is the wrong height",
+            expanded - collapsed,
+            before - params(service).y,
+        )
+    }
+
+    @Test
+    fun theOutsideTouchFlagIsArmedOnlyWhileTheRowIsUp() {
+        // 🔴 This and the two below exist because #17's own commit message
+        // claimed the flag toggle "has no JVM path". It does — this harness
+        // already reaches `params` by reflection. Audit round 1, F6.
+        val service = start()
+        assertEquals(
+            "armed before any reveal", 0, params(service).flags and watchOutside,
+        )
+
+        longPress(service)
+        assertTrue(
+            "the row is up but the window is not watching outside touches, " +
+                "so nothing can dismiss it",
+            params(service).flags and watchOutside != 0,
+        )
+
+        bubble(service).performClick()
+        idle(0)
+        assertEquals(
+            "the flag survived the dismissal, so every touch on the device " +
+                "keeps waking this service",
+            0,
+            params(service).flags and watchOutside,
+        )
+    }
+
+    @Test
+    fun anOutsideTouchOnTheWindowRootDismissesTheRow() {
+        val service = start()
+        longPress(service)
+        assertEquals(View.VISIBLE, row(service).visibility)
+
+        val t = SystemClock.uptimeMillis()
+        rootOf(service).dispatchTouchEvent(
+            MotionEvent.obtain(t, t, MotionEvent.ACTION_OUTSIDE, 0f, 0f, 0)
+        )
+        idle(0)
+
+        assertEquals(
+            "an outside touch did not close the row",
+            View.GONE,
+            row(service).visibility,
+        )
+    }
+
+    @Test
+    fun anOutsideTouchDoesNotStartARecording() {
+        // The hazard if ACTION_OUTSIDE were wired to the tap path: a touch
+        // anywhere on the device would begin a dictation.
+        val service = start()
+        longPress(service)
+        val startsBefore = fake.starts
+
+        val t = SystemClock.uptimeMillis()
+        rootOf(service).dispatchTouchEvent(
+            MotionEvent.obtain(t, t, MotionEvent.ACTION_OUTSIDE, 0f, 0f, 0)
+        )
+        idle(0)
+
+        assertEquals(
+            "an outside touch started a capture", startsBefore, fake.starts,
+        )
+    }
 }

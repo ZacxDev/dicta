@@ -114,7 +114,8 @@ object HistoryLabel {
      * there is no safety argument underneath it.
      *
      * **Measured, not reasoned** — removing the cap and running the suite
-     * (556 tests) fails exactly two assertions, and `everyLabelFitsTheBudget`
+     * (556 tests at the time it was measured) fails exactly two assertions,
+     * and `everyLabelFitsTheBudget`
      * is **not** one of them:
      *  - `anAbsurdAgeIsCappedRatherThanWidening` — the cosmetic guard itself;
      *  - `theLabelUsesTheRoomTheShorterAgeLeaves` — which uses `"99d+"` as a
