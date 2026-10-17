@@ -236,9 +236,16 @@ class MicOpenerSeamTest {
      * **directly** — including `isFinal = true` — rather than through
      * `postToMain`, so a destroyed session's late local final reached whatever
      * was listening. [BubbleService] has a generation gate of its own and
-     * happens to drop it; `DictateActivity.SessionCallbacks` has none and
-     * writes the card's views. The consumer here deliberately has no gate,
-     * which is the case the session's own flag is supposed to cover.
+     * happens to drop it.
+     *
+     * ⚠ `DictateActivity.SessionCallbacks` gained a generation gate in #17,
+     * but it is **not** equivalent and this sentence must not be read as
+     * saying the gap closed. `BubbleService` bumps on EVERY recording, which
+     * is what drops a dead session's late transcript; `DictateActivity`
+     * bumps only on a history switch, so a card session abandoned any other
+     * way still reaches the card's views. The consumer here deliberately has
+     * no gate, which is the case the session's own flag is supposed to
+     * cover.
      */
     @Test
     fun aDestroyedSessionsLocalFinalTranscriptNeverReachesAnUngatedConsumer() {

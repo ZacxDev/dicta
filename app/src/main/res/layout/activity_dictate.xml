@@ -342,6 +342,42 @@
                 android:textAllCaps="false"
                 android:text="@string/start_dictation" />
 
+            <!--
+              Re-transcribe. GONE at rest and SHOWN ONLY in the history mode
+              (DictateLaunch.EXTRA_HISTORY_ID), where @id/mic_button is hidden
+              in the same breath.
+
+              🔴 Why a separate control rather than relabelling the mic pill,
+              which would have cost no XML at all: @id/mic_button's listener is
+              `toggleDictation()`, i.e. it opens the microphone. A history card
+              is the one state in this app where the microphone must not be
+              touched — the whole point of RemoteTranscriber is an upload-only
+              path — and "the same button, with a different label and a swapped
+              listener" makes that a property of whichever assignment ran last.
+              Two buttons makes it a property of the layout, and "mic_button is
+              GONE on a history card" is then a state assertion a test can make.
+
+              A Button, not an ImageButton: OverlayMinimalLayoutTest ledgers the
+              ImageButton set precisely so an icon-only control cannot escape
+              its label assertions, and this control is not icon-only — it is a
+              word, which is what the repo's "never carry state by colour or
+              position alone" rule wants here anyway.
+            -->
+            <Button
+                android:id="@+id/retranscribe_button"
+                android:layout_width="0dp"
+                android:layout_height="56dp"
+                android:layout_weight="1"
+                android:background="@drawable/outline_button_bg"
+                android:paddingStart="22dp"
+                android:paddingEnd="22dp"
+                android:stateListAnimator="@null"
+                android:textColor="@color/dicta_on_surface"
+                android:textSize="15sp"
+                android:textAllCaps="false"
+                android:visibility="gone"
+                android:text="@string/history_retranscribe" />
+
             <!-- The overflow. 48dp square = the minimum touch target, and the
                  ONLY always-visible route to the hidden actions, so it carries
                  both a contentDescription and a tooltipText and DictateActivity

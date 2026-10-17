@@ -89,6 +89,38 @@
          toggle in the dictation card. -->
     <string name="bubble_cancel">Cancel recording — discard it, send nothing</string>
 
+    <!-- The long-press reveal.
+
+         The chip shows a short label built by HistoryLabel (an age plus the
+         opening words); this is its contentDescription AND its tooltipText,
+         and it has to say what tapping DOES, because "2h · the quick brown
+         fox" announces the item and not the action. A chip whose label is the
+         transcript reads to a screen reader as a piece of text rather than as
+         a button. -->
+    <string name="bubble_history_chip">%1$s — open and re-transcribe</string>
+    <!-- The reveal with nothing to reveal. Deliberately a chip-shaped label
+         rather than an empty row: a gesture whose result is indistinguishable
+         from "nothing happened" is indistinguishable from a broken gesture. -->
+    <string name="bubble_history_empty">No saved dictations yet</string>
+
+    <!-- The card opened on a STORED dictation (DictateLaunch.EXTRA_HISTORY_ID).
+
+         🔴 These four are referenced from DictateActivity.kt, which puts them
+         inside OverlayMinimalLayoutTest's derived status-string length budget.
+         Keep them short — not as a style preference, but because that guard
+         goes red on the longest one, and the fix for a red there is another
+         line on @id/status_text, not a shorter sentence. -->
+    <string name="history_retranscribe">Re-transcribe</string>
+    <!-- Says both what is on screen and that nothing is being recorded; the
+         card otherwise looks exactly like a finished dictation. -->
+    <string name="history_saved">Saved dictation — the microphone is off.</string>
+    <!-- The entry was evicted (or cleared) between the reveal and the tap. Not
+         an error: retention is allowed to remove things. -->
+    <string name="history_missing">That dictation is no longer saved.</string>
+    <!-- The index knows the item but its audio file has gone, so there is
+         nothing to re-send. The transcript on screen is still real. -->
+    <string name="history_audio_missing">The audio for this dictation is gone — the text is all that is left.</string>
+
     <!-- The runaway cap. Says what happened to the audio, not just that a limit
          was hit: the recording is submitted, not thrown away. -->
     <string name="stt_max_duration">Two-minute limit reached — transcribing what was recorded.</string>

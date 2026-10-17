@@ -57,6 +57,66 @@ class DictateLaunchTest {
         )
     }
 
+    @Test
+    fun theHistoryIntentInheritsEverythingTheOverlayIntentCarries() {
+        // 🔴 The point of building it through `intent()` rather than by hand.
+        // A hand-built `Intent(this, DictateActivity::class.java)` with
+        // NEW_TASK added would look right at the call site and reproduce #11
+        // exactly: the flag present and correct, the affinity inherited from
+        // the application default, the translucent card over Dicta's own UI.
+        val intent = DictateLaunch.historyIntent(ctx, "item-7")
+        assertEquals(
+            DictateActivity::class.java.name,
+            intent.component?.className,
+        )
+        assertTrue(
+            "the history intent does not carry FLAG_ACTIVITY_NEW_TASK, so it " +
+                "was not built through DictateLaunch.intent()",
+            intent.flags and Intent.FLAG_ACTIVITY_NEW_TASK != 0,
+        )
+        assertEquals(
+            "item-7",
+            intent.getStringExtra(DictateLaunch.EXTRA_HISTORY_ID),
+        )
+    }
+
+    @Test
+    fun theTwoLaunchExtrasAreDistinctStrings() {
+        // 🔴 Cheap, and it guards a copy-paste with a silent consequence: one
+        // name for both extras makes every history launch ALSO look like an
+        // attach (or the reverse), and the card then starts a recording with
+        // nothing on screen to say so.
+        assertFalse(
+            "EXTRA_HISTORY_ID and EXTRA_ATTACH_SESSION are the same string " +
+                "(${DictateLaunch.EXTRA_HISTORY_ID}), so the two launch modes " +
+                "are indistinguishable at the receiver",
+            DictateLaunch.EXTRA_HISTORY_ID == DictateLaunch.EXTRA_ATTACH_SESSION,
+        )
+    }
+
+    @Test
+    fun neitherPlainLaunchCarriesAHistoryId() {
+        // Positive control for the branch in DictateActivity: if the plain or
+        // the attach intent carried a history id, every tile tap would open a
+        // history card instead of a dictation.
+        assertEquals(
+            null,
+            DictateLaunch.intent(ctx).getStringExtra(DictateLaunch.EXTRA_HISTORY_ID),
+        )
+        assertEquals(
+            null,
+            DictateLaunch.transcribingIntent(ctx)
+                .getStringExtra(DictateLaunch.EXTRA_HISTORY_ID),
+        )
+        assertEquals(
+            "the history intent carries the ATTACH flag, so the card would " +
+                "attach to a live session instead of showing the stored one",
+            false,
+            DictateLaunch.historyIntent(ctx, "item-7")
+                .getBooleanExtra(DictateLaunch.EXTRA_ATTACH_SESSION, false),
+        )
+    }
+
     // --- the seam: manifest <-> constant ------------------------------------
 
     private fun manifestSource(): String =

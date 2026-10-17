@@ -85,6 +85,37 @@ object DictateLaunch {
         intent(context).putExtra(EXTRA_ATTACH_SESSION, true)
 
     /**
+     * 🔴 Opens the card on a **stored** dictation instead of a live one.
+     *
+     * When present, `DictateActivity.onCreate` populates the card from history
+     * and must NOT call `startDictation()` — the same hazard
+     * [EXTRA_ATTACH_SESSION] guards, reached by a third route. The two are
+     * deliberately **different strings**, pinned as distinct by
+     * `DictateLaunchTest`: a copy-paste that gave them the same name would
+     * make every history launch start a recording, silently, with the card
+     * looking exactly right.
+     */
+    const val EXTRA_HISTORY_ID: String = "dev.zacx.dicta.HISTORY_ID"
+
+    /**
+     * [intent], plus "show the stored dictation [historyId] and offer to
+     * re-transcribe it".
+     *
+     * 🔴 Built **through** [intent], never hand-rolled. `FLAG_ACTIVITY_NEW_TASK`
+     * and — through the manifest — [OVERLAY_TASK_AFFINITY] are then inherited
+     * rather than re-derived, which is the entire mechanism of #11. A
+     * hand-built `Intent(this, DictateActivity::class.java)` in `BubbleService`
+     * with `NEW_TASK` added would reproduce that bug exactly: the flag present
+     * and correct, the affinity inherited from the application default, and the
+     * translucent card rendered over Dicta's own UI.
+     * `DictateLaunchTest.onlyDictateLaunchAndMainActivityConstructOverlayIntents`
+     * is the ledger that says so, and it stays green for this addition
+     * precisely because of the delegation.
+     */
+    fun historyIntent(context: Context, historyId: String): Intent =
+        intent(context).putExtra(EXTRA_HISTORY_ID, historyId)
+
+    /**
      * [intent] wrapped for the callers that cannot start an activity directly:
      * the Quick Settings tile (the `Intent` overload of
      * `startActivityAndCollapse` is deprecated as of API 34) and the
