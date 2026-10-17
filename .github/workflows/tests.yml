@@ -34,12 +34,19 @@ jobs:
       # The JUnit XML is the authority on what ran. A Gradle task can report
       # success having executed ZERO tests, and a gate that is green because it
       # measured nothing is worse than no gate — so the count is asserted, not
-      # inferred from the task's exit status. --min is the floor the suite is at
-      # today: raise it when tests are added, and it catches a silent collapse
-      # to a handful.
+      # inferred from the task's exit status.
+      #
+      # The floor is 500 against a suite of 575 tests / 49 classes (2026-10-17).
+      # It was --min 3, which could only ever catch a collapse to almost
+      # literally nothing: against this suite 3 IS the "handful" the old comment
+      # claimed to catch, so the gate read as coverage while providing nearly
+      # none. The ~13% headroom is deliberate — it tolerates deleting a class
+      # during a refactor without tolerating a partial collapse. Raise it when
+      # the suite grows; if you LOWER it, say why in the commit, because
+      # lowering it is how this gate goes quietly back to being decorative.
       - name: Assert tests actually ran
         if: always()
-        run: python3 scripts/assert-tests-ran.py --min 3
+        run: python3 scripts/assert-tests-ran.py --min 500
 
       - name: Upload test reports
         if: always()
