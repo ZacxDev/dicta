@@ -359,33 +359,41 @@ class DictateHistoryCardTest {
     }
 
     @Test
-    fun aFreshSessionAfterAHistorySwitchIsNotMuted() {
-        // 🔴 THE OTHER HALF, and the one round 2 got wrong. Round 2 gated on
-        // "is this a history card", so after attach → history → start another
-        // bubble dictation the card was muted FOR THE REST OF ITS LIFE: the
-        // attach intent carries no history id, onNewIntent returns early by
-        // design, and nothing ever cleared the flag. micButton is GONE on a
-        // history card, so there was no recovery but closing it.
+    fun aNewBubbleDictationAfterAHistorySwitchStillReachesTheCard() {
+        // 🔴 THE WEDGE, driven through the REAL path: the bus, not a
+        // hand-built callbacks object.
         //
-        // A generation cannot wedge that way — a NEW callbacks object is born
-        // current. Suppressing the stale sink is worthless if the live one is
-        // suppressed with it, so both directions are pinned.
+        // Round 3 "fixed" this and round 4 measured that it had not. Its
+        // guard called uiCallbacks() after the switch, which builds a fresh
+        // sink and so asserts a recovery production never performs — the
+        // exact construction round 3 had criticised in round 2's test. On
+        // this path NOTHING rebuilt the sink: onNewIntent returned on the
+        // missing history id, micButton is GONE so startDictation is
+        // unreachable, and BubbleSessionBus.deliver saw a non-empty sink list
+        // so it buffered nothing either. The dictation uploaded, stored, and
+        // never appeared, with no recovery but closing the card.
         val id = store("the stored dictation")
-        val controller = open(Intent(ctx, DictateActivity::class.java))
+        val controller = open(DictateLaunch.transcribingIntent(ctx))
         try {
             val a = controller.get()
+
+            // The user picks a history chip.
             controller.newIntent(DictateLaunch.historyIntent(ctx, id))
             awaitStatusChange("") { transcriptOf(a) }
 
-            // A new session attaches and reports in.
-            val fresh = a.uiCallbacks()
-            fresh.onTranscript("TEXT FROM THE NEW DICTATION", true, true)
+            // The user starts ANOTHER bubble dictation: the service fires the
+            // attach intent at the already-open card.
+            controller.newIntent(DictateLaunch.transcribingIntent(ctx))
+            shadowOf(Looper.getMainLooper()).idle()
+
+            // ...and that dictation's transcript arrives over the bus.
+            BubbleSessionBus.sink.onTranscript("TEXT FROM THE NEW DICTATION", true, true)
             shadowOf(Looper.getMainLooper()).idle()
 
             assertEquals(
-                "a session created AFTER the history switch was muted too, " +
-                    "so the card is permanently dead and the user's new " +
-                    "dictation never appears",
+                "a bubble dictation started after a history switch never " +
+                    "reached the card — the sink registered with the bus is " +
+                    "still the pre-switch one and the staleness gate mutes it",
                 "TEXT FROM THE NEW DICTATION",
                 transcriptOf(a),
             )

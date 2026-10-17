@@ -36,14 +36,34 @@ class SessionCallbacksGateTest {
         return f.readText()
     }
 
-    /** The body of `private inner class SessionCallbacks`. */
+    /**
+     * The body of `private inner class SessionCallbacks`.
+     *
+     * ⚠ Bounded by BRACE DEPTH, not by scanning for the next KDoc opener.
+     * The earlier version matched on a four-space-indented doc-comment start
+     * and held only because the following activity member happened to carry
+     * one — a member added without a doc comment would have silently
+     * extended the parsed body and pulled unrelated overrides into both
+     * assertions. Round 4 of `#17`.
+     *
+     * (Kotlin nests block comments, so the marker cannot be written
+     * literally in a doc comment anyway — it opens one that never closes.)
+     */
     private fun callbacksBody(): String {
         val s = source()
         val start = s.indexOf("private inner class SessionCallbacks")
         assertTrue("SessionCallbacks not found — was it renamed?", start >= 0)
-        // Ends at the next top-level member of the activity.
-        val end = s.indexOf("\n    /**", start).let { if (it < 0) s.length else it }
-        return s.substring(start, end)
+        val open = s.indexOf('{', start)
+        var depth = 0
+        var i = open
+        while (i < s.length) {
+            when (s[i]) {
+                '{' -> depth++
+                '}' -> { depth--; if (depth == 0) return s.substring(start, i + 1) }
+            }
+            i++
+        }
+        throw AssertionError("unbalanced braces parsing SessionCallbacks")
     }
 
     @Test
@@ -58,13 +78,25 @@ class SessionCallbacksGateTest {
             overrides.isNotEmpty(),
         )
 
-        // An override is gated iff `if (stale()) return` is the first
-        // statement after its signature.
+        // An override is gated iff `if (stale()) return` is its first
+        // STATEMENT.
+        //
+        // 🔴 Comments are stripped before matching, and that is the whole
+        // point of this predicate. Round 4 of `#17` measured the naive
+        // version: prefixing `// ` to the gate in `onClientSilenced` — the
+        // method round 3 had just proved is behaviourally uncovered — left
+        // the entire suite green, because the check matched the gate's TEXT
+        // rather than its execution. Deleting the line failed; commenting it
+        // out did not. A three-character edit walked the guard.
         val ungated = overrides.filter { name ->
             val at = body.indexOf("override fun $name(")
             val afterSig = body.indexOf('\n', body.indexOf('{', at))
-            val firstLine = body.substring(afterSig + 1, body.indexOf('\n', afterSig + 1))
-            !firstLine.contains("if (stale()) return")
+            val firstStatement = body.substring(afterSig + 1)
+                .lineSequence()
+                .map { it.substringBefore("//").trim() }   // strip line comments
+                .firstOrNull { it.isNotEmpty() }
+                .orEmpty()
+            firstStatement != "if (stale()) return"
         }
 
         assertEquals(
@@ -78,15 +110,46 @@ class SessionCallbacksGateTest {
 
     @Test
     fun theGatedSetMatchesTheCallbacksInterface() {
-        // 🔴 The SHRINK direction, and the reason this is a ledger rather
-        // than a loop: if someone deletes an override entirely, the test
-        // above passes vacuously (nothing ungated) while the interface's
-        // default — or the next maintainer's re-added copy — goes unguarded.
+        // 🔴 SCOPE, measured rather than assumed — and NARROWER than this
+        // test's name suggests. Adding an ABSTRACT method to the interface
+        // does not reach this assertion at all: the build fails first,
+        // because Kotlin already requires every abstract member to be
+        // overridden. That direction was never this ledger's to catch.
+        //
+        // What it does catch is the case the compiler cannot see: a member
+        // with a DEFAULT body that SessionCallbacks overrides and then stops
+        // overriding, so the silent default takes over on a card the gate was
+        // protecting. The gate-presence test above goes vacuous there —
+        // nothing ungated, because nothing is there.
         val iface = File("src/main/java/dev/zacx/dicta/DictationSession.kt").readText()
         val ifaceBody = iface.substring(iface.indexOf("interface Callbacks"))
             .substringBefore("\n    }")
-        val declared = Regex("""fun (\w+)\(""").findAll(ifaceBody)
-            .map { it.groupValues[1] }.toSet()
+
+        // 🔴 ABSTRACT members only. A method with a body does not have to be
+        // overridden, so counting it made this fail and blame the maintainer
+        // for "not gating" something optional — measured in round 4 of `#17`
+        // by adding a default method and watching the message accuse it.
+        // A declaration is abstract iff its line carries no body — no `{`
+        // ANYWHERE on it (a one-line default body `fun f() {}` ends with
+        // `}`, so an `endsWith('{')` test misses it; that was this guard's
+        // own first attempt at the fix) and no `=` expression body.
+        val declared = ifaceBody.lineSequence()
+            .mapNotNull { Regex("""^\s*fun (\w+)\(""").find(it)?.groupValues?.get(1)?.to(it) }
+            .filterNot { (_, line) -> line.contains('=') || line.contains('{') }
+            .map { (name, _) -> name }
+            .toSet()
+
+        // ⚠ The MIRROR case is still open and is stated rather than papered
+        // over: a `val` added to this interface is matched by neither regex,
+        // so a property-backed member would pass this ledger unnoticed. The
+        // interface has only functions today; if that changes, this needs to
+        // widen with it.
+        assertTrue(
+            "DictationSession.Callbacks has gained a property — this ledger " +
+                "only tracks abstract functions and is now blind to part of " +
+                "the interface",
+            !Regex("""^\s+va[lr] \w+""", RegexOption.MULTILINE).containsMatchIn(ifaceBody),
+        )
 
         val implemented = Regex("""override fun (\w+)\(""")
             .findAll(callbacksBody()).map { it.groupValues[1] }.toSet()

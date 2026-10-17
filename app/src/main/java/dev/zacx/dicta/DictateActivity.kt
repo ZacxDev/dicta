@@ -219,16 +219,41 @@ class DictateActivity : Activity() {
      * branch would mean a Quick Settings tap (or the notification action) on
      * an already-open card now starts a dictation where today it does nothing
      * — a behaviour change to three entry points, in a change about a fourth.
-     * The attach arm is likewise left alone: it survives a dropped extra today
-     * only because `busSink` stays registered with [BubbleSessionBus] from the
-     * first attach, which is luck rather than design, is adjacent to `#14`
-     * item 1, and is **not** fixed here.
+     * 🔴 The ATTACH arm is the exception, and it is re-run. This paragraph
+     * used to say it was "left alone" because it "survives a dropped extra
+     * today only because `busSink` stays registered … which is luck rather
+     * than design". Round 4 of `#17` measured what happened when that luck
+     * ran out: once the staleness gate existed, the still-registered sink was
+     * a MUTED one, so a new bubble dictation vanished with no recovery.
+     * Re-running the attach arm rebuilds the sink, which is the design the
+     * luck was standing in for.
      */
     override fun onNewIntent(intent: Intent?) {
         super.onNewIntent(intent)
         setIntent(intent)
-        val historyId = intent?.getStringExtra(DictateLaunch.EXTRA_HISTORY_ID) ?: return
-        populateFromHistory(historyId)
+        val historyId = intent?.getStringExtra(DictateLaunch.EXTRA_HISTORY_ID)
+        if (historyId != null) {
+            populateFromHistory(historyId)
+            return
+        }
+        // 🔴 The ATTACH arm, re-run. Round 4 of #17 measured why: with the
+        // card showing a history item, a NEW bubble dictation fires this
+        // intent, and returning here left `busSink` as the sink built before
+        // the history switch — which [SessionCallbacks.stale] mutes. Nothing
+        // else on this path builds a fresh sink (`micButton` is GONE on a
+        // history card, so `startDictation` is unreachable), and
+        // `BubbleSessionBus.deliver` sees a non-empty sink list so it buffers
+        // nothing either. The dictation uploaded, stored, and NEVER appeared,
+        // with no recovery but closing the card.
+        //
+        // This is the widening the KDoc above declined, taken deliberately
+        // and kept to the ATTACH arm only: the tile and the notification send
+        // a plain `intent()` with neither extra and still fall through to the
+        // `return` below, so their behaviour is unchanged. That narrowness is
+        // pinned by `anIntentWithNoHistoryIdDoesNotRestartTheCard`.
+        if (intent?.getBooleanExtra(DictateLaunch.EXTRA_ATTACH_SESSION, false) == true) {
+            attachToBubbleSession()
+        }
     }
 
     /**
@@ -248,6 +273,12 @@ class DictateActivity : Activity() {
         statusText.text = getString(R.string.stt_uploading)
         micButton.text = getString(R.string.start_dictation)
         levelMeter.visibility = View.INVISIBLE
+        // 🔴 Detach first, so this is IDEMPOTENT. It is now reachable twice in
+        // one card's life (see [onNewIntent]), and attaching without
+        // detaching would leave the previous sink registered — every bus
+        // event delivered twice, and the stale sink keeping `sinks` non-empty
+        // so nothing ever buffers.
+        busSink?.let { BubbleSessionBus.detach(it) }
         val sink = uiCallbacks()
         busSink = sink
         BubbleSessionBus.attach(sink)
@@ -871,8 +902,13 @@ class DictateActivity : Activity() {
         private val bornAt = cardGeneration
 
         /**
-         * Whether this callbacks object belongs to a card revision that has
-         * since been replaced.
+         * Whether this callbacks object was built before the last history
+         * switch.
+         *
+         * ⚠ Deliberately narrow wording. An earlier draft said it answers
+         * "did this callback come from the session the card abandoned?" — it
+         * does not: the card can abandon a session without a history switch
+         * (the mic button on an attached card), and no bump happens there.
          *
          * **Six call sites, one predicate** — written out in each override
          * because the interface offers no single choke point.
@@ -891,9 +927,15 @@ class DictateActivity : Activity() {
          *
          * A generation cannot wedge that way: [attachToBubbleSession] and
          * [startDictation] build a NEW callbacks object, which is born
-         * current by construction. Same shape as `BubbleService.generation`,
-         * which `MicOpenerSeamTest` already names as the thing this class
-         * lacked.
+         * current by construction — and [onNewIntent] re-runs the attach arm
+         * precisely so that a bus-attached card DOES get a fresh sink.
+         *
+         * ⚠ **Not the same coverage as `BubbleService.generation`**, though
+         * it is the same mechanism. That one bumps on EVERY recording, so it
+         * drops any dead session's late transcript; this one bumps only on a
+         * history switch, so a local session abandoned some other way is not
+         * dropped by it. Round 4 of `#17` flagged the earlier wording here
+         * for implying parity there is none.
          */
         private fun stale(): Boolean = bornAt != cardGeneration
 

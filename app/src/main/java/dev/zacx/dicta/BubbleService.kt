@@ -998,7 +998,7 @@ class BubbleService : Service() {
      * and the bubble drops by whatever the clamp absorbed. That is visible at
      * reveal time, is bounded by `revealBlockPx`, and happens once rather
      * than cumulatively. Round 1 of #17 read it as a hide-side bug and
-     * "corrected" it into a 608 px teleport; see the hide arm.
+     * "corrected" it into a teleport; see the hide arm.
      *
      * Idempotent. The machine clears its own reveal flag on the next event, so
      * a chip tap (which hides the row directly, outside the machine) is
@@ -1030,13 +1030,17 @@ class BubbleService : Service() {
             // because a recorded number pins the window ORIGIN while the drag
             // had since moved it.
             //
-            // ⚠ The jump is `revealBlockPx - y_at_reveal` and does NOT scale
-            // with how far the user drags; the drag is what makes the wrong
-            // position VISIBLE, not what sizes it. Measured 608 px with a
-            // full REVEAL_SLOTS=4 row (block 618) and 308 px in the
-            // two-chip test fixture (block 318) — round 3 of #17 flagged the
-            // first figure as unreproducible because round 2 quoted it
-            // without naming which row it came from. Round 1 justified the change with "290 px,
+            // ⚠ The jump is `revealBlockPx - y_at_reveal`. It does NOT scale
+            // with how far the user drags — the drag makes the wrong
+            // position VISIBLE, it does not size it.
+            //
+            // 🔴 No magnitude is quoted here ON PURPOSE. A figure in this
+            // paragraph needed correcting in FOUR consecutive audit rounds
+            // of #17 (290 → 318 → naming the fixture for 608 vs 308 → the
+            // sweep that missed a second site), because every number here is
+            // a function of two fixture-dependent operands and reads as a
+            // property of the bug. The formula is the durable claim; the
+            // guard measures the rest. Round 1 justified the change with "290 px,
             // repeatable, so successive reveals walk it down the screen";
             // that was measured FALSE. The behaviour it replaced is a
             // ONE-TIME bounded drop of `revealBlockPx - y`, stable from the
