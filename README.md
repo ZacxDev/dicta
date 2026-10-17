@@ -115,6 +115,22 @@ exec, so add the override:
   -Pandroid.aapt2FromMavenOverride="$ANDROID_HOME/build-tools/34.0.0/aapt2"
 ```
 
+`android.nix` provides that toolchain (Android SDK 34 + build-tools 34.0.0,
+JDK 17, Gradle 8, `android-tools` for `adb`), with **nixpkgs pinned to an exact
+revision** so the suite is green against a recorded toolchain rather than
+against whatever channel the host happens to track:
+
+```sh
+nix-shell android.nix --run './gradlew :app:testDebugUnitTest \
+  -Pandroid.aapt2FromMavenOverride="$ANDROID_HOME/build-tools/34.0.0/aapt2"'
+```
+
+Bumping the pin is a deliberate two-line edit; the file says how. Note that
+`--offline` cannot resolve `androidx.test:*`, so `assembleDebugAndroidTest`
+fails on dependency resolution in an offline shell — that is the environment,
+not a defect. Count results from `app/build/test-results/**/*.xml`, not from
+Gradle's exit code.
+
 No Gradle/network at all? `scripts/build-offline.sh` builds the same APK
 directly with `aapt2` + `kotlinc` + `d8` + `apksigner`. Output:
 `build-offline/dicta-debug.apk`. Note that it builds `app/src/main` only — it
