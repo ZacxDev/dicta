@@ -124,6 +124,24 @@ class BubbleDictation(
         object BubbleLongPressed : Event
 
         /**
+         * A touch landed OUTSIDE the overlay window while the history row was
+         * showing — the user tapping away to dismiss it.
+         *
+         * 🔴 It carries no effects of its own ON PURPOSE. [on] already
+         * prefixes [Effect.HideHistory] to every event that is not
+         * [BubbleLongPressed], so "dismiss the row and do nothing else" is
+         * expressed by adding an event with an empty arm rather than by a
+         * second dismissal path in the shell. That keeps the hide predicate in
+         * ONE place; a shell that hid the row itself would be the N-sites
+         * duplicate this class exists to avoid.
+         *
+         * Delivered only while the row is up: the shell adds
+         * `FLAG_WATCH_OUTSIDE_TOUCH` on reveal and removes it on hide, so an
+         * idle bubble is not woken by every touch on the device.
+         */
+        object TouchedOutside : Event
+
+        /**
          * Capture could not start at all, and [failure] says why — the shell
          * knows which of its own steps refused, and the user needs to be told
          * which.
@@ -257,6 +275,9 @@ class BubbleDictation(
             is Event.CaptureFailed -> onCaptureFailed(event.failure)
             Event.MaxDurationReached -> onMaxDuration()
             Event.TranscriptSettled -> toIdle()
+            // Dismiss-only: the `dismiss` prefix above IS this event's whole
+            // behaviour. See Event.TouchedOutside.
+            Event.TouchedOutside -> emptyList()
             // Unreachable: handled above, before `historyRevealed` is cleared.
             Event.BubbleLongPressed -> emptyList()
         }

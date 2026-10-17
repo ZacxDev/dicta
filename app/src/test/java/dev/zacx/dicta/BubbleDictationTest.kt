@@ -510,6 +510,44 @@ class BubbleDictationTest {
     }
 
     @Test
+    fun anOutsideTouchDismissesAnOpenRevealAndDoesNothingElse() {
+        longPress()
+        assertEquals(
+            "an outside touch must close the row and emit NOTHING else — it is " +
+                "a dismissal, not a command",
+            listOf(BubbleDictation.Effect.HideHistory),
+            machine.on(BubbleDictation.Event.TouchedOutside),
+        )
+    }
+
+    @Test
+    fun anOutsideTouchWithNoRevealOpenEmitsNothingAtAll() {
+        // 🔴 The direction that makes the test above about the FLAG and not
+        // about the event type. FLAG_WATCH_OUTSIDE_TOUCH is scoped to the
+        // revealed state, but the machine must not depend on the shell getting
+        // that right: an unconditional HideHistory here would fire on every
+        // stray touch and would still pass the test above.
+        assertEquals(
+            emptyList<BubbleDictation.Effect>(),
+            machine.on(BubbleDictation.Event.TouchedOutside),
+        )
+    }
+
+    @Test
+    fun anOutsideTouchDoesNotStartOrStopARecording() {
+        // The hazard this closes is a shell that wired ACTION_OUTSIDE to the
+        // tap path: that would make a tap anywhere on the device start a
+        // dictation. Pinned as STATE, not as an effect list.
+        longPress()
+        machine.on(BubbleDictation.Event.TouchedOutside)
+        assertEquals(
+            "an outside touch moved the machine out of IDLE",
+            BubbleDictation.State.IDLE,
+            machine.state,
+        )
+    }
+
+    @Test
     fun theRevealIsDismissedOnceAndNotAgain() {
         longPress()
         assertEquals(

@@ -383,6 +383,23 @@ class BubbleService : Service() {
             addView(abort)
         }
 
+        // 🔴 ACTION_OUTSIDE is delivered to the WINDOW's root view, not to the
+        // halo's DragListener — so dismissing the reveal on an outside tap has
+        // to be wired here and cannot live in that listener.
+        //
+        // Returning false is deliberate: an ACTION_OUTSIDE carries no position
+        // we are entitled to act on and the touch still belongs to whatever is
+        // underneath, so this observes the event and consumes nothing. The
+        // dismissal itself is the machine's — `Event.TouchedOutside` has an
+        // empty arm and rides `on()`'s existing HideHistory prefix, so the
+        // "when does the row close" predicate stays in one place.
+        container.setOnTouchListener { _, event ->
+            if (event.action == MotionEvent.ACTION_OUTSIDE) {
+                applyEffects(machine.on(BubbleDictation.Event.TouchedOutside))
+            }
+            false
+        }
+
         wm.addView(container, params)
         root = container
         ring = pulse
@@ -955,6 +972,15 @@ class BubbleService : Service() {
             params.y += revealBlockPx
             revealBlockPx = 0
             row.removeAllViews()
+        }
+        // 🔴 Scoped to the revealed state, NOT set once at window creation.
+        // FLAG_WATCH_OUTSIDE_TOUCH delivers an ACTION_OUTSIDE for every touch
+        // anywhere on the device, so leaving it on would wake this service on
+        // each tap for the ~100% of its life when there is no row to dismiss.
+        params.flags = if (show) {
+            params.flags or WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH
+        } else {
+            params.flags and WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH.inv()
         }
         clampWindow()
     }
