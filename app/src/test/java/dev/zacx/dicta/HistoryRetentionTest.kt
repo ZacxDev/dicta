@@ -631,25 +631,32 @@ class HistoryRetentionTest {
     }
 
     /**
-     * 🔴 Pins the arithmetic that [HistoryRetention]'s kdoc asserts: at the
-     * current constants the **byte stage cannot bind**, so it is a dormant
-     * backstop rather than a live code path.
+     * 🔴 Pins the arithmetic [HistoryRetention]'s kdoc asserts. **The claim
+     * INVERTED on 2026-10-17** and the test inverted with it.
      *
-     * This exists because the kdoc said the opposite and was wrong in the
-     * commit that wrote it. A sentence nothing asserts on goes stale silently;
-     * this is the assertion.
+     * It used to assert the byte stage **cannot bind** — a dormant backstop,
+     * never a live code path. Raising `BubbleDictation.MAX_RECORDING_MS` from
+     * 120 s to 600 s broke it, which is exactly what its own warning said would
+     * happen: *"If you raised MAX_RECORDING_MS (long-form recording) and landed
+     * here: that is the point."* It fired as designed.
      *
-     * The chain: `BubbleDictation.MAX_RECORDING_MS` caps one recording, and
-     * `AudioCaptureLogic` offers exactly two encoders, so a single item has a
-     * hard ceiling. [MAX_ITEMS] of those is the most this store can ever hold.
-     * If that total is below [MAX_BYTES], no input reaches the byte stage.
+     * So the byte bound is now **LOAD-BEARING**, deliberately. 1000 items of at
+     * most 600 s at 32 kbps is ~2.4 GB against a 2 GiB budget, so the byte
+     * stage trims. That was read before accepting it, as the old warning
+     * instructed, and the stage is safe to rely on: it evicts newest-first and
+     * carries the oversize carve-out, so the newest surviving entry is kept
+     * even when it alone blows the budget — history exceeds [MAX_BYTES] by at
+     * most one recording and only until the next one lands. The failure mode
+     * the carve-out exists to prevent (a long dictation that silently vanishes
+     * every time) therefore does not appear at the new cap.
      *
-     * 🔴 If you raised `MAX_RECORDING_MS` (long-form recording) and landed
-     * here: that is the point. The byte bound has just become load-bearing —
-     * go read the byte stage and its oversize carve-out before changing this.
+     * ⚠ What this test can no longer tell you: the byte stage's behaviour is
+     * now reachable in production and is pinned by the byte-stage cases in this
+     * class, not by this one. This assertion is only about which regime the
+     * constants put us in.
      */
     @Test
-    fun theByteBoundCannotBindAtTheCurrentConstants() {
+    fun theByteBoundIsLoadBearingAtTheCurrentConstants() {
         val capSeconds = BubbleDictation.MAX_RECORDING_MS / 1000.0
         val worstBitrate = maxOf(
             AudioCaptureLogic.OPUS_BITRATE,
@@ -659,13 +666,12 @@ class HistoryRetentionTest {
         val worstCaseTotal = largestPossibleItem * MAX_ITEMS
 
         assertTrue(
-            "the byte stage is now REACHABLE: $MAX_ITEMS items of at most " +
-                "$largestPossibleItem B total $worstCaseTotal B, which meets or " +
-                "exceeds MAX_BYTES=$MAX_BYTES. HistoryRetention's kdoc says the " +
-                "byte bound cannot bind and that is no longer true — update the " +
-                "kdoc, and re-read the byte stage and its oversize carve-out, " +
-                "which have never executed against real input.",
-            worstCaseTotal < MAX_BYTES,
+            "the byte stage has gone DORMANT again: $MAX_ITEMS items of at most " +
+                "$largestPossibleItem B total $worstCaseTotal B, which is under " +
+                "MAX_BYTES=$MAX_BYTES. That is not wrong, but it inverts the " +
+                "regime HistoryRetention's kdoc now documents — if a constant " +
+                "was lowered, restore the 'cannot bind' wording in both places.",
+            worstCaseTotal >= MAX_BYTES,
         )
 
         // Positive control: the comparison can fail. Without this, a bug that
