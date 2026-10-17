@@ -88,10 +88,26 @@ class HistoryLabelTest {
 
     @Test
     fun anAbsurdAgeIsCappedRatherThanWidening() {
-        // 🔴 This is the guard that makes the budget a GUARANTEE. Without the
-        // cap, a clock jumped forward by a decade yields a six-character age,
-        // the words budget goes negative, and `everyLabelFitsTheBudget` fails
-        // on an input no retention bound can prevent.
+        // 🔴 INVARIANT GUARD, NOT REGRESSION COVERAGE — and the claim that it
+        // was the latter is RETRACTED (round 0 of #17's audit, measured).
+        // It used to say this guard makes the budget a guarantee, because a
+        // decade-long clock jump would yield a six-character age and drive the
+        // words budget negative. Both halves are false: a decade is "3652d"
+        // (five chars), and `room` needs a 31-character age to reach zero
+        // while the longest age representable is "106751991167d" (13 chars,
+        // from Long.MAX_VALUE ms). `everyLabelFitsTheBudget` cannot be broken
+        // by removing the cap, so this test has never protected it.
+        //
+        // What it does pin is the COSMETIC choice: an absurd age renders
+        // "99d+" rather than widening.
+        //
+        // 🔴 Scope, MEASURED by removing the cap and running all 556 tests —
+        // an earlier draft of this comment said "deleting the cap fails THIS
+        // assertion and nothing else" and that was FALSE. It fails TWO:
+        // this one, and `theLabelUsesTheRoomTheShorterAgeLeaves`, which uses
+        // "99d+" only as a fixture. `everyLabelFitsTheBudget` stays GREEN,
+        // which is the direct evidence that the cap does not protect the
+        // length guarantee.
         val out = label("hi", 4000L * DAY)
         assertTrue("an absurd age was not capped: \"$out\"", out.startsWith("99d+"))
         assertTrue(out.length <= HistoryLabel.MAX_CHARS)

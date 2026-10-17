@@ -95,12 +95,32 @@ object HistoryLabel {
      * time zone), and `"-3h ago"` is a bug report where `"now"` is a rounding
      * error.
      *
-     * 🔴 Days are capped at [MAX_AGE_DAYS] so this function's output has a
-     * **bounded length** (four characters). That is what makes [shortLabel]'s
-     * budget a guarantee rather than an expectation: without the cap, a clock
-     * jumped forward by a decade produces a six-character age, the words
-     * budget goes negative, and the "label is never longer than [MAX_CHARS]"
-     * assertion fails on a value no retention bound can prevent.
+     * Days are capped at [MAX_AGE_DAYS], so the output is at most four
+     * characters (`"99d+"`).
+     *
+     * 🔴 **The cap is COSMETIC. It carries no length-safety reason, and the
+     * claim that it did is RETRACTED** (round 0 of `#17`'s audit, measured).
+     * The retracted claim was that without the cap a forward clock jump drives
+     * [shortLabel]'s words budget negative and breaks the [MAX_CHARS]
+     * guarantee. It cannot. `room` is `MAX_CHARS - age.length - 3`, so it
+     * takes a **31-character** age to reach zero, while the longest string
+     * this function can emit without the cap is `"106751991167d"` — 13
+     * characters, from `Long.MAX_VALUE` milliseconds — leaving `room = 18`.
+     * A decade is `"3652d"`, five characters, not the six that claim asserted.
+     * The budget holds with the cap and without it.
+     *
+     * What the cap actually buys is that `"99d+ · …"` reads better than
+     * `"3652d · …"` and leaves more room for words. That is the whole reason;
+     * there is no safety argument underneath it.
+     *
+     * **Measured, not reasoned** — removing the cap and running the suite
+     * (556 tests) fails exactly two assertions, and `everyLabelFitsTheBudget`
+     * is **not** one of them:
+     *  - `anAbsurdAgeIsCappedRatherThanWidening` — the cosmetic guard itself;
+     *  - `theLabelUsesTheRoomTheShorterAgeLeaves` — which uses `"99d+"` as a
+     *    *fixture*, so it moves with the cap without being about it.
+     * That the budget test survives is the whole point: it is the direct
+     * evidence that the cap is not what keeps labels inside [MAX_CHARS].
      */
     private fun age(createdAtMs: Long, nowMs: Long): String {
         val elapsed = nowMs - createdAtMs
