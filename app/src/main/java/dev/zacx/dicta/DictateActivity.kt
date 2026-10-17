@@ -270,6 +270,38 @@ class DictateActivity : Activity() {
      * what is on screen.
      */
     private fun attachToBubbleSession() {
+        // 🔴 Reset the remote-wins latch, exactly as [startDictation] does.
+        // Without it, a card that already received ONE remote transcript —
+        // the ordinary success path — drops the NEXT dictation's text
+        // whenever that one falls back to the phone engine, because
+        // SessionCallbacks refuses a non-remote transcript once the latch is
+        // set. Round 5 of #17 measured the round-4 symptom surviving on this
+        // sibling path: "uploaded, stored, never appeared".
+        haveRemoteTranscript = false
+        // 🔴 RE-PURPOSE the card, not just its sink. Re-running this arm on a
+        // card showing history used to leave it dressed as a history card
+        // with a live session behind it: micButton GONE (a live dictation
+        // with NO mic control), Re-transcribe VISIBLE and enabled against the
+        // PREVIOUS recording, and historyEvents — which carry no staleness
+        // gate — able to write the same views the live session writes. Round
+        // 5 of #17, F2.
+        historyItem = null
+        retranscribeButton.visibility = View.GONE
+        retranscribeButton.isEnabled = false
+        micButton.visibility = View.VISIBLE
+        // 🔴 Take focus OFF the transcript box, and this is load-bearing.
+        // populateFromHistory hides micButton, so focus falls to the only
+        // remaining focusable view — the box — and `renderPreview` refuses
+        // to write to a FOCUSED box ("don't clobber the cursor while the
+        // user is editing"). Re-purposing without this left the incoming
+        // transcript in `finalText` and NEVER ON SCREEN. MEASURED:
+        // finalText='TEXT FROM THE NEW DICTATION' while the box still read
+        // the stored one. `clearFocus()` is not enough — the box is the only
+        // focusable view at that instant and immediately takes it back.
+        micButton.requestFocus()
+        // The stored dictation is no longer what this card shows.
+        finalText.setLength(0)
+        lastPartial = ""
         statusText.text = getString(R.string.stt_uploading)
         micButton.text = getString(R.string.start_dictation)
         levelMeter.visibility = View.INVISIBLE

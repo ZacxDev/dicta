@@ -359,6 +359,126 @@ class DictateHistoryCardTest {
     }
 
     @Test
+    fun aPhoneFallbackTranscriptAfterAnEarlierRemoteOneStillReachesTheCard() {
+        // 🔴 Round 5 of #17. `haveRemoteTranscript` is a LATCH: once a remote
+        // transcript lands, SessionCallbacks refuses any non-remote one, so
+        // the better text is never downgraded by the phone engine's late
+        // final. startDictation resets it; attachToBubbleSession did not.
+        //
+        // So a card that had already received ONE remote transcript — the
+        // ORDINARY SUCCESS PATH — silently dropped the NEXT dictation's text
+        // whenever that one fell back to the phone engine. Same symptom as
+        // the round-4 blocker, on a sibling path: uploaded, stored, never
+        // appeared.
+        val id = store("the stored dictation")
+        val controller = open(DictateLaunch.transcribingIntent(ctx))
+        try {
+            val a = controller.get()
+
+            // Dictation 1 succeeds remotely — this is what sets the latch.
+            a.uiCallbacks().onTranscript("the first dictation", true, true)
+            shadowOf(Looper.getMainLooper()).idle()
+
+            controller.newIntent(DictateLaunch.historyIntent(ctx, id))
+            awaitStatusChange("") { transcriptOf(a) }
+            controller.newIntent(DictateLaunch.transcribingIntent(ctx))
+            shadowOf(Looper.getMainLooper()).idle()
+
+            // Dictation 2's server leg fails; the phone engine answers.
+            BubbleSessionBus.sink.onTranscript("PHONE FALLBACK TEXT", false, true)
+            shadowOf(Looper.getMainLooper()).idle()
+
+            assertEquals(
+                "the phone-fallback transcript was dropped because the " +
+                    "remote-wins latch survived the re-attach",
+                "PHONE FALLBACK TEXT",
+                transcriptOf(a),
+            )
+        } finally {
+            controller.close()
+        }
+    }
+
+    @Test
+    fun reAttachingLeavesExactlyOneSinkRegistered() {
+        // 🔴 Round 5 of #17: attachToBubbleSession was made idempotent
+        // (detach-then-attach) and DELETING that detach left all 571 tests
+        // green. What it costs: onDestroy detaches only the LATEST busSink,
+        // so every earlier SessionCallbacks stays in the static
+        // BubbleSessionBus.sinks holding its outer Activity — one leaked
+        // Activity per re-attach — and every bus event is delivered twice
+        // whenever no history switch has made the older sink stale.
+        //
+        // The transcript guards cannot see this: the stale sink drops the
+        // text anyway, so the observable is identical. Counting the sinks is
+        // the only thing that catches it.
+        val sinks = BubbleSessionBus::class.java.getDeclaredField("sinks")
+        sinks.isAccessible = true
+        fun sinkCount() =
+            (sinks.get(BubbleSessionBus) as List<*>).size
+
+        val id = store("the stored dictation")
+        val controller = open(DictateLaunch.transcribingIntent(ctx))
+        try {
+            val a = controller.get()
+            assertEquals("precondition: one sink after the first attach", 1, sinkCount())
+
+            controller.newIntent(DictateLaunch.historyIntent(ctx, id))
+            awaitStatusChange("") { transcriptOf(a) }
+            controller.newIntent(DictateLaunch.transcribingIntent(ctx))
+            shadowOf(Looper.getMainLooper()).idle()
+
+            assertEquals(
+                "re-attaching registered a SECOND sink without detaching the " +
+                    "first — every bus event is now delivered twice and the " +
+                    "old sink leaks its Activity past onDestroy",
+                1,
+                sinkCount(),
+            )
+        } finally {
+            controller.close()
+        }
+    }
+
+    @Test
+    fun reAttachingTurnsAHistoryCardBackIntoALiveOne() {
+        // 🔴 Round 5 of #17: re-running the attach arm re-wired the SINK but
+        // left the card dressed as a history card — micButton GONE (a live
+        // dictation with no mic control at all) and Re-transcribe visible and
+        // enabled against the PREVIOUS recording, whose historyEvents carry
+        // no staleness gate and write the same views the live session writes.
+        val id = store("the stored dictation")
+        val controller = open(DictateLaunch.transcribingIntent(ctx))
+        try {
+            val a = controller.get()
+            controller.newIntent(DictateLaunch.historyIntent(ctx, id))
+            awaitStatusChange("") { transcriptOf(a) }
+            assertEquals(
+                "precondition: it is dressed as a history card",
+                View.GONE,
+                a.findViewById<View>(R.id.mic_button).visibility,
+            )
+
+            controller.newIntent(DictateLaunch.transcribingIntent(ctx))
+            shadowOf(Looper.getMainLooper()).idle()
+
+            assertEquals(
+                "a live dictation is attached but the card has no mic control",
+                View.VISIBLE,
+                a.findViewById<View>(R.id.mic_button).visibility,
+            )
+            assertEquals(
+                "Re-transcribe is still offered on a live card, bound to the " +
+                    "previous recording",
+                View.GONE,
+                a.findViewById<View>(R.id.retranscribe_button).visibility,
+            )
+        } finally {
+            controller.close()
+        }
+    }
+
+    @Test
     fun aNewBubbleDictationAfterAHistorySwitchStillReachesTheCard() {
         // 🔴 THE WEDGE, driven through the REAL path: the bus, not a
         // hand-built callbacks object.

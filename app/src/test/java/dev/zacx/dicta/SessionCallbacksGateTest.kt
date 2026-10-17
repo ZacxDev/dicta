@@ -108,58 +108,68 @@ class SessionCallbacksGateTest {
         )
     }
 
+    /**
+     * The overrides `SessionCallbacks` is expected to carry, asserted
+     * EXPLICITLY.
+     *
+     * 🔴 An explicit ledger, not a set derived from the interface. Round 5
+     * of `#17` measured the derived version INVERTED: because `declared`
+     * filtered default-bodied members out, overriding one made the test FAIL
+     * while **deleting that override made it PASS** — the exact hazard the
+     * comment claimed to catch ("stops overriding, so the silent default
+     * takes over on a card the gate was protecting") was the direction it
+     * rewarded.
+     *
+     * A hardcoded set has no such inversion: it fails when the set GROWS (a
+     * new override to add here, which the gate test then forces you to gate)
+     * and when it SHRINKS (an override deleted, silent default restored).
+     */
+    private val expectedOverrides = setOf(
+        "onTranscript",
+        "onStatus",
+        "onLevel",
+        "onTier",
+        "onClientSilenced",
+        "onRecordingStopped",
+    )
+
     @Test
-    fun theGatedSetMatchesTheCallbacksInterface() {
-        // 🔴 SCOPE, measured rather than assumed — and NARROWER than this
-        // test's name suggests. Adding an ABSTRACT method to the interface
-        // does not reach this assertion at all: the build fails first,
-        // because Kotlin already requires every abstract member to be
-        // overridden. That direction was never this ledger's to catch.
-        //
-        // What it does catch is the case the compiler cannot see: a member
-        // with a DEFAULT body that SessionCallbacks overrides and then stops
-        // overriding, so the silent default takes over on a card the gate was
-        // protecting. The gate-presence test above goes vacuous there —
-        // nothing ungated, because nothing is there.
-        val iface = File("src/main/java/dev/zacx/dicta/DictationSession.kt").readText()
-        val ifaceBody = iface.substring(iface.indexOf("interface Callbacks"))
-            .substringBefore("\n    }")
-
-        // 🔴 ABSTRACT members only. A method with a body does not have to be
-        // overridden, so counting it made this fail and blame the maintainer
-        // for "not gating" something optional — measured in round 4 of `#17`
-        // by adding a default method and watching the message accuse it.
-        // A declaration is abstract iff its line carries no body — no `{`
-        // ANYWHERE on it (a one-line default body `fun f() {}` ends with
-        // `}`, so an `endsWith('{')` test misses it; that was this guard's
-        // own first attempt at the fix) and no `=` expression body.
-        val declared = ifaceBody.lineSequence()
-            .mapNotNull { Regex("""^\s*fun (\w+)\(""").find(it)?.groupValues?.get(1)?.to(it) }
-            .filterNot { (_, line) -> line.contains('=') || line.contains('{') }
-            .map { (name, _) -> name }
-            .toSet()
-
-        // ⚠ The MIRROR case is still open and is stated rather than papered
-        // over: a `val` added to this interface is matched by neither regex,
-        // so a property-backed member would pass this ledger unnoticed. The
-        // interface has only functions today; if that changes, this needs to
-        // widen with it.
-        assertTrue(
-            "DictationSession.Callbacks has gained a property — this ledger " +
-                "only tracks abstract functions and is now blind to part of " +
-                "the interface",
-            !Regex("""^\s+va[lr] \w+""", RegexOption.MULTILINE).containsMatchIn(ifaceBody),
-        )
-
+    fun theSetOfGatedOverridesIsExactlyTheLedger() {
         val implemented = Regex("""override fun (\w+)\(""")
             .findAll(callbacksBody()).map { it.groupValues[1] }.toSet()
 
         assertEquals(
-            "the set of gated overrides no longer matches " +
-                "DictationSession.Callbacks — a method was added to the " +
-                "interface and not gated here, or an override was dropped",
-            declared,
+            "SessionCallbacks' override set changed. GROWN — add the name to " +
+                "expectedOverrides, and everyCallbackOverrideCarriesTheStalenessGate " +
+                "will then require it to be gated. SHRUNK — an override was " +
+                "deleted, so DictationSession.Callbacks' own default now runs " +
+                "UNGATED on a card the gate was protecting.",
+            expectedOverrides,
             implemented,
+        )
+    }
+
+    @Test
+    fun theLedgerCoversEveryAbstractMemberOfTheInterface() {
+        // ⚠ Narrow on purpose. An ABSTRACT member added to the interface
+        // never reaches this assertion — the build fails first, because
+        // Kotlin requires it to be overridden. This exists for the reverse
+        // reading: that the ledger above has not drifted BELOW the
+        // interface's abstract surface, which would mean an override exists,
+        // is gated, and is absent from the ledger.
+        val iface = File("src/main/java/dev/zacx/dicta/DictationSession.kt").readText()
+        val body = iface.substring(iface.indexOf("interface Callbacks"))
+            .substringBefore("\n    }")
+        val abstract = body.lineSequence()
+            .mapNotNull { line ->
+                Regex("""^\s*fun (\w+)\(""").find(line)?.groupValues?.get(1)
+                    ?.takeUnless { line.contains('{') || line.contains('=') }
+            }.toSet()
+
+        assertTrue(
+            "the gate ledger no longer covers every abstract member of " +
+                "DictationSession.Callbacks: missing ${abstract - expectedOverrides}",
+            abstract.all { it in expectedOverrides },
         )
     }
 }
