@@ -468,8 +468,10 @@ class DictationSession(
             // onDestroy, i.e. on the main thread, and `delete` takes the
             // store's process-wide monitor and then reads, rewrites and
             // `fsync`s the index. The monitor can be held by an `add` copying
-            // ~469 KiB, so inlining this is a main-thread block of unbounded
-            // length on a teardown path — an ANR, not jank.
+            // up to ~2.29 MiB, so inlining this is a main-thread block of
+            // unbounded length on a teardown path — an ANR, not jank. (~1.72
+            // MiB on Opus; the figure was ~352–469 KiB under the old 120 s
+            // recording cap, so the block is now ~5× longer.)
             //
             // Fire-and-forget is sound because nothing waits on the result and
             // the delete is idempotent: the entry is already unreachable from
@@ -576,7 +578,8 @@ class DictationSession(
             // absolute: see `pendingHistoryId`.
             //
             // ⚠ This gate is the fast path, not the whole mechanism — it reads
-            // the flag before ~469 KiB of file IO. The cases where destroy()
+            // the flag before up to ~2.29 MiB of file IO (~1.72 MiB on Opus;
+            // ~352–469 KiB under the old 120 s cap). The cases where destroy()
             // lands *during* or *after* that IO are covered at the enqueue
             // below and in destroy() respectively.
             if (destroyed.get()) {
@@ -626,9 +629,18 @@ class DictationSession(
 
             // 🔴 The gate at the top of this method is NOT sufficient on its
             // own, and the two lines below are what cover the rest.
-            // `history.add` copies up to ~469 KiB and re-serialises the index,
-            // so `destroy()` has a real window to land between the gate and
-            // here — and after `worker.shutdownNow()` the enqueue throws
+            // `history.add` copies up to ~2.29 MiB (AAC, 32 kbps) or ~1.72 MiB
+            // (Opus, 24 kbps) and re-serialises the index, so `destroy()` has a
+            // real window to land between the gate and here.
+            //
+            // 🔴 That window is ~5× WIDER than when this handover was written:
+            // the figure was ~352–469 KiB at the old 120 s recording cap, and
+            // `BubbleDictation.MAX_RECORDING_MS` is now 600 s. The race this
+            // paragraph justifies guarding did not become theoretical — it got
+            // five times easier to hit, which is the direction that makes
+            // `pendingHistoryId` more load-bearing, not less.
+            //
+            // After `worker.shutdownNow()` the enqueue throws
             // RejectedExecutionException **on the capture thread**, where
             // nothing catches it.
             //

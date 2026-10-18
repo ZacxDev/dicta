@@ -159,6 +159,18 @@ class BubbleService : Service() {
      * re-stamped on a promote, or the elapsed time resets to zero every time
      * the notification is rebuilt and reads ~0 forever — which is exactly the
      * "nothing reminds you" state the cap exists for, wearing a clock.
+     *
+     * 🔴 TWO constraints, and satisfying only the first is how this shipped
+     * broken: it must also be stamped BEFORE the `promoteForeground(recording =
+     * true)` that posts the notification. The stamp originally sat after the
+     * session started, 49 lines below the promote, so the posted `setWhen`
+     * carried `0L` on the first recording — a chronometer counting from the
+     * epoch — and the previous recording's start on every one after. Nothing
+     * re-promotes while recording, so the first post is the only clock the user
+     * sees. Pinned by
+     * `BubbleServiceFlowTest.thePostedRecordingNotificationCarriesThisRecordingsOrigin`,
+     * which reads the notification actually handed to `startForeground` rather
+     * than rebuilding one afterwards.
      */
     private var recordingStartedAtMs = 0L
 
@@ -581,6 +593,20 @@ class BubbleService : Service() {
         // unreachable; doing it anyway is what makes a violation harmless
         // instead of silent.
         reclaimSession()
+        // 🔴 Stamp the chronometer's origin BEFORE the promote that posts the
+        // notification carrying it. This used to sit 49 lines below, next to
+        // `session = handle` — which is where the no-re-stamp rule on
+        // `recordingStartedAtMs` pushed it, and it is too late: the promote has
+        // already built and posted the notification, and NOTHING re-promotes
+        // while recording. So the posted `setWhen` carried a stale origin —
+        // `0L` on the service's first recording, which Android renders as the
+        // elapsed time since the epoch (~497,000 hours), and the PREVIOUS
+        // recording's start on every one after that.
+        // The no-re-stamp property is unaffected: this is still the only
+        // assignment, still reached only from `startRecording`, so a plain
+        // promote (both demote paths, and a rebuild for any other reason) reads
+        // the value and never writes it.
+        recordingStartedAtMs = System.currentTimeMillis()
         // 🔴 Promote BEFORE opening the microphone. An FGS that is capturing
         // without the microphone type is the violation; doing it in this order
         // means a refused promotion costs us the recording rather than the
@@ -634,7 +660,6 @@ class BubbleService : Service() {
             return
         }
         session = handle
-        recordingStartedAtMs = System.currentTimeMillis()
         main.postDelayed(maxDurationGuard, BubbleDictation.MAX_RECORDING_MS)
     }
 
@@ -1232,7 +1257,10 @@ class BubbleService : Service() {
             // moment capture started, not now — rebuilding the notification
             // with `now` would restart the count at every promote and the
             // reading would always be ~0. `recordingStartedAtMs` is set once,
-            // in startRecording.
+            // in startRecording — and, just as load-bearing, set there BEFORE
+            // the promote that calls this, or the value read here is the
+            // previous recording's origin (or `0L` on the first). See the
+            // field's own kdoc.
             .setWhen(if (recording) recordingStartedAtMs else System.currentTimeMillis())
             .setShowWhen(recording)
             .setUsesChronometer(recording)

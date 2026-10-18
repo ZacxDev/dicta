@@ -640,20 +640,32 @@ class HistoryRetentionTest {
      * happen: *"If you raised MAX_RECORDING_MS (long-form recording) and landed
      * here: that is the point."* It fired as designed.
      *
-     * So the byte bound is now **LOAD-BEARING**, deliberately. 1000 items of at
-     * most 600 s at 32 kbps is ~2.4 GB against a 2 GiB budget, so the byte
-     * stage trims. That was read before accepting it, as the old warning
-     * instructed, and the stage is safe to rely on: it evicts newest-first and
-     * carries the oversize carve-out, so the newest surviving entry is kept
-     * even when it alone blows the budget — history exceeds [MAX_BYTES] by at
-     * most one recording and only until the next one lands. The failure mode
-     * the carve-out exists to prevent (a long dictation that silently vanishes
-     * every time) therefore does not appear at the new cap.
+     * So the byte bound is now **LOAD-BEARING ON AAC**, deliberately. 1000
+     * items of at most 600 s is ~2.24 GiB at 32 kbps (AAC) against a 2 GiB
+     * budget, so the byte stage trims — but only there. At 24 kbps (Opus, the
+     * encoder `AudioCaptureLogic` actually prefers) the same 1000 items are
+     * ~1.68 GiB, i.e. ~1717 MiB against 2048 MiB, and the stage does **not**
+     * bind. This assertion deliberately takes the WORST bitrate, so it is a
+     * claim about the worst case, not about the shipping configuration.
+     *
+     * 🔴 Two claims that were attached to this and are wrong — corrected here
+     * rather than left to be re-derived:
+     *
+     *  - *"it evicts newest-first"* reads backwards. Newest-first is the SCAN
+     *    direction; what the scan condemns is the OLDEST entries. The newest
+     *    are exactly the ones kept.
+     *  - *"it carries the oversize carve-out"* is true of the code and
+     *    irrelevant here: that branch needs ONE recording larger than
+     *    [HistoryRetention.MAX_BYTES] — ~199 h of Opus, ~149 h of AAC —
+     *    against a 10-minute cap, so it is unreachable at these constants and
+     *    protects nothing. The failure mode it exists to prevent cannot arise
+     *    at the new cap because no single recording can get near 2 GiB, NOT
+     *    because the carve-out is doing anything.
      *
      * ⚠ What this test can no longer tell you: the byte stage's behaviour is
-     * now reachable in production and is pinned by the byte-stage cases in this
-     * class, not by this one. This assertion is only about which regime the
-     * constants put us in.
+     * now reachable in production (on AAC) and is pinned by the byte-stage
+     * cases in this class, not by this one. This assertion is only about which
+     * regime the constants put us in.
      */
     @Test
     fun theByteBoundIsLoadBearingAtTheCurrentConstants() {
