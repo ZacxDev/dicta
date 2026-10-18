@@ -365,13 +365,14 @@ class DictateActivity : Activity() {
         retranscribeButton.isEnabled = false
         statusText.text = getString(R.string.history_saved)
         historyWorker.execute {
-            // 🔴 `recent` with no practical limit, not a lookup by id, because
-            // the store offers none — and adding one is a change to the
-            // storage layer from the PR that consumes it. The index is bounded
-            // by HistoryRetention.MAX_ITEMS, so this is a bounded read.
-            val item = runCatching {
-                historyStore().recent(Int.MAX_VALUE).firstOrNull { it.id == id }
-            }.getOrNull()
+            // 🔴 Was `recent(Int.MAX_VALUE).firstOrNull { it.id == id }`, under a
+            // comment explaining that the store offered no lookup by id and that
+            // adding one belonged to the storage layer rather than to the PR
+            // consuming it. That reasoning held until the storage layer WAS the
+            // thing being changed. `DictationHistoryStore.item` now exists and
+            // this is its caller. "Bounded by MAX_ITEMS" was true and still meant
+            // a 1000-entry sort plus one stat per entry to find a single row.
+            val item = runCatching { historyStore().item(id) }.getOrNull()
             runOnUiThread { renderHistoryItem(item) }
         }
     }

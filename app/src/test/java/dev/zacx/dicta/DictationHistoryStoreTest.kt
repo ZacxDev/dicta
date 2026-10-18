@@ -439,28 +439,125 @@ class DictationHistoryStoreTest {
             listOf(kept),
             store.recent(10).map { it.id },
         )
-        assertFalse(
-            "the dangling entry is still in the index, so it will be " +
-                "re-offered on every read: ${indexText()}",
+
+        // 🔴 The read path no longer sweeps. It used to ride every `recent()`,
+        // which is what made a four-chip reveal stat the whole store and then
+        // REWRITE the index.
+        //
+        // ⚠ This comment said the sweep "now rides usage()" — FALSE, and the
+        // same false claim was in #20's body and commit. `usage()` ALREADY
+        // called `visible()` before the change; nothing moved there. A sweeper
+        // was deleted and a rarer pre-existing one left. Audit round 0 of #20.
+        // The user-visible invariant above is unchanged.
+        // `recentDoesNotRewriteTheIndex` pins the other half.
+        assertTrue(
+            "fixture: the dangling entry should still be indexed until a " +
+                "sweeping path runs: ${indexText()}",
             indexText().contains(lost),
         )
         assertEquals(DictationHistoryStore.Usage(1, 64L), store.usage())
+        assertFalse(
+            "usage() did not sweep the dangling entry, so nothing does and it " +
+                "is re-read forever: ${indexText()}",
+            indexText().contains(lost),
+        )
+    }
+
+    @Test
+    fun itemReturnsNullForAnEntryWhoseAudioIsGone() {
+        // 🔴 Added because mutation M5 SURVIVED: deleting the isFile guard in
+        // item() left all 582 tests green. The card's whole history path goes
+        // through item(), so without this an entry whose audio vanished opens a
+        // card offering Re-transcribe on a file that is not there.
+        val store = store()
+        clock += 1_000
+        val kept = store.add(recording("keep.ogg"), "keep", fromRemote = false, audioSeconds = 1.0)
+        clock += 1_000
+        val lost = store.add(recording("lose.ogg"), "lose", fromRemote = false, audioSeconds = 1.0)
+        val lostName = store.recent(10).first { it.id == lost }.audioFile
+        assertTrue("fixture setup: the audio was never written", File(historyDir, lostName).delete())
+
+        assertNotNull("a live entry must still resolve", store.item(kept))
+        assertEquals(kept, store.item(kept)?.id)
+        assertNull(
+            "item() returned an entry whose audio is gone, so the card offers " +
+                "Re-transcribe on a missing file",
+            store.item(lost),
+        )
+        assertNull("an unknown id is null, not a crash", store.item("no-such-id"))
+    }
+
+    @Test
+    fun recentDoesNotRewriteTheIndex() {
+        // The read path is READ-ONLY by design: a reveal is the hottest caller
+        // in the app and it used to rewrite index.json whenever any audio file
+        // was missing. Watched red against the pre-change tree, where
+        // `visible()` swept on every read.
+        val store = store()
+        clock += 1_000
+        store.add(recording("keep.ogg"), "keep", fromRemote = false, audioSeconds = 1.0)
+        clock += 1_000
+        val lost = store.add(recording("lose.ogg"), "lose", fromRemote = false, audioSeconds = 1.0)
+        val lostName = store.recent(10).first { it.id == lost }.audioFile
+        assertTrue("fixture setup: the audio was never written", File(historyDir, lostName).delete())
+
+        val before = indexText()
+        repeat(3) { store.recent(4) }
+        assertEquals(
+            "recent() rewrote the index; the hot read path must not write",
+            before,
+            indexText(),
+        )
     }
 
     // --- recovering from the temp file --------------------------------------
 
     private val tempIndex: File get() = File(historyDir, "${DictationHistoryStore.INDEX}.tmp")
 
-    /**
-     * Reproduces the state `writeIndex`'s rename-refused fallback leaves when
-     * its in-place `writeText` throws part-way: the temp holds the complete,
-     * `fsync`'d payload, and `index.json` has been truncated on open.
-     *
-     * 🔴 Zero-length specifically, because that is the shape
-     * `FileOutputStream(file)` produces the instant it opens — the most likely
-     * torn index there is, and the one the round-1 comment described as "a
-     * stale one", i.e. harmless.
-     */
+    @Test
+    fun aDeadRowCannotEvictALiveRecording() {
+        // 🔴 Replaces `recentStopsStattingOnceItHasEnoughItems`, DELETED as
+        // vacuous: it asserted only recent(2)'s ids, which the pre-change
+        // `visible().sorted().take(2)` returns identically, so it was green on
+        // the code it claimed to be a cost regression guard for. Audit round 0
+        // of #20, D2. A guard that reads as coverage while providing none is
+        // worse than none, because it stops anyone looking.
+        //
+        // What this pins instead is a REAL defect the read-path change made
+        // reachable. A dead row (indexed, audio gone) keeps its audioBytes in
+        // the index, and `add` passes the index to HistoryRetention — so under
+        // a byte bound the phantom bytes evict a LIVE recording. Before the
+        // change every long-press swept those rows away; afterwards nothing on
+        // the hot path does, so `add` has to.
+        // 🔴 The dead row must be NEWER than its victim. HistoryRetention
+        // accumulates newest-first and drops the tail, so a dead row that is
+        // the OLDEST simply evicts itself and the hazard never fires — the
+        // first version of this test made exactly that mistake and stayed
+        // GREEN with the fix reverted. Order: live(oldest) → ghost → live.
+        val store = store(bounds = HistoryRetention.Bounds(maxBytes = 500L))
+
+        clock += 1_000
+        val victim = store.add(recording("victim.ogg", bytes = 200), "victim", false, 1.0)
+        clock += 1_000
+        val ghost = store.add(recording("ghost.ogg", bytes = 200), "ghost", false, 1.0)
+        val ghostFile = store.recent(10).first { it.id == ghost }.audioFile
+        assertTrue("fixture: ghost audio was never written", File(historyDir, ghostFile).delete())
+
+        clock += 1_000
+        val newest = store.add(recording("newest.ogg", bytes = 200), "newest", false, 1.0)
+
+        // Unswept: newest(200) + ghost(200) + victim(200) = 600 > 500, so the
+        // tail — `victim`, a real recording — is deleted to make room for 200
+        // bytes that are not on disk. Swept: 400 <= 500 and nothing is evicted.
+        assertEquals(
+            "a LIVE recording was evicted to make room for a dead row's " +
+                "phantom bytes: ${indexText()}",
+            listOf(newest, victim),
+            store.recent(10).map { it.id },
+        )
+        assertNotNull("the victim's audio was deleted from disk", store.audioFor(victim))
+    }
+
     @Test
     fun aZeroLengthIndexIsRecoveredFromTheTempRatherThanWipingHistory() {
         val store = store()
