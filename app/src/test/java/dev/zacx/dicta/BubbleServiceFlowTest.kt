@@ -746,4 +746,160 @@ class BubbleServiceFlowTest {
     private fun feedLevel(service: BubbleService, level: Double) {
         callbacksOf(service).onLevel(level)
     }
+    // --- the recording chronometer (#14 item 6 mitigation) --------------------
+
+    private fun buildNotif(service: BubbleService, recording: Boolean): android.app.Notification {
+        val m = BubbleService::class.java.getDeclaredMethod(
+            "buildNotification", Int::class.javaPrimitiveType, Boolean::class.javaPrimitiveType,
+        )
+        m.isAccessible = true
+        val textRes = if (recording) R.string.bubble_recording else R.string.bubble_active
+        return m.invoke(service, textRes, recording) as android.app.Notification
+    }
+
+    private fun longField(service: BubbleService, name: String): Long {
+        val f = BubbleService::class.java.getDeclaredField(name)
+        f.isAccessible = true
+        return f.getLong(service)
+    }
+
+    @Test
+    fun theRecordingNotificationCountsUpFromWhenCaptureStarted() {
+        // 🔴 This is the mitigation for #14 item 6, not decoration. That item
+        // says a bubble left recording in a pocket uploads its audio, and
+        // MAX_RECORDING_MS exists because nothing on screen reminds you the mic
+        // is open. Raising the cap 120s -> 600s multiplies that by five, so the
+        // one always-visible surface has to say how long it has been running.
+        val service = start()
+        bubble(service).performClick()
+
+        val startedAt = longField(service, "recordingStartedAtMs")
+        assertTrue("recordingStartedAtMs was never stamped", startedAt > 0L)
+
+        val notif = buildNotif(service, recording = true)
+        assertTrue(
+            "the recording notification does not show a chronometer, so it " +
+                "reads identically at 3 s and at 9 min",
+            notif.extras.getBoolean(android.app.Notification.EXTRA_SHOW_CHRONOMETER),
+        )
+        assertEquals(
+            "the chronometer's origin is not when capture started, so it " +
+                "restarts at every promote and always reads ~0",
+            startedAt,
+            notif.`when`,
+        )
+    }
+
+    @Test
+    fun theIdleNotificationHasNoChronometer() {
+        // The other direction: a bubble that is NOT recording must not show a
+        // running clock, or the one signal that the mic is open means nothing.
+        val service = start()
+        val notif = buildNotif(service, recording = false)
+        assertTrue(
+            "the idle notification shows a chronometer",
+            !notif.extras.getBoolean(android.app.Notification.EXTRA_SHOW_CHRONOMETER),
+        )
+    }
+
+    /**
+     * The notification the service ACTUALLY POSTS, not one rebuilt afterwards.
+     *
+     * 🔴 [theRecordingNotificationCountsUpFromWhenCaptureStarted] above cannot
+     * see this defect and that is the whole reason it shipped: it reaches
+     * `buildNotification` by reflection AFTER the click, by which time
+     * `recordingStartedAtMs` is populated, so it reads a notification nobody
+     * ever posted. The real one is built inside `promoteForeground`, and that
+     * call used to run 49 lines BEFORE the stamp — so the posted notification
+     * carried `when = 0` with `usesChronometer = true` on the first recording
+     * of a service's life, which Android renders as the elapsed time since the
+     * epoch (~497,000 hours), and on every later recording carried the
+     * PREVIOUS recording's origin and never reset.
+     *
+     * Read through `shadowOf(service).lastForegroundNotification`, which is the
+     * argument the service handed `startForeground`. Nothing re-promotes while
+     * recording, so this one post is the only chronometer the user ever sees.
+     */
+    @Test
+    fun thePostedRecordingNotificationCarriesThisRecordingsOrigin() {
+        val service = start()
+
+        // --- recording #1: the first of the service's life ------------------
+        bubble(service).performClick()
+
+        val startedAt = longField(service, "recordingStartedAtMs")
+        assertTrue("recordingStartedAtMs was never stamped", startedAt > 0L)
+
+        val posted = requireNotNull(shadowOf(service).lastForegroundNotification) {
+            "the service never posted a foreground notification"
+        }
+        assertTrue(
+            "the POSTED notification does not show a chronometer",
+            posted.extras.getBoolean(android.app.Notification.EXTRA_SHOW_CHRONOMETER),
+        )
+        assertTrue(
+            "the POSTED recording notification carries when=0 while running a " +
+                "chronometer, so the shade counts up from the epoch " +
+                "(~497,000 hours) — the notification is posted before " +
+                "recordingStartedAtMs is stamped",
+            posted.`when` != 0L,
+        )
+        assertEquals(
+            "the POSTED notification's chronometer origin is not when THIS " +
+                "recording started — it is built before recordingStartedAtMs " +
+                "is stamped, so the clock in the shade is wrong for the whole " +
+                "recording and nothing re-promotes to correct it",
+            startedAt,
+            posted.`when`,
+        )
+
+        // --- recording #2: the stale-origin half ----------------------------
+        // A second recording must count from ITS OWN start, not the previous
+        // one's. Return the bubble to IDLE the way
+        // aLocalFinalTranscriptAlsoReturnsTheBubbleToIdle does, so the next tap
+        // starts a capture rather than being swallowed.
+        Thread.sleep(BubbleDictation.MIN_RECORDING_MS + 50)
+        bubble(service).performClick()
+        callbacksOf(service).onTranscript(
+            "what the phone heard", fromRemote = false, isFinal = true
+        )
+        shadowOf(android.os.Looper.getMainLooper()).idle()
+
+        // Enough wall time that a stale origin is distinguishable from a fresh
+        // one by more than clock granularity.
+        Thread.sleep(250)
+        // 🔴 Taken from the clock, NOT from the service's own field: an
+        // expectation derived from `recordingStartedAtMs` cannot see a mutant
+        // that simply never updates it (both sides move together and the
+        // assertion stays green). Everything posted for recording #2 must have
+        // an origin at or after this instant.
+        val beforeSecondClick = System.currentTimeMillis()
+        bubble(service).performClick()
+
+        val posted2 = requireNotNull(shadowOf(service).lastForegroundNotification) {
+            "the service never posted a foreground notification for recording #2"
+        }
+        assertTrue(
+            "the POSTED notification for recording #2 has an origin from " +
+                "BEFORE recording #2 was even requested — the chronometer " +
+                "carries an earlier recording's start, so the shade shows a " +
+                "clock that never reset and over-reports how long the mic has " +
+                "been open (posted2.when=${posted2.`when`}, " +
+                "recording #2 requested at $beforeSecondClick)",
+            posted2.`when` >= beforeSecondClick,
+        )
+
+        val startedAt2 = longField(service, "recordingStartedAtMs")
+        assertTrue(
+            "recording #2 did not re-stamp recordingStartedAtMs",
+            startedAt2 > startedAt,
+        )
+        assertEquals(
+            "the POSTED notification for recording #2 does not carry " +
+                "recording #2's own origin",
+            startedAt2,
+            posted2.`when`,
+        )
+    }
+
 }

@@ -156,6 +156,28 @@ class BubbleService : Service() {
      */
     private var generation = 0
 
+    /**
+     * When the CURRENT recording started, as the chronometer's origin.
+     *
+     * 🔴 Set in [startRecording] and read by [buildNotification]; it must not be
+     * re-stamped on a promote, or the elapsed time resets to zero every time
+     * the notification is rebuilt and reads ~0 forever — which is exactly the
+     * "nothing reminds you" state the cap exists for, wearing a clock.
+     *
+     * 🔴 TWO constraints, and satisfying only the first is how this shipped
+     * broken: it must also be stamped BEFORE the `promoteForeground(recording =
+     * true)` that posts the notification. The stamp originally sat after the
+     * session started, 49 lines below the promote, so the posted `setWhen`
+     * carried `0L` on the first recording — a chronometer counting from the
+     * epoch — and the previous recording's start on every one after. Nothing
+     * re-promotes while recording, so the first post is the only clock the user
+     * sees. Pinned by
+     * `BubbleServiceFlowTest.thePostedRecordingNotificationCarriesThisRecordingsOrigin`,
+     * which reads the notification actually handed to `startForeground` rather
+     * than rebuilding one afterwards.
+     */
+    private var recordingStartedAtMs = 0L
+
     private var bubbleSizePx = 0
     private var haloSizePx = 0
     private var cancelBlockPx = 0
@@ -601,6 +623,20 @@ class BubbleService : Service() {
         // unreachable; doing it anyway is what makes a violation harmless
         // instead of silent.
         reclaimSession()
+        // 🔴 Stamp the chronometer's origin BEFORE the promote that posts the
+        // notification carrying it. This used to sit 49 lines below, next to
+        // `session = handle` — which is where the no-re-stamp rule on
+        // `recordingStartedAtMs` pushed it, and it is too late: the promote has
+        // already built and posted the notification, and NOTHING re-promotes
+        // while recording. So the posted `setWhen` carried a stale origin —
+        // `0L` on the service's first recording, which Android renders as the
+        // elapsed time since the epoch (~497,000 hours), and the PREVIOUS
+        // recording's start on every one after that.
+        // The no-re-stamp property is unaffected: this is still the only
+        // assignment, still reached only from `startRecording`, so a plain
+        // promote (both demote paths, and a rebuild for any other reason) reads
+        // the value and never writes it.
+        recordingStartedAtMs = System.currentTimeMillis()
         // 🔴 Promote BEFORE opening the microphone. An FGS that is capturing
         // without the microphone type is the violation; doing it in this order
         // means a refused promotion costs us the recording rather than the
@@ -1285,7 +1321,8 @@ class BubbleService : Service() {
 
     private fun platformPromoteForeground(recording: Boolean): Boolean = runCatching {
         val notif = buildNotification(
-            if (recording) R.string.bubble_recording else R.string.bubble_active
+            if (recording) R.string.bubble_recording else R.string.bubble_active,
+            recording,
         )
         when {
             recording && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q ->
@@ -1305,7 +1342,22 @@ class BubbleService : Service() {
         }
     }.isSuccess
 
-    private fun buildNotification(textRes: Int): Notification {
+    /**
+     * @param recording drives the elapsed-time chronometer.
+     *
+     * 🔴 The chronometer is the mitigation for `#14` item 6, not decoration.
+     * That item says a bubble left recording in a pocket uploads its audio, and
+     * [BubbleDictation.MAX_RECORDING_MS]'s own rationale for existing is that
+     * nothing on screen reminds you the mic is open. Raising the cap to ten
+     * minutes multiplies that by five, so the honest answer is to make the one
+     * surface that IS always visible say how long it has been running. A static
+     * "Recording" string reads the same at 3 s and at 9 min.
+     *
+     * Platform `setUsesChronometer` + `setWhen`, so it ticks without this
+     * service posting an update per second — which on a ten-minute recording
+     * would be 600 notification updates and a wakeup each.
+     */
+    private fun buildNotification(textRes: Int, recording: Boolean = false): Notification {
         val nm = getSystemService(NotificationManager::class.java)
         nm.createNotificationChannel(
             NotificationChannel(
@@ -1332,6 +1384,17 @@ class BubbleService : Service() {
             // Tracks the state: while recording this notification is the only
             // place outside the bubble itself that says the mic is open.
             .setContentText(getString(textRes))
+            // 🔴 `setWhen` is the chronometer's ORIGIN, so it must be the
+            // moment capture started, not now — rebuilding the notification
+            // with `now` would restart the count at every promote and the
+            // reading would always be ~0. `recordingStartedAtMs` is set once,
+            // in startRecording — and, just as load-bearing, set there BEFORE
+            // the promote that calls this, or the value read here is the
+            // previous recording's origin (or `0L` on the first). See the
+            // field's own kdoc.
+            .setWhen(if (recording) recordingStartedAtMs else System.currentTimeMillis())
+            .setShowWhen(recording)
+            .setUsesChronometer(recording)
             .setOngoing(true)
             .addAction(
                 Notification.Action.Builder(

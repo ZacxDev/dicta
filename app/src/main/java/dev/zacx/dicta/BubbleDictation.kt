@@ -446,18 +446,50 @@ class BubbleDictation(
         /**
          * The runaway cap. At it, the recording is auto-submitted rather than
          * discarded — the user said something, and throwing it away would be
-         * worse than transcribing a truncated version of it.
+         * worse than transcribing a truncated version of it. (Operator
+         * decision, re-confirmed 2026-10-17 when this was raised.)
          *
          * 🔴 Why this is a cap on the *recording* and not a concern about the
          * transcript: `STT_MAX_NEW_TOKENS` on the service is a per-chunk limit
-         * and the service chunks at ≤35 s, so two minutes of audio is handled as
-         * several chunks rather than as one truncated decode. The cap is here
-         * because the bubble flow puts **nothing on screen** while recording —
-         * no card, no status line — so a bubble left recording in a pocket has
-         * no reminder attached to it. The pulse and the cancel button are the
-         * only indications, and both are easy to walk away from.
+         * and the service chunks at ≤35 s, so this is handled as several chunks
+         * rather than as one truncated decode. The cap is here because the
+         * bubble flow puts no CARD on screen while recording, so a bubble left
+         * recording in a pocket is easy to walk away from.
+         *
+         * ## Why TEN minutes, and why not more
+         *
+         * Raised from 120 s on 2026-10-17 (operator: *"too low, needs to support
+         * hours"*). Ten is what the EXISTING upload contract supports with
+         * headroom — not a preference, and not the ask, which was hours:
+         *
+         *  - [SttRetryPolicy.readTimeoutMs] caps the client's wait at **90 s**,
+         *    deliberately, so one clip cannot pin the single GPU replica.
+         *  - Measured server throughput, from this app's own `stt-api` log on
+         *    2026-10-17: RTFx **14.5 / 41.0 / 45.7** over three real uploads.
+         *  - At the WORST of those, 10 min of audio needs ~41 s of server time;
+         *    the ceiling before the 90 s timeout starts biting is ~21 min.
+         *
+         * 🔴 **Hours is NOT reachable by changing this constant and nothing
+         * else, and raising it further without the work below produces a
+         * recording that can never be transcribed:** a 3 h clip needs 4–12 min
+         * of server time and the client hangs up at 90 s, on every one of the
+         * four authorised attempts. It also needs a segmented, resumable upload
+         * ([RemoteTranscriber] reads the whole file into memory and posts one
+         * fixed-length multipart body, so a failure at 95% loses everything), a
+         * wakelock (there is none, and the mesh tunnel was measured dropping
+         * while the phone sleeps), and a progress surface. Storage is NOT a
+         * blocker — Opus at 24 kbps is ~10.8 MB/hour against a 2 GiB bound.
+         *
+         * ⚠ **This raise makes `#14` item 6 five times worse and that is
+         * accepted, not overlooked.** That item reads: *"A bubble left recording
+         * in a pocket uploads two minutes of audio. More pointed since the
+         * silence gate was removed — see #8."* Ten minutes of pocket silence is
+         * ten minutes the server will answer with confident invented prose. The
+         * mitigation shipped alongside is the notification chronometer in
+         * `BubbleService.buildNotification` — the cap's own rationale is that
+         * nothing reminds you, so the fix is to make it remind you.
          */
-        const val MAX_RECORDING_MS: Long = 120_000L
+        const val MAX_RECORDING_MS: Long = 600_000L
 
         /**
          * How long a tap on the bubble is swallowed after submitting.

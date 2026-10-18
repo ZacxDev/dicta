@@ -232,9 +232,11 @@ class DictationSessionHistoryCaptureTest {
     /**
      * 🔴 The interleaved case, which the sequential test above cannot see.
      *
-     * `onFinished` reads `destroyed` and *then* copies up to ~469 KiB and
-     * re-serialises the index, so `destroy()` has a real window to land between
-     * the two. What used to happen then: the add succeeded, and `worker.execute`
+     * `onFinished` reads `destroyed` and *then* copies up to ~2.29 MiB (AAC,
+     * 32 kbps; ~1.72 MiB on Opus) and re-serialises the index, so `destroy()`
+     * has a real window to land between the two — a window ~5× wider than when
+     * this test was written, which sized it at ~352–469 KiB under the old
+     * 120 s recording cap. What used to happen then: the add succeeded, and `worker.execute`
      * on the executor `destroy()` had just `shutdownNow()`n threw an uncaught
      * `RejectedExecutionException` **on the capture thread** — while the
      * recording the user had torn the session down to be rid of sat in a
@@ -508,7 +510,9 @@ class DictationSessionHistoryCaptureTest {
      * `DictationHistoryStore.delete` takes the store's process-wide monitor and
      * then reads, rewrites and `fsync`s the index — a block of unbounded length
      * if it were inlined, because the monitor can be held by an `add` copying
-     * ~469 KiB.
+     * up to ~2.29 MiB (AAC, 32 kbps; ~1.72 MiB on Opus) at the current 600 s
+     * recording cap — ~5× the ~352–469 KiB this was written against under the
+     * old 120 s cap, so the ANR risk it describes got worse, not better.
      *
      * The *outcome* of an inline delete is identical, so no behavioural test
      * can see the difference. This pins the seam that makes it off-thread.

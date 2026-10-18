@@ -273,18 +273,29 @@ class DictationHistoryStoreTest {
 
     @Test
     fun addingPastTheByteBoundDeletesTheOldestFromDiskAndFromTheIndex() {
-        // 🔴 This path does NOT run in production at the current constants —
-        // an earlier version of this comment claimed it did, and was wrong.
-        // MAX_RECORDING_MS caps an item at ~352-469 KiB, so 1000 of them is
-        // 343-458 MiB against a 2 GiB bound: count always binds first. See
-        // HistoryRetention's kdoc and the arithmetic pinned by
-        // theByteBoundCannotBindAtTheCurrentConstants.
+        // 🔴 Which regime this path belongs to, with the numbers that decide
+        // it. The paragraph below was written for a 120 s MAX_RECORDING_MS and
+        // its figures are kept ONLY as the old regime, clearly labelled — the
+        // method is what carries over, not the numbers.
         //
-        // The test is still worth having, and this is the honest reason: it
-        // pins that the store honours WHATEVER byte bound it is handed, which
-        // is what makes the stage correct on the day MAX_RECORDING_MS rises
-        // and the bound goes live. It is a guard on a dormant path, not
-        // evidence that the path is hot.
+        //   OLD (120 s cap): an item is ~352 KiB (Opus 24 kbps) to ~469 KiB
+        //   (AAC 32 kbps), so 1000 of them are ~343-458 MiB against a 2 GiB
+        //   bound. Count always binds first; the byte stage is dormant.
+        //
+        //   CURRENT (600 s cap, since 2026-10-17): an item is ~1.72 MiB to
+        //   ~2.29 MiB, so 1000 are ~1.68 GiB (Opus) to ~2.24 GiB (AAC). Only
+        //   the AAC figure crosses 2 GiB.
+        //
+        // 🔴 So the byte stage became live — on AAC ONLY. Opus is ~1717 MiB
+        // against 2048 MiB and still does not bind, and Opus is the encoder
+        // AudioCaptureLogic prefers, so in the shipping configuration this
+        // path still does not run; it runs on a device with no Opus encoder.
+        // "The byte stage now trims in production" full stop overstates it.
+        //
+        // This test was always written as "the store honours WHATEVER byte
+        // bound it is handed", which is why it needed no change when the cap
+        // moved. See HistoryRetention's kdoc and the arithmetic pinned by
+        // theByteBoundIsLoadBearingAtTheCurrentConstants.
         val store = store(bounds = tinyBounds.copy(maxItems = 100, maxAgeMs = 600_000L))
         val ids = mutableListOf<String>()
         val names = mutableListOf<String>()

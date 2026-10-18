@@ -11,8 +11,18 @@ import java.util.concurrent.atomic.AtomicInteger
  *
  * `HttpURLConnection` rather than OkHttp/Retrofit because the APK has no
  * runtime dependencies (see `app/build.gradle.kts`). The upload is a single
- * fixed-length `POST` of a few tens of kilobytes, which is comfortably inside
- * what the platform client does well.
+ * fixed-length `POST` of **up to ~1.72 MiB (Opus, `AudioCaptureLogic.OPUS_BITRATE`
+ * 24 kbps) or ~2.29 MiB (AAC, `AudioCaptureLogic.AAC_BITRATE` 32 kbps)** — one
+ * recording at the full `BubbleDictation.MAX_RECORDING_MS` of 600 s. That is
+ * still comfortably inside what the platform client does well, which is the
+ * only claim this paragraph makes.
+ *
+ * 🔴 This read "a few tens of kilobytes" until the cap was raised 120 s → 600 s
+ * on 2026-10-17. That described the OLD regime (~352–469 KiB per recording, so
+ * "tens" already understated it); the figure is now ~5× larger. The size is
+ * what decides whether a fixed-length `POST` on `HttpURLConnection` is the
+ * right shape, so re-derive it from the three constants named above rather
+ * than trusting this sentence if the cap moves again.
  *
  * Everything policy-shaped is elsewhere: this class turns a request into an
  * [SttOutcome] and makes no decisions about what to do next.

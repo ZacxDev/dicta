@@ -80,7 +80,7 @@ package dev.zacx.dicta
  * map from `(entries, nowMs)` to a list — the same set of entries in any
  * input order gives byte-identical output.
  *
- * ## 🔴 The bounds are large, and the byte bound CANNOT BIND
+ * ## 🔴 The bounds are large, and the byte bound IS NOW LOAD-BEARING
  *
  * Measured on the handset this ships to (SM-G991W): history lives in
  * `/data/data/<pkg>/no_backup/history/`, where `/data` has **18 GB free of
@@ -95,24 +95,46 @@ package dev.zacx.dicta
  *    "Delete all history" control is therefore load-bearing, not a
  *    convenience — see [DictationHistoryStore.clearAll], which is why that
  *    method deletes every file in the directory rather than the indexed ones.
- *  - 🔴 **The byte bound CANNOT BIND at the current constants, and this is
- *    arithmetic rather than an estimate.** An earlier draft of this comment
- *    claimed the opposite — that raising [MAX_BYTES] to 2 GiB made the byte
- *    stage "a production code path". That was false, and it was false in the
- *    commit that wrote it. `BubbleDictation.MAX_RECORDING_MS` caps every
- *    recording at 120 s, and `AudioCaptureLogic` offers exactly two encoders
- *    (`OPUS_BITRATE` 24 kbps, `AAC_BITRATE` 32 kbps), so a single item cannot
- *    exceed ~352–469 KiB. The worst case this store can hold is therefore
- *    [MAX_ITEMS] items each recorded to the full cap: **343–458 MiB, against a
- *    2048 MiB bound.** Count binds first by 4.5–6×, in every regime — not
- *    "in practice", but always. The oversize carve-out is deader still: it
- *    needs one continuous recording larger than [MAX_BYTES], i.e. ~149 hours,
- *    against a 2-minute cap.
+ *  - 🔴 **The byte bound binds ON ONE ENCODER at the current constants — as of
+ *    2026-10-17, and this is the THIRD state this sentence has been in. Read
+ *    the history before writing a fourth.** (1) An early draft claimed raising
+ *    [MAX_BYTES] to 2 GiB made the byte stage "a production code path": FALSE
+ *    in the commit that wrote it. (2) It was corrected to "cannot bind", which
+ *    was true while `BubbleDictation.MAX_RECORDING_MS` was 120 s. (3) The cap
+ *    is now **600 s**, which moved the worst case across the budget — but for
+ *    AAC only.
+ *
+ *    **The method, which outlives every figure below: per-item bytes =
+ *    bitrate ÷ 8 × `MAX_RECORDING_MS`; worst case = that × [MAX_ITEMS];
+ *    compare against [MAX_BYTES]. Whichever of the two bounds is crossed
+ *    first is the one that binds.** Re-run it; do not trust the numbers.
+ *
+ *    | regime | per item (Opus 24 kbps / AAC 32 kbps) | ×[MAX_ITEMS] | vs 2048 MiB |
+ *    |---|---|---|---|
+ *    | OLD — 120 s cap | ~352 KiB / ~469 KiB | ~343 MiB / ~458 MiB | neither binds; count binds first by 4.5–6× |
+ *    | **CURRENT — 600 s cap** | **~1.72 MiB / ~2.29 MiB** | **~1.68 GiB / ~2.24 GiB** | **Opus 1717 MiB — does NOT bind; AAC 2289 MiB — BINDS** |
+ *
+ *    🔴 So "count always binds first, in every regime" — which this comment
+ *    used to assert as an absolute — is now FALSE, and that is the whole
+ *    change. It still holds for Opus, the encoder that actually ships
+ *    (`AudioCaptureLogic` prefers it). The byte stage trims in production only
+ *    on a device with no Opus encoder, which falls back to AAC. Counting that
+ *    as "the byte stage is now live in production" overstates it.
+ *
+ *    The arithmetic — not the prose — is pinned by
+ *    [HistoryRetentionTest.theByteBoundIsLoadBearingAtTheCurrentConstants],
+ *    which inverted along with this claim and will fire again if a constant
+ *    moves back.
+ *
+ *    The oversize carve-out is unreachable in BOTH regimes and is not made
+ *    live by this change: it needs ONE continuous recording larger than
+ *    [MAX_BYTES], i.e. ~199 hours of Opus or ~149 hours of AAC, against a
+ *    10-minute cap. It protects nothing at these constants.
  *
  *    The stage is KEPT, and the reason is narrow and specific: it is the
  *    backstop for a change to `MAX_RECORDING_MS`. Long-form recording is an
  *    openly contemplated direction, and it is exactly the change that would
- *    make this bound load-bearing overnight. [theByteBoundCannotBindAtTheCurrentConstants]
+ *    make this bound load-bearing overnight. [theByteBoundIsLoadBearingAtTheCurrentConstants]
  *    pins the arithmetic above so this comment cannot quietly go stale again
  *    — if someone raises the recording cap, that test fails and tells them the
  *    byte stage has just become live.
@@ -152,13 +174,19 @@ object HistoryRetention {
      * Re-derived here rather than copied — an earlier figure of "~185 hours"
      * matched neither encoder.
      *
-     * 🔴 **Dormant at the current constants, not a live code path.** This kdoc
-     * used to end "it is reachable, so this code path runs in production",
-     * which the commit above it had already retracted as false: a 120 s
-     * recording cap times two encoders means [MAX_ITEMS] items total at most
-     * ~458 MiB, so the count bound always binds first. See the object kdoc for
-     * the full arithmetic and for why the stage is kept anyway, and
-     * [HistoryRetentionTest.theByteBoundCannotBindAtTheCurrentConstants] for
+     * 🔴 **LIVE on AAC ONLY at the current constants, as of 2026-10-17.** This
+     * sentence has now said "reachable" (false when written), then "dormant"
+     * (true at a 120 s recording cap, where [MAX_ITEMS] items totalled at most
+     * ~343 MiB on Opus / ~458 MiB on AAC), and now "live" again — because the
+     * cap is 600 s, so [MAX_ITEMS] items total ~1.68 GiB on Opus and ~2.24 GiB
+     * on AAC. Only the AAC figure crosses this 2 GiB budget: Opus is ~1717 MiB
+     * against 2048 MiB and still does not bind, so the stage trims in
+     * production only on a device that has no Opus encoder. It is live for a
+     * DIFFERENT reason than
+     * the first draft claimed, which is why that draft was wrong and this is
+     * not: the constant that moved is the recording cap, not this one. See the
+     * object kdoc for the arithmetic, and
+     * [HistoryRetentionTest.theByteBoundIsLoadBearingAtTheCurrentConstants] for
      * the assertion that keeps these sentences honest.
      *
      * 🔴 Subject to the one-oversize-item carve-out documented on the object;
@@ -258,7 +286,12 @@ object HistoryRetention {
             }
         }
 
-        // --- 2. Count, newest first. ---------------------------------------
+        // --- 2. Count. ------------------------------------------------------
+        // 🔴 "Newest first" is the SCAN direction, not what gets deleted. The
+        // list is newest→oldest, so the entries past `maxItems` are the OLDEST
+        // ones, and those are what this condemns. Read as "evicts newest
+        // first" it says the opposite of what it does — the newest are exactly
+        // the entries kept.
         val countSurvivors = ArrayList<Entry>(ageSurvivors.size)
         for ((index, entry) in ageSurvivors.withIndex()) {
             if (index > bounds.maxItems - 1) {
@@ -268,7 +301,9 @@ object HistoryRetention {
             }
         }
 
-        // --- 3. Bytes, newest first. ---------------------------------------
+        // --- 3. Bytes. ------------------------------------------------------
+        // Same scan direction, same caveat as stage 2: newest→oldest, and what
+        // is condemned once the budget is blown is everything OLDER.
         // Once the budget is blown, everything older goes too: the entries
         // are in time order, so "skip this one, it is big, keep the next" is
         // not retention, it is a hole in the user's history.
@@ -287,6 +322,15 @@ object HistoryRetention {
                     // history. Accumulating it anyway means everything older
                     // is evicted on the next iteration, which is correct —
                     // the overage is one item, not unbounded.
+                    //
+                    // 🔴 UNREACHABLE at the current constants, and not made
+                    // reachable by the 120 s → 600 s cap raise. `index == 0`
+                    // means `accumulated` is 0, so the condition requires ONE
+                    // recording larger than MAX_BYTES (2 GiB) — ~199 h of
+                    // Opus or ~149 h of AAC, against a 10-minute cap. It is a
+                    // backstop for a future cap, and it protects nothing
+                    // today; do not cite it as a safety property of the
+                    // current configuration.
                     accumulated += entry.audioBytes
                     continue
                 }
