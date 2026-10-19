@@ -478,9 +478,19 @@ class BubbleService : Service() {
     }
 
     /**
-     * The bubble is an always-on-top overlay, so MediaProjection composites it
-     * into any screenshot. [DictateActivity] hides it for the duration of a
-     * capture through [OverlayVisibility].
+     * The bubble is an always-on-top overlay, so it is composited into any
+     * MediaProjection screenshot *and* drawn over [DictateActivity]'s card.
+     * Both mechanisms take it off the screen through [OverlayVisibility],
+     * which composes them.
+     *
+     * 🔴 **FLAG_NOT_TOUCHABLE is not cosmetic belt-and-braces.** An overlay
+     * window consumes every touch inside its bounds whether or not a view
+     * there handles it — this file's own `buildWindow` comment says so, about
+     * the transparent strip a fixed-height window used to leave. A hidden
+     * bubble that still takes touches is a hole in whatever is underneath it,
+     * and while the transcription card is open that is the card. The capture
+     * path got away without this because it lasts a few frames; the card's
+     * hold lasts as long as the user reads the transcript.
      */
     private val visibilitySink: (Boolean) -> Unit = { visible ->
         root?.post {
@@ -491,6 +501,14 @@ class BubbleService : Service() {
                 // nothing into a TRANSLUCENT window, but zeroing the window
                 // alpha removes it from composition outright.
                 params.alpha = if (visible) 1f else 0f
+                // Bitwise against the live flags, never an assignment: the
+                // reveal toggles FLAG_WATCH_OUTSIDE_TOUCH on this same field.
+                params.flags = if (visible) {
+                    params.flags and
+                        WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
+                } else {
+                    params.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+                }
                 runCatching { wm.updateViewLayout(view, params) }
             }
         }

@@ -17,26 +17,32 @@ import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
 
 /**
- * Guards for the radically-minimal dictation overlay.
+ * Guards for the minimal dictation overlay.
  *
- * The change this covers hid four controls that used to be on screen at all
- * times. Hiding a control is only safe if the route back to it is real, so the
- * behavioural tests here are the ones that matter: [tappingMoreRevealsTheActions]
- * and [typingRevealsTheActions] drive the two routes and would pass vacuously
- * only if `action_row` were visible to begin with — which
- * [atRestOnlyTheTranscriptAndTheMicAreVisible] independently denies.
+ * ## 🔴 THE OVERFLOW IS GONE — and that is what these guards now pin
  *
- * ## Red-before-green
+ * The design pass hid the four actions (Copy / Screenshot / Send / Close)
+ * behind an `@id/more_button` overflow, and most of this file existed to prove
+ * the routes back to them were real. The operator's instruction — *"remove the
+ * button to toggle action buttons, just always show the action buttons"* —
+ * retires that whole mechanism, so the guards are REPLACED rather than deleted,
+ * each by the assertion of the inverse contract:
  *
- * `action_row`, `more_button`, `level_meter` and `engine_badge` do not exist at
- * the design pass's base, so this file cannot compile there and "red at base"
- * would be a compile error rather than a guard watched failing. What was
- * observed instead is a set of hand-rolled mutations on this tree; the matrix is
- * in the PR body. In particular, deleting the `wireOnDemandActions()` call from
- * `DictateActivity.onCreate` — i.e. shipping the layout's hidden row with
- * nothing to reveal it, which is the exact defect the operator warned about —
- * turns [tappingMoreRevealsTheActions] and [typingRevealsTheActions] red while
- * the rest of the suite stays green.
+ *  * `tappingMoreRevealsTheActions`, `typingRevealsTheActions` and
+ *    `whitespaceAloneDoesNotRevealTheActions` drove the two reveal routes.
+ *    There is nothing to reveal any more, and the property that replaces all
+ *    three is stronger and cheaper to hold:
+ *    [theActionsAreOnScreenInEveryTranscriptState] — the row is visible
+ *    whatever the transcript says, so no state can hide it.
+ *  * `theOverflowStateIsAnnouncedInWordsNotOnlyInColour` pinned the toggle's
+ *    announced state. A control that does not exist announces nothing; the
+ *    ledger below ([iconOnlyControls]) is what now fails if it comes back
+ *    unlabelled.
+ *  * `theLayoutDefaultForTheActionRowIsHidden` becomes
+ *    [theLayoutDefaultForTheActionRowIsVisible] — same reasoning in reverse,
+ *    and still separate from the running-activity assertion, because the XML
+ *    default and the runtime state are two independent things that have to
+ *    hold.
  *
  * ## The reserved slots, and what happened to them
  *
@@ -74,12 +80,13 @@ class OverlayMinimalLayoutTest {
      * contentDescription/tooltipText coverage) *or* SHRINKS (a control removed
      * while something still addresses it).
      *
-     * `more_button` is in here but deliberately NOT in
-     * `DictateActionViewTypesTest.iconActions`: that ledger is the membership of
-     * `action_row`, and `more_button` must stay outside the row it toggles.
+     * 🔴 `more_button` was in here and is deliberately NOT any more — the
+     * overflow was deleted with the toggle. The set is now exactly
+     * `DictateActionViewTypesTest.iconActions`, i.e. the membership of
+     * `action_row`, because the row is the only icon-only chrome left on the
+     * card. Re-adding an overflow is a SHRINK-then-GROW this ledger reports.
      */
     private val iconOnlyControls = listOf(
-        R.id.more_button,
         R.id.copy_button,
         R.id.screenshot_button,
         R.id.share_button,
@@ -96,32 +103,30 @@ class OverlayMinimalLayoutTest {
     // --- the resting state --------------------------------------------------
 
     /**
-     * THE minimal-overlay assertion: at rest the card is the transcript, the mic
-     * and the way to everything else — and the four actions are not on it.
+     * The resting card: the transcript, the mic, and the actions — all of
+     * them, with nothing to tap first.
+     *
+     * REPLACES `atRestOnlyTheTranscriptAndTheMicAreVisible`, which asserted
+     * `action_row` GONE here. That was the overflow design's central claim and
+     * is now the defect: the operator asked for the actions to be on screen.
      */
     @Test
-    fun atRestOnlyTheTranscriptAndTheMicAreVisible() {
+    fun atRestTheTranscriptTheMicAndTheActionsAreAllVisible() {
         val controller = Robolectric.buildActivity(DictateActivity::class.java).setup()
         try {
             val a = controller.get()
 
-            for (id in listOf(R.id.dictated_text, R.id.mic_button, R.id.more_button)) {
+            for (id in listOf(R.id.dictated_text, R.id.mic_button, R.id.action_row)) {
                 assertEquals(
-                    "${nameOf(id)} must be visible at rest — it is one of the " +
-                        "three things the minimal card is allowed to show",
+                    "${nameOf(id)} must be visible at rest — the card is the " +
+                        "transcript, the mic, and the actions",
                     View.VISIBLE,
                     a.findViewById<View>(id).visibility
                 )
             }
 
-            assertEquals(
-                "action_row is visible at rest; the overlay is not minimal and " +
-                    "the on-demand reveal tests below would pass vacuously",
-                View.GONE,
-                a.findViewById<View>(R.id.action_row).visibility
-            )
-
-            // The old always-on chrome that the pass removed.
+            // The old always-on chrome that the design pass removed, and which
+            // the overflow's removal does not bring back.
             assertEquals(
                 "attachment_note must stay hidden until a capture attaches one",
                 View.GONE,
@@ -137,152 +142,96 @@ class OverlayMinimalLayoutTest {
      * running activity's state above — and the separation is a measured need,
      * not symmetry for its own sake.
      *
-     * `wireOnDemandActions()` calls `setActionsRevealed(..., currentText()
-     * .isNotEmpty())` on create, so the activity forces the row hidden whatever
-     * the XML says. Deleting `android:visibility="gone"` from the row therefore
-     * leaves [atRestOnlyTheTranscriptAndTheMicAreVisible] GREEN (observed in the
-     * mutation sweep — the mutant survived it). Two independent things have to
-     * hold for the card to be minimal in every state, so there are two
-     * assertions: this one fails on the layout default, that one on the runtime
-     * state after the wiring has run.
+     * While the overflow existed, `wireOnDemandActions()` forced the row's
+     * visibility on create whatever the XML said, so a mutation to the XML
+     * default SURVIVED the running-activity assertion (observed in that
+     * change's mutation sweep). The wiring is gone and the XML is now the only
+     * thing deciding, but the two assertions are kept apart anyway: any future
+     * code that sets `action_row`'s visibility would re-open exactly that gap,
+     * and this one would still be the half that sees it.
      */
     @Test
-    fun theLayoutDefaultForTheActionRowIsHidden() {
+    fun theLayoutDefaultForTheActionRowIsVisible() {
         assertEquals(
-            "activity_dictate.xml declares action_row visible; the card is only " +
-                "minimal because DictateActivity happens to hide it on create, " +
-                "and any path that inflates this layout without that wiring " +
-                "(or any future early return before it) ships the full row",
-            View.GONE,
+            "activity_dictate.xml does not declare action_row visible. The " +
+                "actions are unconditional now — there is no overflow left to " +
+                "reveal them, so a hidden default means Copy / Screenshot / " +
+                "Send / Close are simply unreachable.",
+            View.VISIBLE,
             inflate().findViewById<View>(R.id.action_row).visibility
         )
     }
 
-    // --- route 1: the overflow ----------------------------------------------
+    // --- the actions are unconditional --------------------------------------
 
+    /**
+     * REPLACES the three reveal-route tests. The operator asked for the
+     * actions to be always on screen, so the property is "no transcript state
+     * hides them" — which is both wider than the old routes and the thing a
+     * re-introduced reveal heuristic would break.
+     *
+     * The invocability half is carried over verbatim from
+     * `tappingMoreRevealsTheActions`: a visible row wired to nothing is the
+     * same defect as an unreachable one.
+     */
     @Test
-    fun tappingMoreRevealsTheActions() {
+    fun theActionsAreOnScreenInEveryTranscriptState() {
         val controller = Robolectric.buildActivity(DictateActivity::class.java).setup()
         try {
             val a = controller.get()
             val row = a.findViewById<View>(R.id.action_row)
-            val more = a.findViewById<ImageButton>(R.id.more_button)
+            val text = a.findViewById<android.widget.EditText>(R.id.dictated_text)
 
-            assertEquals("precondition: the row starts hidden", View.GONE, row.visibility)
+            // Empty, whitespace-only, real text, and emptied again — the four
+            // states the old TextWatcher distinguished between.
+            for (state in listOf("", "   ", "hello from the recogniser", "")) {
+                text.setText(state)
+                assertEquals(
+                    "action_row is hidden with the transcript set to " +
+                        "\"$state\" — something is still deciding when the " +
+                        "actions are allowed on screen",
+                    View.VISIBLE,
+                    row.visibility
+                )
+            }
 
-            more.performClick()
-            assertEquals(
-                "tapping more_button did not reveal action_row — the four " +
-                    "actions are unreachable",
-                View.VISIBLE,
-                row.visibility
-            )
-            // ...and the revealed controls are actually invocable, not merely
-            // drawn: a visible row wired to nothing is the same defect.
             for (id in listOf(
                 R.id.copy_button, R.id.screenshot_button,
                 R.id.share_button, R.id.close_button
             )) {
                 val v = a.findViewById<View>(id)
                 assertEquals(
-                    "${nameOf(id)} is not visible inside the revealed row",
+                    "${nameOf(id)} is not visible inside the action row",
                     View.VISIBLE, v.visibility
                 )
                 assertTrue("${nameOf(id)} has no click listener", v.hasOnClickListeners())
             }
-
-            more.performClick()
-            assertEquals(
-                "more_button does not toggle back — the row can be opened but " +
-                    "never put away",
-                View.GONE,
-                row.visibility
-            )
         } finally {
             controller.close()
         }
     }
 
     /**
-     * The toggle's state must be announced, not only filled in with colour
-     * (`ghost_button_bg`'s `state_selected`). Both the contentDescription and
-     * the tooltipText move, because the two are read by different users.
+     * The overflow is GONE, not merely hidden — asserted against the inflated
+     * tree so it cannot come back as a 0x0 or INVISIBLE leftover that still
+     * takes a touch slot.
+     *
+     * [everyIconOnlyControlIsLedgeredAndLabelled] would also fail if it
+     * returned, but it would fail with "the ImageButton set changed", which
+     * reads as a ledger that needs updating. This one says what is wrong.
      */
     @Test
-    fun theOverflowStateIsAnnouncedInWordsNotOnlyInColour() {
-        val controller = Robolectric.buildActivity(DictateActivity::class.java).setup()
-        try {
-            val a = controller.get()
-            val more = a.findViewById<ImageButton>(R.id.more_button)
-
-            val closedDesc = more.contentDescription?.toString()
-            val closedTip = more.tooltipText?.toString()
-            more.performClick()
-            val openDesc = more.contentDescription?.toString()
-            val openTip = more.tooltipText?.toString()
-
-            assertEquals(a.getString(R.string.more_actions), closedDesc)
-            assertEquals(a.getString(R.string.more_actions), closedTip)
-            assertEquals(a.getString(R.string.hide_actions), openDesc)
-            assertEquals(a.getString(R.string.hide_actions), openTip)
-            assertTrue(
-                "more_button is not marked selected while the row is open, so " +
-                    "the visual state has nothing to hang on",
-                more.isSelected
-            )
-        } finally {
-            controller.close()
-        }
-    }
-
-    // --- route 2: text arriving ---------------------------------------------
-
-    /**
-     * The route that means a user who has just dictated never has to discover
-     * anything. Driven through the transcript's own text, which is how both a
-     * recogniser result and manual typing arrive.
-     */
-    @Test
-    fun typingRevealsTheActions() {
-        val controller = Robolectric.buildActivity(DictateActivity::class.java).setup()
-        try {
-            val a = controller.get()
-            val row = a.findViewById<View>(R.id.action_row)
-            assertEquals("precondition: the row starts hidden", View.GONE, row.visibility)
-
-            a.findViewById<android.widget.EditText>(R.id.dictated_text)
-                .setText("hello from the recogniser")
-
-            assertEquals(
-                "text arrived in the transcript and action_row stayed hidden — " +
-                    "the automatic reveal is not wired",
-                View.VISIBLE,
-                row.visibility
-            )
-        } finally {
-            controller.close()
-        }
-    }
-
-    /**
-     * Whitespace is not text. Pinned because the obvious implementation
-     * (`s.isNotEmpty()`) reveals the row on a stray space, in a state where
-     * every action in it still refuses.
-     */
-    @Test
-    fun whitespaceAloneDoesNotRevealTheActions() {
-        val controller = Robolectric.buildActivity(DictateActivity::class.java).setup()
-        try {
-            val a = controller.get()
-            a.findViewById<android.widget.EditText>(R.id.dictated_text).setText("   ")
-            assertEquals(
-                "a blank transcript revealed the actions",
-                View.GONE,
-                a.findViewById<View>(R.id.action_row).visibility
-            )
-        } finally {
-            controller.close()
-        }
+    fun thereIsNoOverflowToggleLeftOnTheCard() {
+        val root = inflate()
+        val byName = RuntimeEnvironment.getApplication().resources.getIdentifier(
+            "more_button", "id", RuntimeEnvironment.getApplication().packageName
+        )
+        assertTrue(
+            "an @id/more_button is still declared. The actions are " +
+                "unconditional now, so a toggle for them either does nothing " +
+                "or can hide controls the operator asked to always see.",
+            byName == 0 || root.findViewById<View>(byName) == null
+        )
     }
 
     // --- accessibility ------------------------------------------------------
@@ -948,34 +897,30 @@ class OverlayMinimalLayoutTest {
                 View.VISIBLE, badge.visibility
             )
             assertEquals(
-                a.getString(R.string.stt_remote_done), badge.text.toString()
+                a.getString(R.string.engine_badge_remote), badge.text.toString()
             )
 
-            // 🔴 The badge must never carry a CAVEAT. It is an 11sp pill that
-            // names the engine; the warnings belong on the full-width status
-            // line. `showEngine` is deliberately flag-blind (see its kdoc),
-            // and the hazard that justifies the sharing of stt_remote_done is
-            // that string acquiring a case-specific claim — so pin, here,
-            // that whatever the badge resolves to is neither warning. If
-            // someone routes statusLabel's output into the badge, or makes
-            // stt_remote_done a sentence about THIS transcript, this fails.
-            for (warning in listOf(R.string.stt_remote_truncated, R.string.stt_remote_unreliable)) {
+            // 🔴 The badge must never carry a status line STRING — neither a
+            // caveat nor the plain one. It is an 11sp pill that names the
+            // engine; the full sentences belong on the full-width line, and
+            // the plain one being on BOTH is the duplicate this change
+            // removed (see theEngineBadgeDoesNotRepeatTheStatusLine). If
+            // someone routes statusLabel's output back into the badge, every
+            // one of these fails.
+            for (status in listOf(
+                R.string.stt_remote_done,
+                R.string.stt_remote_truncated,
+                R.string.stt_remote_unreliable,
+            )) {
                 assertTrue(
                     "engine_badge reads \"${badge.text}\", which is the status " +
-                        "line's warning \"${a.getString(warning)}\". The badge " +
-                        "names the ENGINE and has no basis for a claim about " +
-                        "this particular transcript.",
-                    badge.text.toString() != a.getString(warning),
+                        "line's \"${a.getString(status)}\". The badge names the " +
+                        "ENGINE: it has no room for a sentence, no basis for a " +
+                        "claim about this particular transcript, and the status " +
+                        "line is already saying it.",
+                    badge.text.toString() != a.getString(status),
                 )
             }
-            assertEquals(
-                "the badge diverged from the no-signal case of " +
-                    "RemoteTranscriber.statusLabel. The two deliberately share " +
-                    "one resource; if that is no longer true, showEngine's kdoc " +
-                    "is wrong and the badge may now be making a claim.",
-                a.getString(RemoteTranscriber.statusLabel(truncated = null, unreliable = null)),
-                badge.text.toString(),
-            )
 
             // The two engines must be DISTINGUISHABLE, which is the whole point
             // of the badge — asserted as a difference, so a mutant that returns
@@ -987,7 +932,7 @@ class OverlayMinimalLayoutTest {
                 b.uiCallbacks().onTranscript("from the phone", fromRemote = false, isFinal = true)
                 val localText = b.findViewById<android.widget.TextView>(R.id.engine_badge)
                     .text.toString()
-                assertEquals(a.getString(R.string.stt_local_label), localText)
+                assertEquals(a.getString(R.string.engine_badge_local), localText)
                 assertTrue(
                     "the badge reads \"$localText\" for BOTH engines — it is " +
                         "present, labelled, and says nothing",
@@ -996,6 +941,67 @@ class OverlayMinimalLayoutTest {
             } finally {
                 fresh.close()
             }
+        } finally {
+            controller.close()
+        }
+    }
+
+    /**
+     * REGRESSION: **"Transcribed by the server" was on the card twice.**
+     *
+     * After a remote transcription the badge and the status line both resolved
+     * to `@string/stt_remote_done`, so the same sentence appeared in an 11sp
+     * pill and again in the full-width line under it. The operator: *"there is
+     * a redundant transcribed on the server message. We only need one."*
+     *
+     * 🔴 Pinned as a RELATIONSHIP between the two surfaces, not as the badge's
+     * spelling: the defect is the duplication, and any future copy edit that
+     * re-converges the two is the same defect back in a new wording. The badge
+     * is also required to still SAY something — collapsing the duplicate by
+     * blanking the badge would leave the local case with no engine name at
+     * all, which is the thing the badge exists for.
+     *
+     * The status line is the surface that keeps the sentence, because it is
+     * the one that carries the `truncated` / `unreliable` variants
+     * (`RemoteTranscriber.statusLabel`), and those must not move to an 11sp
+     * pill — `theBadgeNeverCarriesAWarning`'s assertions inside
+     * [aDictationBindsTheMeterAndNamesTheEngine] still hold that line.
+     */
+    @Test
+    fun theEngineBadgeDoesNotRepeatTheStatusLine() {
+        val controller = Robolectric.buildActivity(DictateActivity::class.java).setup()
+        try {
+            val a = controller.get()
+            val badge = a.findViewById<android.widget.TextView>(R.id.engine_badge)
+            val status = a.findViewById<android.widget.TextView>(R.id.status_text)
+            val cb = a.uiCallbacks()
+
+            // Exactly what a plain remote success does: the transcript names
+            // the engine on the badge, and RemoteTranscriber's status for the
+            // no-signal case goes to the status line.
+            cb.onTranscript("the server transcript", fromRemote = true, isFinal = true)
+            cb.onStatus(
+                a.getString(RemoteTranscriber.statusLabel(truncated = null, unreliable = null))
+            )
+
+            assertTrue(
+                "the badge is empty after a remote transcript; the duplicate " +
+                    "was removed by silencing the surface that answers " +
+                    "\"which engine\" in BOTH the remote and the local case",
+                !badge.text.isNullOrBlank()
+            )
+            assertEquals(
+                "precondition: the status line is not carrying the remote " +
+                    "status, so this test is not looking at the duplicate",
+                a.getString(R.string.stt_remote_done),
+                status.text.toString(),
+            )
+            assertFalse(
+                "the badge reads \"${badge.text}\" and so does the status " +
+                    "line directly beneath it — one plain remote transcription " +
+                    "puts the same sentence on the card twice",
+                badge.text.toString() == status.text.toString(),
+            )
         } finally {
             controller.close()
         }

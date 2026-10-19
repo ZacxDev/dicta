@@ -149,11 +149,46 @@ class DictateActivity : Activity() {
         findViewById<ImageButton>(R.id.share_button).setOnClickListener { shareText() }
         findViewById<ImageButton>(R.id.close_button).setOnClickListener { finish() }
 
-        wireOnDemandActions()
-
         // Which of the three launch modes this is — see applyLaunchIntent,
         // which holds the reasoning that used to sit here.
         applyLaunchIntent(intent)
+    }
+
+    /**
+     * 🔴 The floating bubble must not be on top of this card.
+     *
+     * [BubbleService]'s overlay is an always-on-top window, so with the card
+     * up it is drawn over it and its mic button is tappable — a second
+     * dictation started from the view that exists to show the one just
+     * finished. Measured on the device: the control visible over a history
+     * card was never `@id/mic_button` (which `populateFromHistory` sets GONE)
+     * but the bubble behind it.
+     *
+     * The hold is taken for the card's VISIBLE lifetime (`onStart`), not its
+     * foreground one (`onResume`): the bubble is drawn whenever the card is on
+     * screen, including while a translucent system dialog — the
+     * MediaProjection consent prompt, most importantly — has focus on top of
+     * it.
+     *
+     * [OverlayVisibility.Holder.CARD] rather than a bare "hide": the capture
+     * path holds the same overlay down through
+     * [OverlayVisibility.Holder.CAPTURE], and its restore must not undo this
+     * one. See [OverlayVisibility].
+     */
+    override fun onStart() {
+        super.onStart()
+        OverlayVisibility.setHidden(OverlayVisibility.Holder.CARD, true)
+    }
+
+    /**
+     * The bubble comes back as the card leaves the screen — before
+     * [onDestroy], because a card that is merely stopped (the user switched
+     * away) is not on top of anything, and Dicta's always-available trigger
+     * must not be gone until the Activity is finally collected.
+     */
+    override fun onStop() {
+        OverlayVisibility.setHidden(OverlayVisibility.Holder.CARD, false)
+        super.onStop()
     }
 
     /**
@@ -526,74 +561,18 @@ class DictateActivity : Activity() {
         // and the card it would render into is going away. The executor is
         // non-daemon, so leaving it running leaks a thread per card.
         runCatching { historyWorker.shutdownNow() }
-        // If we are torn down mid-capture the bubble must not stay hidden.
-        OverlayVisibility.setVisible(true)
+        // 🔴 Release BOTH holds, unconditionally.
+        //
+        // [onStop] has already released CARD on every ordinary path, and
+        // releasing it again is a no-op — holder membership is idempotent,
+        // which is the reason [OverlayVisibility] keeps a set rather than a
+        // depth counter. CAPTURE is the one that matters here, and is why
+        // this line predates the card's own hold: a card torn down
+        // mid-capture would otherwise leave the bubble off screen with
+        // nothing left alive to put it back.
+        OverlayVisibility.setHidden(OverlayVisibility.Holder.CAPTURE, false)
+        OverlayVisibility.setHidden(OverlayVisibility.Holder.CARD, false)
         super.onDestroy()
-    }
-
-    // --- the on-demand action row -------------------------------------------
-
-    /**
-     * Wires the two routes that reveal `@id/action_row`, which the layout
-     * starts GONE so that the resting card is the transcript and the mic and
-     * nothing else.
-     *
-     * 🔴 Discoverability is the whole risk of hiding a control, so there are
-     * deliberately TWO mechanisms here plus a third in the copy, and none of
-     * them depends on the others:
-     *
-     *  1. [R.id.more_button] — always visible next to the mic, toggles the row.
-     *     Its `contentDescription` and `tooltipText` are BOTH swapped with the
-     *     row's visibility, so the toggle state is announced rather than only
-     *     drawn (the `state_selected` fill in `ghost_button_bg` is the visual
-     *     half, and would be colour-only on its own).
-     *  2. A [android.text.TextWatcher] on the transcript — the row appears by
-     *     itself the moment there is text to act on, so after the first
-     *     utterance the user is never asked to find anything. It is hidden only
-     *     in the state where every action in it would refuse ("Nothing to copy
-     *     yet…").
-     *  3. `@string/dictate_hint`, the resting status line, names the route in
-     *     words.
-     *
-     * The watcher only ever reveals, never hides: a user who types, deletes and
-     * retypes should not have the row flicker, and once revealed the row has
-     * been seen — re-hiding it would be the app forgetting what the user
-     * already learned. [R.id.more_button] remains the way to put it away.
-     */
-    private fun wireOnDemandActions() {
-        val row = findViewById<View>(R.id.action_row)
-        val more = findViewById<ImageButton>(R.id.more_button)
-
-        more.setOnClickListener {
-            setActionsRevealed(row, more, row.visibility != View.VISIBLE)
-        }
-        setActionsRevealed(row, more, currentText().isNotEmpty())
-
-        textInput.addTextChangedListener(object : android.text.TextWatcher {
-            override fun afterTextChanged(s: android.text.Editable?) {
-                if (!s.isNullOrBlank() && row.visibility != View.VISIBLE) {
-                    setActionsRevealed(row, more, true)
-                }
-            }
-
-            override fun beforeTextChanged(
-                s: CharSequence?, start: Int, count: Int, after: Int
-            ) = Unit
-
-            override fun onTextChanged(
-                s: CharSequence?, start: Int, before: Int, count: Int
-            ) = Unit
-        })
-    }
-
-    private fun setActionsRevealed(row: View, more: ImageButton, revealed: Boolean) {
-        row.visibility = if (revealed) View.VISIBLE else View.GONE
-        more.isSelected = revealed
-        val label = getString(
-            if (revealed) R.string.hide_actions else R.string.more_actions
-        )
-        more.contentDescription = label
-        more.tooltipText = label
     }
 
     // --- floating window geometry -------------------------------------------
@@ -1034,20 +1013,31 @@ class DictateActivity : Activity() {
      * that cannot carry one, and duplicating the warning in two places on one
      * screen would make both easier to ignore.
      *
-     * 🔴 It nevertheless **shares** `stt_remote_done` with the status line's
-     * plain case, which is safe for exactly one reason: that string is pinned
-     * as a whole, normalised string by
-     * `RemoteTranscriberTest.theRemoteDoneStatusMakesNoVerificationClaim`. If
-     * anyone makes it case-specific — the concrete trigger an audit named — that
-     * test goes red and this call site has to be revisited rather than quietly
-     * inheriting a sentence the badge has no room for and no basis to claim.
-     * `OverlayMinimalLayoutTest` additionally pins that the badge is never
-     * either warning string.
+     * 🔴 **It no longer SHARES `stt_remote_done` with the status line — that
+     * sharing was the duplicate the operator reported.** After a plain remote
+     * transcription both surfaces resolved to "Transcribed by the server", so
+     * the card said it twice: once in the pill, once in the full-width line
+     * directly beneath it.
+     *
+     * The sentence stays on the **status line**, and the badge gets its own
+     * short engine names. The status line is the surface that carries
+     * [RemoteTranscriber.statusLabel]'s `truncated` / `unreliable` variants,
+     * and those cannot move here (see the paragraph above), so collapsing the
+     * duplicate in the other direction would have meant either silencing the
+     * warnings or splitting them across two surfaces. This way every status
+     * string is untouched and exactly one of them is on screen.
+     *
+     * The previous kdoc argued the shared string was safe because
+     * `RemoteTranscriberTest.theRemoteDoneStatusMakesNoVerificationClaim`
+     * pins it whole. That is still true and still the reason the status line
+     * may carry it — it is simply no longer a claim about the badge.
+     * `OverlayMinimalLayoutTest` pins the badge from both sides now: it is
+     * never either warning string, and it never equals the status line.
      */
     private fun showEngine(fromRemote: Boolean) {
         engineBadge.visibility = View.VISIBLE
         engineBadge.text = getString(
-            if (fromRemote) R.string.stt_remote_done else R.string.stt_local_label
+            if (fromRemote) R.string.engine_badge_remote else R.string.engine_badge_local
         )
     }
 

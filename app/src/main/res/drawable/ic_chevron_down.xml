@@ -9,7 +9,7 @@
      only (a dropdown row must not show a caret).
 
      Platform expand_more glyph. fillColor is white and tinted at the use site,
-     matching ic_close / ic_more in this directory. -->
+     matching ic_close in this directory. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="24dp"
     android:height="24dp"

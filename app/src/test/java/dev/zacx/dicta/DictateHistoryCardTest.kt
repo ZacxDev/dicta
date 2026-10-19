@@ -155,7 +155,7 @@ class DictateHistoryCardTest {
             assertEquals(
                 "the badge must name the engine the STORED text came from, " +
                     "not the one a fresh dictation would use",
-                ctx.getString(R.string.stt_remote_done),
+                ctx.getString(R.string.engine_badge_remote),
                 badge.text.toString(),
             )
         } finally {

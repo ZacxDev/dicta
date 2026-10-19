@@ -71,6 +71,15 @@ class DictaWindowsTest {
 
     private fun windows(dim: Float = DictateActivity.DIM_AMOUNT): Pair<DictaWindows, android.view.Window> {
         val activity = Robolectric.buildActivity(DictateActivity::class.java).setup().get()
+        // 🔴 The Activity's own onStart has already taken the CARD hold on
+        // [OverlayVisibility] — it hides the bubble for as long as the card is
+        // on screen. This file is about the CAPTURE mechanism in isolation, so
+        // the holder state is reset to a clean baseline before the sink goes
+        // on; otherwise [theBubbleIsHiddenAndRestoredWithTheDialog] would be
+        // measuring the composition of the two rather than this class.
+        // The composition itself is covered end to end, through both real
+        // seams, by BubbleHiddenWhileTheCardIsUpTest.
+        OverlayVisibility.clearForTest()
         OverlayVisibility.register(sink)
         return DictaWindows(activity.window, dim) to activity.window
     }
