@@ -62,14 +62,19 @@ internal class DictaWindows(
         window.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
         window.setDimAmount(0f)
         setWindowAlpha(0f)
-        OverlayVisibility.setVisible(false)
+        OverlayVisibility.setHidden(OverlayVisibility.Holder.CAPTURE, true)
     }
 
     override fun restoreAfterCapture() {
         setWindowAlpha(1f)
         window.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
         window.setDimAmount(dimAmount)
-        OverlayVisibility.setVisible(true)
+        // 🔴 Releases ONLY the capture's own hold. The card holds the bubble
+        // off the screen for its whole life and this capture was taken FROM
+        // that card, so an unconditional "show" here put the bubble back on
+        // top of the still-open card. See [OverlayVisibility] for why the two
+        // mechanisms compose through a holder set rather than one boolean.
+        OverlayVisibility.setHidden(OverlayVisibility.Holder.CAPTURE, false)
     }
 
     /**

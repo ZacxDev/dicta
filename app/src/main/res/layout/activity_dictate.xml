@@ -4,41 +4,33 @@
 
   ## What is present at rest, and what is not
 
-  At rest this card contains the transcript and one mic control. That is all.
-  Removed by the 2026-10 design pass:
+  At rest this card contains the transcript, one mic control, and the four
+  actions. Removed by the 2026-10 design pass:
 
     * the "Dicta" title TextView — the card only ever appears because the user
       just tapped a Dicta trigger, so it named the app to someone who had just
       named it themselves;
-    * the always-visible four-icon action row (Copy / Screenshot / Send /
-      Close), which is now @id/action_row and starts GONE;
-    * the full-bleed mic Button, which is now a centred pill sharing its row
-      with the overflow trigger.
+    * the full-bleed mic Button, which is now a centred pill.
 
   Kept, because the layout is not the only consumer: @id/status_text,
   @id/dictated_text, @id/mic_button, @id/attachment_note, @id/copy_button,
   @id/screenshot_button, @id/share_button, @id/close_button and
   @id/dictate_card all still exist with the same ids and the same view types.
-  DictateActivity and the unit suite address them by id, and so does in-flight
-  work on another branch.
 
-  ## 🔴 How a first-time user finds Send
+  ## 🔴 THE OVERFLOW IS GONE — do not bring it back
 
-  Three independent routes, deliberately — a hidden action with one route is a
-  feature that exists only in the author's head:
+  The design pass hid the four actions behind an @id/more_button overflow, with
+  a TextWatcher auto-revealing @id/action_row once the transcript went
+  non-empty, and @string/dictate_hint naming the "⋯" route in words. All three
+  mechanisms existed to make a HIDDEN control findable.
 
-    1. @id/more_button is ALWAYS VISIBLE, at rest, next to the mic. It is a
-       ringed overflow control with contentDescription AND tooltipText ("More
-       actions" / "Hide actions"), and tapping it reveals @id/action_row. It is
-       the only other thing on the card besides the transcript and the mic, so
-       it cannot be missed.
-    2. The row AUTO-REVEALS the moment the transcript stops being empty —
-       DictateActivity watches @id/dictated_text. So after the very first
-       utterance the actions are simply on screen, and the user never has to
-       discover anything. They are hidden only in the state where every one of
-       them would refuse ("Nothing to copy yet…").
-    3. @id/status_text, which is the first line of the card, names the route in
-       words while the row is hidden ("Tap ⋯ for Copy, Send, Screenshot").
+  The operator's instruction retires the problem rather than the mitigations:
+  "remove the button to toggle action buttons. Just always show the action
+  buttons." So @id/more_button, its two strings, its drawable and its ghost
+  background are deleted, @id/action_row carries no visibility attribute, and
+  nothing in DictateActivity sets one. OverlayMinimalLayoutTest pins the row
+  visible in the XML default AND in every transcript state, and its icon-control
+  ledger fails if a fifth ImageButton reappears.
 
   ## Why still a ScrollView
 
@@ -114,8 +106,13 @@
                               @color/dicta_on_accent_container at 9.84:1)
                               naming which engine produced the current text.
                               Bound by DictateActivity.showEngine(fromRemote)
-                              to @string/stt_remote_done or
-                              @string/stt_local_label. Still placed LAST, now
+                              to @string/engine_badge_remote or
+                              @string/engine_badge_local — SHORT words, not the
+                              status line's sentence. It used to carry
+                              @string/stt_remote_done, which the status line
+                              also carries for a plain remote success, so the
+                              card said "Transcribed by the server" twice.
+                              Still placed LAST, now
                               simply so the meter leads; the older reason ("so
                               it does not shift the status text") retired with
                               the #9 move — there is no longer any status text
@@ -310,13 +307,15 @@
             android:text="@string/screenshot_attached_note" />
 
         <!--
-          The resting control row: the mic, and the way to everything else.
+          The resting control row: the mic, and (in the history mode only) the
+          re-transcribe button. The overflow that used to share this row is
+          gone — see the header.
 
           @id/mic_button stays a Button (not an ImageButton) on purpose. Four
-          places in DictateActivity assign `micButton.text`, another branch is
-          editing that file right now, and the label is what keeps the recording
-          state off colour-only footing ("Speak" / "Stop"). It is styled as an
-          accent pill with the mic glyph as a compound drawable instead.
+          places in DictateActivity assign `micButton.text`, and the label is
+          what keeps the recording state off colour-only footing ("Speak" /
+          "Stop"). It is styled as an accent pill with the mic glyph as a
+          compound drawable instead.
         -->
         <LinearLayout
             android:layout_width="match_parent"
@@ -378,47 +377,35 @@
                 android:visibility="gone"
                 android:text="@string/history_retranscribe" />
 
-            <!-- The overflow. 48dp square = the minimum touch target, and the
-                 ONLY always-visible route to the hidden actions, so it carries
-                 both a contentDescription and a tooltipText and DictateActivity
-                 swaps both when it toggles. -->
-            <ImageButton
-                android:id="@+id/more_button"
-                android:layout_width="48dp"
-                android:layout_height="48dp"
-                android:layout_marginStart="12dp"
-                android:src="@drawable/ic_more"
-                android:scaleType="center"
-                android:background="@drawable/ghost_button_bg"
-                android:tint="@color/dicta_on_surface_variant"
-                android:contentDescription="@string/more_actions"
-                android:tooltipText="@string/more_actions" />
         </LinearLayout>
 
         <!--
-          The on-demand actions. GONE at rest; revealed by @id/more_button or
-          automatically once the transcript is non-empty (see the header).
+          The actions. ALWAYS ON SCREEN — no default visibility attribute, and
+          nothing in DictateActivity touches this row's visibility.
+
+          🔴 It used to be GONE, revealed by an @id/more_button overflow or
+          automatically once the transcript went non-empty. The operator asked
+          for the toggle to go and the actions to be unconditional, so both
+          reveal routes and the overflow itself were deleted. Do not
+          re-introduce a "reveal" here: an action the user can see is the
+          point, and the states where an action refuses ("Nothing to copy
+          yet…") are handled by the action, not by hiding it.
 
           Still icon-only and still 4 children, unchanged ids and unchanged
-          order. Each is 48dp tall (the minimum touch target; the previous 52dp
-          was fine too, 48 is what the extra row of chrome can afford) and each
-          keeps BOTH contentDescription and tooltipText — a control that is
-          sometimes invisible needs its label more than one that is always on
-          screen, not less.
+          order. Each is 48dp tall (the minimum touch target) and each keeps
+          BOTH contentDescription and tooltipText.
 
-          🔴 DictateActionViewTypesTest asserts this row's child-id set as a
-          ledger: adding a fifth action here without updating that list turns
-          the suite red. @id/more_button is deliberately NOT a child of this row
-          (it must stay visible when the row is hidden), and is covered instead
-          by OverlayMinimalLayoutTest's icon-control ledger.
+          🔴 Two ledgers cover this row: DictateActionViewTypesTest asserts its
+          child-id set, and OverlayMinimalLayoutTest's icon-control ledger now
+          holds exactly the same four — the overflow was the one icon control
+          outside the row, and it is gone.
         -->
         <LinearLayout
             android:id="@+id/action_row"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="horizontal"
-            android:layout_marginTop="10dp"
-            android:visibility="gone">
+            android:layout_marginTop="10dp">
 
             <ImageButton
                 android:id="@+id/copy_button"

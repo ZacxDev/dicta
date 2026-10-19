@@ -26,10 +26,13 @@
     <string name="try_now">Try dictation now</string>
 
     <string name="dictate_title">Dicta</string>
-    <!-- The resting status line. It names the overflow route in words, because
-         while @id/action_row is hidden this is the only on-screen text that
-         tells a first-time user where Copy / Send / Screenshot went. -->
-    <string name="dictate_hint">Tap Speak — then ⋯ for Copy, Send, Screenshot</string>
+    <!-- The resting status line.
+         ⚠ This used to read "Tap Speak — then ⋯ for Copy, Send, Screenshot"
+         and name the overflow route in words, because @id/action_row was
+         hidden until something revealed it. The overflow is gone and the
+         actions are always on screen, so the ⋯ pointed at a control that no
+         longer exists — a hint is a claim too. -->
+    <string name="dictate_hint">Tap Speak — then Copy, Send or Screenshot</string>
     <string name="dictate_text_hint">Speak, or type here</string>
     <string name="listening">Listening… speak now</string>
     <!-- Short because the mic control is now a pill sharing its row with the
@@ -42,11 +45,6 @@
     <string name="copy">Copy</string>
     <string name="share">Send</string>
     <string name="close">Close</string>
-    <!-- The overflow toggle. Both strings are used as contentDescription AND
-         tooltipText, and DictateActivity swaps them with the row's visibility so
-         the toggle's state is announced, not just coloured. -->
-    <string name="more_actions">More actions</string>
-    <string name="hide_actions">Hide actions</string>
     <string name="dictate">Dictate</string>
     <string name="copied">Copied to clipboard</string>
     <string name="nothing_to_copy">Nothing to copy yet — dictate something first.</string>
@@ -301,7 +299,6 @@
          for the other is how a wrong transcript gets trusted. -->
     <string name="stt_fell_back">Using the phone\'s recognizer — %1$s</string>
     <string name="stt_fell_back_retrying">Using the phone\'s recognizer for now — %1$s. Still trying the server; the text will update if it succeeds.</string>
-    <string name="stt_local_label">Transcribed on the phone</string>
     <string name="stt_not_configured">No transcription service configured — using the phone\'s recognizer. Set one up in Settings.</string>
     <string name="stt_no_audio">Nothing was recorded.</string>
     <string name="stt_mic_silenced">Another app has the microphone — Dicta is receiving silence.</string>
@@ -320,4 +317,21 @@
          ProgressBar's own progress, so the label only has to name the view. -->
     <string name="level_meter_desc">Microphone input level</string>
     <string name="engine_badge_desc">Transcription engine</string>
+
+    <!-- ===== What @id/engine_badge says =====
+         🔴 SHORT, and NOT the status line's sentence. The badge used to be
+         bound to @string/stt_remote_done, which is also what the status line
+         carries for a plain remote success — so after an ordinary dictation
+         the card read "Transcribed by the server" twice, once in an 11sp pill
+         and again in the full-width line under it.
+
+         The sentence stays on the status line, because that is the surface
+         that carries the truncated / unreliable variants of it
+         (RemoteTranscriber.statusLabel) and those need the width. The badge
+         answers only "which engine", which is one word.
+
+         Both halves must stay DISTINGUISHABLE from each other and from every
+         status string; OverlayMinimalLayoutTest pins both properties. -->
+    <string name="engine_badge_remote">Server</string>
+    <string name="engine_badge_local">Phone</string>
 </resources>
