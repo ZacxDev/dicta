@@ -191,12 +191,21 @@ class DictateHistoryCardTest {
         // breaking the tile, the notification, MainActivity and the
         // mic-permission fallback — all of which rely on onCreate starting a
         // dictation.
+        //
+        // ⚠ The mic-button half of this control is gone, deliberately. It
+        // used to assert VISIBLE here, reasoning that a hidden button means
+        // "the card cannot record". That retired with the START role: the
+        // overlay offers no start control in ANY state now, so it is GONE on
+        // a plain launch too and the branch's discriminator is the status
+        // line. The full state table is OverlayNeverStartsARecordingTest.
         val controller = Robolectric.buildActivity(DictateActivity::class.java).setup()
         try {
             val a = controller.get()
             assertEquals(
-                "a plain launch hid the mic button, so the card cannot record",
-                View.VISIBLE,
+                "a plain launch offers a mic control — the overlay must " +
+                    "never present one that starts a recording; starting is " +
+                    "the floating bubble's job",
+                View.GONE,
                 a.findViewById<View>(R.id.mic_button).visibility,
             )
             assertEquals(
@@ -344,7 +353,11 @@ class DictateHistoryCardTest {
             .substringBefore("\n    private fun ")
 
         val stopAt = body.indexOf("stopAnyLiveCapture()")
-        val hideAt = body.indexOf("micButton.visibility = View.GONE")
+        // `hideMicControl()` is the one place `micButton.visibility =
+        // View.GONE` is spelled now — the three role assignments were
+        // consolidated when the START role was removed. The ordering claim is
+        // unchanged.
+        val hideAt = body.indexOf("hideMicControl()")
         assertTrue(
             "populateFromHistory does not stop a live capture at all — it " +
                 "hides the only stop control and leaves the microphone open",
@@ -443,10 +456,17 @@ class DictateHistoryCardTest {
     @Test
     fun reAttachingTurnsAHistoryCardBackIntoALiveOne() {
         // 🔴 Round 5 of #17: re-running the attach arm re-wired the SINK but
-        // left the card dressed as a history card — micButton GONE (a live
-        // dictation with no mic control at all) and Re-transcribe visible and
+        // left the card dressed as a history card — Re-transcribe visible and
         // enabled against the PREVIOUS recording, whose historyEvents carry
         // no staleness gate and write the same views the live session writes.
+        //
+        // ⚠ The mic-button half of this assertion INVERTED when the START
+        // role was removed. It used to read "a live dictation is attached but
+        // the card has no mic control", asserting VISIBLE. The attach state
+        // owns no capture of its own — the bubble's recording is already
+        // over and uploading — so there is nothing to stop and nothing to
+        // start, and the control must be GONE. What remains load-bearing
+        // here is the Re-transcribe half: it must not stay offered.
         val id = store("the stored dictation")
         val controller = open(DictateLaunch.transcribingIntent(ctx))
         try {
@@ -463,8 +483,10 @@ class DictateHistoryCardTest {
             shadowOf(Looper.getMainLooper()).idle()
 
             assertEquals(
-                "a live dictation is attached but the card has no mic control",
-                View.VISIBLE,
+                "re-attaching revealed a mic control on a card whose " +
+                    "recording is already over — that is a start button on " +
+                    "the overlay",
+                View.GONE,
                 a.findViewById<View>(R.id.mic_button).visibility,
             )
             assertEquals(
