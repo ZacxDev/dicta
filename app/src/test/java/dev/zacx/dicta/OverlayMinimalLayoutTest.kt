@@ -103,27 +103,42 @@ class OverlayMinimalLayoutTest {
     // --- the resting state --------------------------------------------------
 
     /**
-     * The resting card: the transcript, the mic, and the actions — all of
-     * them, with nothing to tap first.
+     * The resting card: the transcript and the actions, with nothing to tap
+     * first.
      *
      * REPLACES `atRestOnlyTheTranscriptAndTheMicAreVisible`, which asserted
      * `action_row` GONE here. That was the overflow design's central claim and
      * is now the defect: the operator asked for the actions to be on screen.
+     *
+     * ⚠ `mic_button` MOVED SIDES in this list. It used to be asserted VISIBLE
+     * at rest, where it read "Speak" — a control that starts a recording, on
+     * the card that exists to show the one just finished. The operator asked
+     * for it to go, so at rest there is no mic control at all and the only
+     * states that reveal one are STOP and the mic-denied fallback. The full
+     * state table is `OverlayNeverStartsARecordingTest`.
      */
     @Test
-    fun atRestTheTranscriptTheMicAndTheActionsAreAllVisible() {
+    fun atRestTheTranscriptAndTheActionsAreVisibleAndTheMicIsNot() {
         val controller = Robolectric.buildActivity(DictateActivity::class.java).setup()
         try {
             val a = controller.get()
 
-            for (id in listOf(R.id.dictated_text, R.id.mic_button, R.id.action_row)) {
+            for (id in listOf(R.id.dictated_text, R.id.action_row)) {
                 assertEquals(
                     "${nameOf(id)} must be visible at rest — the card is the " +
-                        "transcript, the mic, and the actions",
+                        "transcript and the actions",
                     View.VISIBLE,
                     a.findViewById<View>(id).visibility
                 )
             }
+
+            assertEquals(
+                "mic_button is on screen at rest. There is no recording to " +
+                    "stop in this state, so the only thing it can offer is a " +
+                    "START — which the overlay must never present.",
+                View.GONE,
+                a.findViewById<View>(R.id.mic_button).visibility
+            )
 
             // The old always-on chrome that the design pass removed, and which
             // the overflow's removal does not bring back.

@@ -46,11 +46,25 @@
     android:background="@drawable/card_bg"
     android:clipToOutline="true">
 
+    <!--
+      🔴 focusable + focusableInTouchMode on the CARD ROOT is not decoration.
+
+      @id/dictated_text is the only other view that can hold focus in touch
+      mode, and DictateActivity.renderPreview refuses to overwrite a FOCUSED
+      transcript box ("don't clobber the cursor while the user is editing") —
+      so a box that holds focus silently swallows an incoming transcript.
+      `parkFocusOffTheTranscript()` needs somewhere to put focus instead, and
+      it used to use @id/mic_button. That control is now GONE in exactly the
+      states the park is needed in (a hidden view cannot take focus), so the
+      target has to be a view that is always present. This is it.
+    -->
     <LinearLayout
         android:id="@+id/dictate_card"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="vertical"
+        android:focusable="true"
+        android:focusableInTouchMode="true"
         android:padding="20dp">
 
         <!--
@@ -307,15 +321,29 @@
             android:text="@string/screenshot_attached_note" />
 
         <!--
-          The resting control row: the mic, and (in the history mode only) the
-          re-transcribe button. The overflow that used to share this row is
-          gone — see the header.
+          The control row: the stop/fallback control, and (in the history mode
+          only) the re-transcribe button. The overflow that used to share this
+          row is gone — see the header.
 
-          @id/mic_button stays a Button (not an ImageButton) on purpose. Four
-          places in DictateActivity assign `micButton.text`, and the label is
-          what keeps the recording state off colour-only footing ("Speak" /
-          "Stop"). It is styled as an accent pill with the mic glyph as a
-          compound drawable instead.
+          🔴 THE ROW IS EMPTY AT REST, AND THAT IS THE POINT. @id/mic_button is
+          `gone` in this layout's default and stays gone unless DictateActivity
+          puts it into one of its two remaining roles — STOP (a capture that is
+          already running) or the mic-denied system-voice-typing fallback. The
+          overlay used to show it labelled "Speak" on the finished transcript,
+          which is a second recording one tap from the card that exists to show
+          the first; the operator asked for that to go, so the role and
+          @string/start_dictation went with it. Starting a recording is the
+          floating bubble's job.
+
+          @id/mic_button stays a Button (not an ImageButton) on purpose: the
+          label is what keeps the recording state off colour-only footing. It
+          is styled as an accent pill with the mic glyph as a compound drawable
+          instead. The XML default label is "Stop" because that is the role any
+          unlabelled reveal would be — never a start.
+
+          OverlayNeverStartsARecordingTest pins both halves: this default, and
+          that in every reachable card state the control is either GONE or
+          carrying @string/stop_dictation / @string/use_system_voice_typing.
         -->
         <LinearLayout
             android:layout_width="match_parent"
@@ -339,7 +367,8 @@
                 android:textColor="@color/dicta_on_accent"
                 android:textSize="15sp"
                 android:textAllCaps="false"
-                android:text="@string/start_dictation" />
+                android:visibility="gone"
+                android:text="@string/stop_dictation" />
 
             <!--
               Re-transcribe. GONE at rest and SHOWN ONLY in the history mode

@@ -37,10 +37,16 @@ import org.robolectric.annotation.Config
  *    now"). No card exists, `singleTop` creates one, `onCreate` finds no extra,
  *    `hasMicPermission()` is true → `startDictation()` → a second
  *    `AudioRecord` while the bubble's is live.
- *  * **Path B.** The attached "transcribing…" card leaves `micButton` fully
- *    enabled — `attachToBubbleSession` only changes its *text*. Past the 1.5 s
+ *  * **Path B.** The attached "transcribing…" card left `micButton` fully
+ *    enabled — `attachToBubbleSession` only changed its *text*. Past the 1.5 s
  *    grace the bubble is tappable too, so card-mic plus bubble-tap in either
- *    order gives two live sessions with both controls on screen.
+ *    order gave two live sessions with both controls on screen. 🔴 **Closed
+ *    structurally since the overlay's START role was removed**: the card has
+ *    no control that starts a recording in any state, so this path no longer
+ *    depends on the refusal — see
+ *    [theAttachedCardOffersNoControlThatCouldStartASecondCapture]. Path A
+ *    still does, because the tile/notification intent auto-starts in
+ *    `onCreate`.
  *
  * 🔴 Neither path errors. Android resolves microphone contention by feeding the
  * loser **bit-exact zeros** — `startRecording()` succeeds, `read()` returns the
@@ -470,12 +476,29 @@ class MicrophoneOwnershipTest {
     // --- Path B: the attached card's own mic button --------------------------
 
     /**
-     * 🔴 Path B. `attachToBubbleSession` changes the mic button's *text* and
-     * nothing else, so the control is live while the bubble records. Tapping it
-     * must refuse rather than open a second capture.
+     * 🔴 Path B, now closed STRUCTURALLY rather than by a refusal.
+     *
+     * It used to read: `attachToBubbleSession` changes the mic button's
+     * *text* and nothing else, so the control is live while the bubble
+     * records, and tapping it must be refused by [MicrophoneOwner]. That
+     * refusal was the mitigation for a control that should not have been on
+     * screen — and the operator removed the control. The overlay offers no
+     * way to start a recording in any state, so on the attached card there is
+     * nothing to tap.
+     *
+     * The claim therefore moves from "the tap is refused" to "there is no
+     * tap". Visibility alone would be the weaker half — a hidden view's
+     * listener still fires from `performClick()` — so the click is driven
+     * anyway and the card must still construct no session.
+     *
+     * 🔴 The guard the old test exercised is NOT deleted.
+     * `startDictation`'s `isHeldByOtherThan` check still covers Path A — the
+     * tile / notification / launcher intent, which auto-start on open — and
+     * [theTileIntentCannotStartASecondDictationWhileTheMicIsHeld] is what
+     * keeps it alive.
      */
     @Test
-    fun theAttachedCardsMicButtonCannotStartASecondCapture() {
+    fun theAttachedCardOffersNoControlThatCouldStartASecondCapture() {
         grantMic()
         val activity = Robolectric
             .buildActivity(
@@ -489,19 +512,28 @@ class MicrophoneOwnershipTest {
 
         val bubbleSession = Any()
         MicrophoneOwner.acquire(bubbleSession)
-        activity.findViewById<Button>(R.id.mic_button).performClick()
+        val control = activity.findViewById<Button>(R.id.mic_button)
 
         assertEquals(
-            "the attached card's mic button started a dictation while the " +
-                "bubble still held the microphone — card-mic plus bubble-tap " +
-                "in either order then gives two live sessions with both " +
-                "controls on screen",
-            ctx.getString(R.string.stt_mic_in_use),
-            statusOf(activity),
+            "the attached card still shows a mic control while the bubble's " +
+                "recording uploads. This card owns no capture to stop, so " +
+                "the only thing that control can be is a start.",
+            android.view.View.GONE,
+            control.visibility,
         )
+
+        control.performClick()
+        shadowOf(Looper.getMainLooper()).idle()
+
         assertNull(
-            "the tap constructed a DictationSession anyway",
+            "the listener still reaches startDictation() — hiding a view is " +
+                "not the same as retiring the role, and a hidden view's " +
+                "listener still fires",
             sessionFieldOf(activity),
+        )
+        assertTrue(
+            "the tap took the microphone away from the bubble's live session",
+            MicrophoneOwner.isHeldBy(bubbleSession),
         )
     }
 

@@ -28,7 +28,23 @@ import java.util.concurrent.TimeUnit
  * The dictation overlay: floating dialog-style activity opened from the QS
  * tile, the floating bubble, or the notification action — i.e. from anywhere.
  *
- * Flow: tap mic → speak → live transcription → edit → Copy / Send.
+ * Flow: a recording is started elsewhere → live transcription → edit →
+ * Copy / Send.
+ *
+ * 🔴 **This card never STARTS a recording on the user's behalf.** The only
+ * control that opens a new capture is the floating bubble ([BubbleService]).
+ * `@id/mic_button` therefore wears exactly two roles here, both of them
+ * reactions to a state the card is already in:
+ *
+ *  * **STOP** — [showStopControl], for a capture that is already running
+ *    (`onCreate` auto-starts one for the tile / notification / MainActivity
+ *    launches, and those recordings need an end control);
+ *  * **the mic-denied fallback** — [showSystemVoiceFallback], which hands over
+ *    to the system voice-typing UI and opens no microphone of our own.
+ *
+ * In every other state the control is [hideMicControl]-ed. The role it used to
+ * have — a "Speak" button sitting on the finished transcript, one tap from a
+ * second recording — is gone, string included.
  */
 class DictateActivity : Activity() {
 
@@ -56,8 +72,10 @@ class DictateActivity : Activity() {
     /**
      * Which revision of this card the views belong to.
      *
-     * 🔴 Bumped whenever the card is re-purposed — today only by
-     * [populateFromHistory]. A [SessionCallbacks] captures it at construction
+     * 🔴 Bumped whenever the card is re-purposed — by [populateFromHistory]
+     * and by [attachToBubbleSession], which also gates the history store's
+     * asynchronous read so a stored transcript cannot land on a card that has
+     * since gone live again. A [SessionCallbacks] captures it at construction
      * and refuses once the two differ, so a late callback from a session the
      * card has abandoned cannot write views that now belong to something
      * else. See [SessionCallbacks.stale] for the sequence that a
@@ -313,6 +331,16 @@ class DictateActivity : Activity() {
         // set. Round 5 of #17 measured the round-4 symptom surviving on this
         // sibling path: "uploaded, stored, never appeared".
         haveRemoteTranscript = false
+        // 🔴 This IS a re-purpose, so it bumps the generation — [cardGeneration]
+        // says "bumped whenever the card is re-purposed", and until now only
+        // [populateFromHistory] did. The case it closes: the history read is
+        // asynchronous, so a chip tap followed by a new bubble dictation can
+        // land the stored transcript on a card that is live again, overwriting
+        // it. The bump happens BEFORE `uiCallbacks()` below, so this attach's
+        // own sink is born current; what it stales out is the previous
+        // session's sink, which is the same thing `BubbleService.generation`
+        // does on every recording.
+        cardGeneration++
         // 🔴 RE-PURPOSE the card, not just its sink. Re-running this arm on a
         // card showing history used to leave it dressed as a history card
         // with a live session behind it: micButton GONE (a live dictation
@@ -323,22 +351,29 @@ class DictateActivity : Activity() {
         historyItem = null
         retranscribeButton.visibility = View.GONE
         retranscribeButton.isEnabled = false
-        micButton.visibility = View.VISIBLE
+        // 🔴 NOT a "Speak" button. The bubble has already recorded and the
+        // upload is in flight; there is nothing for the user to start here,
+        // and a start control on this card is exactly what the operator asked
+        // to remove. The STOP role does not apply either — this card does not
+        // own the capture, which ended before the card existed.
+        hideMicControl()
         // 🔴 Take focus OFF the transcript box, and this is load-bearing.
-        // populateFromHistory hides micButton, so focus falls to the only
-        // remaining focusable view — the box — and `renderPreview` refuses
-        // to write to a FOCUSED box ("don't clobber the cursor while the
-        // user is editing"). Re-purposing without this left the incoming
+        // With micButton hidden, focus falls to the only remaining
+        // focusable-in-touch-mode view — the box — and `renderPreview`
+        // refuses to write to a FOCUSED box ("don't clobber the cursor while
+        // the user is editing"). Re-purposing without this left the incoming
         // transcript in `finalText` and NEVER ON SCREEN. MEASURED:
         // finalText='TEXT FROM THE NEW DICTATION' while the box still read
-        // the stored one. `clearFocus()` is not enough — the box is the only
-        // focusable view at that instant and immediately takes it back.
-        micButton.requestFocus()
+        // the stored one. `clearFocus()` is not enough — the box would be the
+        // only focusable view at that instant and immediately takes it back,
+        // which is why the park below targets the card root rather than
+        // clearing. It used to target micButton; a hidden view cannot hold
+        // focus, so that route died with the start role.
+        parkFocusOffTheTranscript()
         // The stored dictation is no longer what this card shows.
         finalText.setLength(0)
         lastPartial = ""
         statusText.text = getString(R.string.stt_uploading)
-        micButton.text = getString(R.string.start_dictation)
         levelMeter.visibility = View.INVISIBLE
         // 🔴 Detach first, so this is IDEMPOTENT. It is now reachable twice in
         // one card's life (see [onNewIntent]), and attaching without
@@ -393,9 +428,14 @@ class DictateActivity : Activity() {
         // its transcript/status/level callbacks are still wired. See
         // [cardGeneration].
         cardGeneration++
+        val generation = cardGeneration
         historyItem = null
         levelMeter.visibility = View.INVISIBLE
-        micButton.visibility = View.GONE
+        hideMicControl()
+        // Same reason as [attachToBubbleSession]: hiding the control leaves
+        // the transcript box as the only focusable view, and a focused box is
+        // one `renderPreview` refuses to write to.
+        parkFocusOffTheTranscript()
         retranscribeButton.visibility = View.VISIBLE
         retranscribeButton.isEnabled = false
         statusText.text = getString(R.string.history_saved)
@@ -408,7 +448,19 @@ class DictateActivity : Activity() {
             // this is its caller. "Bounded by MAX_ITEMS" was true and still meant
             // a 1000-entry sort plus one stat per entry to find a single row.
             val item = runCatching { historyStore().item(id) }.getOrNull()
-            runOnUiThread { renderHistoryItem(item) }
+            // 🔴 The read is asynchronous, so the card can have been
+            // RE-PURPOSED before it lands — the bubble starts a new dictation
+            // and `attachToBubbleSession` runs while this is still on the
+            // worker. Writing then replaces a LIVE dictation's transcript
+            // with a stored one, and does it *after* the live text arrived,
+            // so the box ends up showing the old recording with no error
+            // anywhere. Same generation gate, same reason, as
+            // [SessionCallbacks.stale] — which this path had never been given
+            // because the card used to mask it: hiding `micButton` dumped
+            // focus on the transcript box, and `renderPreview` silently
+            // refuses to write to a focused box. Parking focus properly is
+            // what made this observable.
+            runOnUiThread { if (generation == cardGeneration) renderHistoryItem(item) }
         }
     }
 
@@ -602,6 +654,64 @@ class DictateActivity : Activity() {
         window.setGravity(Gravity.CENTER)
     }
 
+    // --- the mic control's two roles ----------------------------------------
+
+    /**
+     * Takes the three assignments `@id/mic_button` is allowed and puts each in
+     * exactly one place, so "is there a START control on this card?" is a
+     * question about THREE functions rather than about eleven call sites.
+     *
+     * 🔴 There is deliberately no `showStartControl()`. The operator's
+     * instruction is that the only way to begin a recording is the floating
+     * bubble; the overlay is what opens *after* one. Every state that used to
+     * read "Speak" — the finished transcript, the attached upload, a refused
+     * start, a stopped recogniser, the at-rest card — now hides the control
+     * instead, and `R.string.start_dictation` was deleted so a new site cannot
+     * quietly reintroduce the role by spelling it.
+     *
+     * The guard that keeps this honest is
+     * `OverlayNeverStartsARecordingTest`: it drives every reachable card
+     * state and asserts the control is either GONE or carrying one of the two
+     * labels below — a STATE assertion, so a reworded button cannot walk it.
+     */
+    private fun hideMicControl() {
+        micButton.visibility = View.GONE
+    }
+
+    /** Role 1: end a capture that is ALREADY running. */
+    private fun showStopControl() {
+        micButton.text = getString(R.string.stop_dictation)
+        micButton.visibility = View.VISIBLE
+    }
+
+    /**
+     * Role 2: the mic-denied fallback.
+     *
+     * Not a start control: it opens no microphone of ours, it hands the
+     * utterance to the system voice-typing UI (which needs no `RECORD_AUDIO`
+     * from this app). [BubbleService] documents that this activity is the only
+     * place the app can call `requestPermissions` from, so this is the only
+     * place the copy can live, and the bubble's tap falls back here on purpose.
+     */
+    private fun showSystemVoiceFallback() {
+        micButton.text = getString(R.string.use_system_voice_typing)
+        micButton.visibility = View.VISIBLE
+    }
+
+    /**
+     * Parks focus on the card root, off `@id/dictated_text`.
+     *
+     * 🔴 `renderPreview` refuses to overwrite a FOCUSED transcript box, so a
+     * box holding focus silently swallows an incoming transcript. The card
+     * root is `focusableInTouchMode` for exactly this: it is a focus target
+     * that is always present, unlike `@id/mic_button`, which this change makes
+     * absent in every state the park is needed in. `clearFocus()` alone does
+     * not work — the box simply takes it back as the only candidate.
+     */
+    private fun parkFocusOffTheTranscript() {
+        findViewById<View>(R.id.dictate_card).requestFocus()
+    }
+
     // --- dictation ----------------------------------------------------------
 
     private fun hasMicPermission(): Boolean =
@@ -621,14 +731,14 @@ class DictateActivity : Activity() {
             } else {
                 // Fallback: system voice-typing UI needs no RECORD_AUDIO from us.
                 statusText.text = getString(R.string.mic_denied_fallback)
-                micButton.text = getString(R.string.use_system_voice_typing)
+                showSystemVoiceFallback()
             }
         }
     }
 
     /**
      * Stops any capture this card owns — the upload session and the phone
-     * recogniser — and resets the mic button's label.
+     * recogniser — and retires the stop control with it.
      *
      * One rule, one place: both callers need "the microphone must not still
      * be open after this", and a second open-coded copy is how the two drift.
@@ -638,32 +748,46 @@ class DictateActivity : Activity() {
     private fun stopAnyLiveCapture() {
         session?.takeIf { it.isRecording }?.let {
             it.stop()
-            micButton.text = getString(R.string.start_dictation)
+            hideMicControl()
         }
         speech?.takeIf { it.isListening }?.let {
             stopPhoneRecogniser()
-            micButton.text = getString(R.string.start_dictation)
+            hideMicControl()
         }
     }
 
+    /**
+     * The control's one listener — and, since the start role was removed, a
+     * function with **no branch that opens a capture of ours**.
+     *
+     * 🔴 The final arm used to be `startDictation()`, reached whenever nothing
+     * was recording and the mic was granted. That is the start role, and
+     * hiding the button is not enough to retire it: the fallback role leaves a
+     * *visible* control on screen, and a user who grants the permission from
+     * Settings and comes back would have found that same control starting a
+     * recording from the overlay. So the branch is deleted rather than
+     * hidden — the only non-stop thing this button can now do is hand over to
+     * the system voice-typing UI, which opens no microphone of ours.
+     *
+     * [startDictation] itself is untouched and still reachable from
+     * [applyLaunchIntent] and [onRequestPermissionsResult]: the tile, the
+     * notification, MainActivity and the permission grant all auto-start a
+     * recording on open, and those are the recordings the STOP role exists for.
+     */
     private fun toggleDictation() {
         session?.takeIf { it.isRecording }?.let {
             it.stop()
-            micButton.text = getString(R.string.start_dictation)
+            hideMicControl()
             return
         }
         val helper = speech
         if (helper != null && helper.isListening) {
             stopPhoneRecogniser()
-            micButton.text = getString(R.string.start_dictation)
+            hideMicControl()
             statusText.text = getString(R.string.dictate_hint)
             return
         }
-        if (!hasMicPermission()) {
-            fallbackSystemVoiceInput()
-            return
-        }
-        startDictation()
+        fallbackSystemVoiceInput()
     }
 
     /**
@@ -736,7 +860,7 @@ class DictateActivity : Activity() {
     /** The one place the "another session holds the mic" refusal is rendered. */
     private fun reportMicBusy() {
         statusText.text = getString(R.string.stt_mic_in_use)
-        micButton.text = getString(R.string.start_dictation)
+        hideMicControl()
         levelMeter.visibility = View.INVISIBLE
     }
 
@@ -766,7 +890,7 @@ class DictateActivity : Activity() {
         return if (started.start()) {
             previous?.destroy()
             session = started
-            micButton.text = getString(R.string.stop_dictation)
+            showStopControl()
             levelMeter.visibility = View.VISIBLE
             true
         } else {
@@ -803,7 +927,7 @@ class DictateActivity : Activity() {
                 releasePhoneMic()
                 appendFinal(text)
                 showEngine(fromRemote = false)
-                micButton.text = getString(R.string.start_dictation)
+                hideMicControl()
                 statusText.text = getString(R.string.dictate_hint)
             }
 
@@ -811,7 +935,7 @@ class DictateActivity : Activity() {
                 releasePhoneMic()
                 lastPartial = ""
                 renderPreview()
-                micButton.text = getString(R.string.start_dictation)
+                hideMicControl()
                 statusText.text = message
             }
         })
@@ -858,7 +982,7 @@ class DictateActivity : Activity() {
         }
         speech = helper
         helper.start()
-        micButton.text = getString(R.string.stop_dictation)
+        showStopControl()
     }
 
     /**
@@ -997,7 +1121,7 @@ class DictateActivity : Activity() {
 
         override fun onRecordingStopped() {
             if (stale()) return
-            micButton.text = getString(R.string.start_dictation)
+            hideMicControl()
             levelMeter.progress = 0
         }
     }
@@ -1113,8 +1237,12 @@ class DictateActivity : Activity() {
      * flow move Dicta out of the top-app state that wins microphone
      * arbitration, so the recogniser would error out mid-utterance and lose the
      * partial anyway. Stopping explicitly means the partial is committed to the
-     * text box instead of being dropped. The user can tap the mic again after
-     * the capture.
+     * text box instead of being dropped.
+     *
+     * ⚠ This used to end "the user can tap the mic again after the capture."
+     * They cannot, and must not: the stop control goes away with the capture
+     * and the card offers no way to start another. The next recording begins
+     * at the bubble.
      */
     private fun requestScreenshot() {
         // Same reasoning as the recogniser below, and for the same reason it

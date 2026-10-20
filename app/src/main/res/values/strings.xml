@@ -31,16 +31,24 @@
          and name the overflow route in words, because @id/action_row was
          hidden until something revealed it. The overflow is gone and the
          actions are always on screen, so the ⋯ pointed at a control that no
-         longer exists — a hint is a claim too. -->
-    <string name="dictate_hint">Tap Speak — then Copy, Send or Screenshot</string>
+         longer exists — a hint is a claim too.
+         🔴 Same correction again, for the same reason: it used to begin "Tap
+         Speak", and there is no Speak control any more. The overlay never
+         starts a recording — the floating bubble does — so this line now
+         names only what the card itself can do. -->
+    <string name="dictate_hint">Edit if you need to — then Copy, Send or Screenshot</string>
     <string name="dictate_text_hint">Speak, or type here</string>
     <string name="listening">Listening… speak now</string>
-    <!-- Short because the mic control is now a pill sharing its row with the
-         overflow, and the glyph is a real vector (@drawable/ic_mic as a
-         compound drawable) rather than an emoji that renders differently on
-         every device. The label is also what keeps the recording state off
-         colour-only footing. -->
-    <string name="start_dictation">Speak</string>
+    <!-- 🔴 @string/start_dictation ("Speak") WAS HERE AND IS DELETED. The
+         overlay has no start role any more — the floating bubble is the only
+         way to begin a recording — and the string is removed rather than left
+         unreferenced, so a new call site cannot quietly reintroduce the role
+         by spelling it.
+
+         Short because the mic control is a pill, and the glyph is a real
+         vector (@drawable/ic_mic as a compound drawable) rather than an emoji
+         that renders differently on every device. The label is also what keeps
+         the recording state off colour-only footing. -->
     <string name="stop_dictation">Stop</string>
     <string name="copy">Copy</string>
     <string name="share">Send</string>
