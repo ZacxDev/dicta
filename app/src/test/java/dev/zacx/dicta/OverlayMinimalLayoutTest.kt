@@ -1082,47 +1082,71 @@ class OverlayMinimalLayoutTest {
     }
 
     /**
-     * The accent fill is the "dictate" affordance and nothing else. Pinned
-     * because the merge had to style a new button on this screen and reaching
-     * for `@drawable/mic_pill_bg` is the easy wrong answer.
+     * 🔴 **The setup screen carries NO accent-filled control, because nothing
+     * on it dictates.**
      *
-     * Compared against the screen's real accent control rather than against a
-     * drawable NAME, so it cannot be walked past by renaming the drawable.
+     * This guard used to compare `settings_button`'s background against
+     * `try_now_button`'s and assert they differed — "the accent fill means
+     * dictate, and Settings is not a dictation affordance". `try_now_button`
+     * ("Try dictation now") is deleted: it opened a plain `DictateActivity`
+     * launch, which auto-starts a capture, and the floating bubble's tap is now
+     * the only way to start a recording. It was also this screen's only
+     * `@drawable/mic_pill_bg` control.
      *
-     * 🔴 The obvious spelling of this — comparing the two backgrounds'
-     * `constantState` — is INERT, and was caught by mutation F in the sweep
-     * (pointing `settings_button` at `@drawable/mic_pill_bg` SURVIVED a fully
-     * green suite). Two inflations of one drawable resource do not share a
-     * `constantState` instance here, so that comparison was unequal whatever
-     * the resources were. The resource ID that each background was inflated
-     * FROM is the thing that actually distinguishes them.
+     * So the claim it was making is **stronger** now and the old spelling could
+     * not express it. Rather than weaken it to "settings_button is not
+     * mic_pill_bg" — which a reintroduced start button sitting next to it would
+     * satisfy — it is widened to the whole inflated tree: no view on
+     * `activity_main.xml` may carry the accent fill. That goes red both for a
+     * `settings_button` styled as a dictation affordance (the original hazard)
+     * and for a reinstated accent "dictate" button under any id or label.
+     *
+     * 🔴 Still asserted on `createdFromResId` and not on `constantState`: the
+     * `constantState` spelling is INERT here and was caught by mutation F in an
+     * earlier sweep (pointing `settings_button` at `@drawable/mic_pill_bg`
+     * SURVIVED a fully green suite), because two inflations of one drawable
+     * resource do not share a `constantState` instance. The resource id a
+     * background was inflated FROM is the thing that actually identifies it.
      */
     @Test
-    fun settingsIsNotStyledAsADictationAffordance() {
+    fun theSetupScreenCarriesNoDictationAffordance() {
         val ctx = ContextThemeWrapper(
             RuntimeEnvironment.getApplication(), R.style.Theme_Dicta
         )
         val root = LayoutInflater.from(ctx).inflate(R.layout.activity_main, null)
-        val settingsBg = org.robolectric.Shadows.shadowOf(
-            root.findViewById<View>(R.id.settings_button).background
-        ).createdFromResId
-        val accentBg = org.robolectric.Shadows.shadowOf(
-            root.findViewById<View>(R.id.try_now_button).background
-        ).createdFromResId
 
-        // Positive control for the comparison itself: if the ids were not
-        // resolvable, both would be -1 and the inequality below would be
-        // vacuously false-negative.
+        val accentFilled = descendantsOf(root).filter { v ->
+            v.background?.let {
+                org.robolectric.Shadows.shadowOf(it).createdFromResId
+            } == R.drawable.mic_pill_bg
+        }
+
+        // 🔴 Positive control for the instrument. `createdFromResId` returning
+        // -1 for everything — a Robolectric version that stopped recording it,
+        // a theme that supplies backgrounds another way — would make the
+        // assertion below vacuously green. So: the screen's real outlined
+        // controls must be seen, by resource id, through the same read.
+        val outlined = descendantsOf(root).count { v ->
+            v.background?.let {
+                org.robolectric.Shadows.shadowOf(it).createdFromResId
+            } == R.drawable.outline_button_bg
+        }
         assertTrue(
-            "neither background resolved to a drawable resource id " +
-                "($settingsBg / $accentBg); this guard is reading nothing",
-            settingsBg != -1 && accentBg != -1
+            "no view on activity_main.xml reports @drawable/outline_button_bg " +
+                "as its background resource id, so createdFromResId is reading " +
+                "nothing here and the accent check below cannot fail",
+            outlined >= 3
         )
+
         assertTrue(
-            "settings_button and try_now_button are inflated from the SAME " +
-                "background drawable; the accent fill means \"dictate\", and " +
-                "Settings is not a dictation affordance",
-            settingsBg != accentBg
+            "activity_main.xml carries @drawable/mic_pill_bg on " +
+                "${accentFilled.map { it.id }}. The accent fill is the " +
+                "\"dictate\" affordance and this screen no longer dictates: " +
+                "\"Try dictation now\" is deleted and the floating bubble's tap " +
+                "is the only way to start a recording. Either a start surface " +
+                "has come back, or a control that is not a dictation " +
+                "affordance has been styled as one.",
+            accentFilled.isEmpty()
         )
     }
 
@@ -1153,4 +1177,22 @@ class OverlayMinimalLayoutTest {
 
     private fun nameOf(id: Int): String =
         RuntimeEnvironment.getApplication().resources.getResourceEntryName(id)
+
+    /**
+     * Every view in the tree rooted at [root], itself included.
+     *
+     * Used by [theSetupScreenCarriesNoDictationAffordance], which has to make
+     * its claim over the WHOLE screen rather than over an enumerated id list —
+     * the hazard it guards is a control appearing under a name nobody has
+     * written down yet.
+     */
+    private fun descendantsOf(root: View): List<View> = buildList {
+        fun walk(v: View) {
+            add(v)
+            if (v is ViewGroup) {
+                for (i in 0 until v.childCount) walk(v.getChildAt(i))
+            }
+        }
+        walk(root)
+    }
 }

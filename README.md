@@ -8,8 +8,8 @@ that backs each piece.
 
 ## How it works
 
-Three surfaces reach Dicta from anywhere — two triggers, and a tile that
-switches the third one on and off:
+**One trigger: the floating bubble.** Tapping it is the only way to start a
+recording.
 
 1. **Floating bubble** — an always-on-top mic button (`TYPE_APPLICATION_OVERLAY`)
    you can drag anywhere. Tap it from any app. `BubbleBootReceiver` asks for it
@@ -19,25 +19,28 @@ switches the third one on and off:
    rules, and for why the fallback that used to live there was deleted as
    unreachable). The restore is device-unverified: a JVM test can pin the
    receiver's decision table but not Android's permission for the start.
-2. **Persistent notification** — "Dicta" notification with a Dictate action.
-3. **Quick Settings tile** — swipe down from any app and tap the Dicta tile to
-   switch the floating bubble **on or off**. It is a stateful toggle, not a
-   launcher: it reads `BubbleEnabled.isUp`, shows
-   `STATE_ACTIVE`/`STATE_INACTIVE` accordingly, and goes `STATE_UNAVAILABLE`
-   when "Display over other apps" is not granted. It is deliberately a
-   *standard* tile, not an `ACTIVE_TILE`: an active tile is only bound on
-   add/remove, on a tap, or for an explicit `requestListeningState()`, so it
-   would show a stale reading the next tap would then invert. Standard mode
-   re-renders whenever the panel is visible. (How the shade actually renders a
-   tile and what TalkBack announces are **device-unverified**.)
+
+Two surfaces *switch that bubble on and off*; neither starts a recording:
+
+- **the app's own switch** on the setup screen, and
+- **a Quick Settings tile** — swipe down from any app and tap the Dicta tile.
+  It is a stateful toggle, not a launcher: it reads `BubbleEnabled.isUp` (the
+  flag *and* the overlay permission), shows `STATE_ACTIVE`/`STATE_INACTIVE`
+  accordingly, and goes `STATE_UNAVAILABLE` when "Display over other apps" is
+  not granted. It is deliberately a *standard* tile, not an `ACTIVE_TILE`: an
+  active tile is only bound on add/remove, on a tap, or for an explicit
+  `requestListeningState()`, so it would show a stale reading the next tap
+  would then invert. Standard mode re-renders whenever the panel is visible.
+  (How the shade actually renders a tile and what TalkBack announces are
+  **device-unverified**.)
 
 Whether the bubble is on lives in exactly one place — `BubbleEnabled`, over the
 `dicta`/`bubble_enabled` preference. That takes **two** rules, not one, and the
 second was missing while this paragraph claimed the first was enough:
 
 - every **write** goes through `BubbleEnabled`, so the switch in the app, the
-  notification's **Hide bubble** action, the tile and the boot receiver cannot
-  put different values in the preference;
+  bubble notification's **Hide bubble** action, the tile and the boot
+  receiver cannot put different values in the preference;
 - everything the user is **shown** derives from `BubbleEnabled.isUp` (the flag
   *and* the overlay permission), never from the raw flag. The app's switch, the
   tile's painted state and the tile's *click direction* each used to compute
@@ -59,6 +62,15 @@ which is exactly the thing the paragraph above says a reboot must not be able to
 do, so that one case leaves the flag set with no bubble until the next start.
 `BubbleEnabled` owns the distinction — `startService` records whether the user
 asked, and `foregroundPromotionRefused` is the only thing that reads it.
+
+> **Removed:** a **persistent trigger notification** with a Dictate action, and
+> a **"Try dictation now"** button on the setup screen. Both opened the overlay,
+> which auto-starts a capture, so both were ways to start a recording that were
+> not the bubble. The notification was `setOngoing(true)` and therefore outlives
+> the build that posted it, so `PackageReplacedReceiver` cancels it and deletes
+> its channel on the first start of a new build —
+> see `TriggerNotificationCleanup`. `StartSurfaceLedgerTest` is the enumerated
+> set of places a recording can begin, and it fails if that set grows.
 
 The overlay is a floating dialog-style activity, and it is deliberately
 **minimal at rest**: the transcript, one mic pill, and a small overflow
@@ -102,7 +114,7 @@ failure:
 | `SYSTEM_ALERT_WINDOW` | Floating bubble | Settings → "Display over other apps" (one-time toggle) |
 | `FOREGROUND_SERVICE` (+ `specialUse`) | Keep the bubble alive | Normal |
 | `FOREGROUND_SERVICE_MEDIA_PROJECTION` | Screenshot capture: on Android 14+ a `mediaProjection`-typed foreground service must already be running *before* `getMediaProjection()` is called | Normal — but the capture itself still needs the per-session consent dialog, every single time |
-| `POST_NOTIFICATIONS` | Trigger notification (Android 13+) | Runtime prompt |
+| `POST_NOTIFICATIONS` | The bubble's foreground-service notification (it carries **Hide bubble**) and the boot-restore offer, on Android 13+ | Runtime prompt |
 
 No root, no system app, no accessibility service needed.
 
@@ -180,9 +192,9 @@ directly with `aapt2` + `kotlinc` + `d8` + `apksigner`. Output:
 `build-offline/dicta-debug.apk`. Note that it builds `app/src/main` only — it
 does **not** run the unit tests.
 
-Install with `adb install -r app-debug.apk`, then open the app once to grant
-permissions, switch the floating bubble on, and add the Quick Settings tile.
-Dictation starts from the bubble; the tile switches the bubble on and off.
+Install with `adb install -r app-debug.apk`, open the app once to grant
+permissions, switch the floating bubble on and (optionally) add the Quick
+Settings tile, then tap the bubble from anywhere.
 
 ## Project layout
 
@@ -190,11 +202,13 @@ Dictation starts from the bubble; the tile switches the bubble on and off.
 app/src/main/
   AndroidManifest.xml
   java/dev/zacx/dicta/
-    MainActivity.kt       # setup: permissions, bubble/notification toggles, tile prompt
+    MainActivity.kt       # setup: permission status, the bubble switch, tile prompt, Settings link
     DictateActivity.kt    # the overlay: dictate → edit → copy / screenshot / share
     DictaTileService.kt   # Quick Settings tile: the bubble's on/off toggle
     BubbleEnabled.kt      # the one owner of "is the bubble enabled" (+ start/stop)
     BubbleBootReceiver.kt # restores the bubble after a reboot
+    PackageReplacedReceiver.kt   # runs the upgrade cleanup on ACTION_MY_PACKAGE_REPLACED
+    TriggerNotificationCleanup.kt # cancels the deleted trigger notification (id 3001) + its channel
     BubbleService.kt      # floating overlay bubble trigger
     SpeechHelper.kt       # SpeechRecognizer wrapper (partial + final results)
     ShareIntents.kt       # ACTION_SEND construction (text, image, chooser, URI grant)

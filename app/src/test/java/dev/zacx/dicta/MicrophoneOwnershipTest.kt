@@ -53,7 +53,7 @@ import org.robolectric.annotation.Config
  *    no control that starts a recording in any state, so this path no longer
  *    depends on the refusal — see
  *    [theAttachedCardOffersNoControlThatCouldStartASecondCapture]. Path A
- *    still does, because the tile/notification intent auto-starts in
+ *    still does, because a plain launch auto-starts in
  *    `onCreate`.
  *
  * 🔴 Neither path errors. Android resolves microphone contention by feeding the
@@ -69,7 +69,7 @@ import org.robolectric.annotation.Config
  * behavioural claim — **no second capture is attempted** — and it carries it
  * with a positive control, because a zero from a harness that never reaches
  * `MicCapture` is indistinguishable from a zero caused by the guard. The
- * activity-level tests carry the *surface* claim: that the tile/notification
+ * activity-level tests carry the *surface* claim: that a plain-launch
  * path and the card's own mic button refuse and report, instead of starting
  * something. They discriminate on the status line, which is a genuine
  * behavioural tell for "which branch of `startDictation()` ran" — the same
@@ -313,23 +313,26 @@ class MicrophoneOwnershipTest {
         )
     }
 
-    // --- Path A: the notification / launcher intent --------------------------
+    // --- Path A: the plain-launch intent -------------------------------------
 
     /**
      * 🔴 Path A end to end, from the card's side.
      *
-     * The intent is [DictateLaunch.intent] — literally what the notification
-     * action wraps (`pendingIntent()`), and what MainActivity's "Try dictation
-     * now" opens the card with. It carries no `EXTRA_ATTACH_SESSION`, so the
-     * attach branch does not fire and `onCreate` goes on to `startDictation()`.
+     * The intent is [DictateLaunch.intent] — the plain launch, carrying no
+     * `EXTRA_ATTACH_SESSION`, so the attach branch does not fire and `onCreate`
+     * goes on to `startDictation()`. Its one production caller is
+     * `BubbleService`'s mic-permission fallback.
      *
-     * 🔴 Named `theTileIntent…` until the Quick Settings tile stopped opening
-     * the card. **No coverage changed with the rename** — the intent under test
-     * is the same `DictateLaunch.intent`, and the notification still wraps it;
-     * the old name simply claimed a caller that no longer exists.
+     * 🔴 Named `theTileIntent…`, then `theNotificationIntent…`, and now neither:
+     * the Quick Settings tile stopped opening the card, and the trigger
+     * notification and MainActivity's "Try dictation now" were both deleted.
+     * **No coverage changed across either rename** — the intent under test is
+     * the same `DictateLaunch.intent` throughout; each old name simply claimed a
+     * caller that no longer exists. The name is now the intent's own shape
+     * rather than a caller's, so a caller going away cannot falsify it again.
      */
     @Test
-    fun theNotificationIntentCannotStartASecondDictationWhileTheMicIsHeld() {
+    fun aPlainLaunchIntentCannotStartASecondDictationWhileTheMicIsHeld() {
         grantMic()
         val bubbleSession = Any()
         MicrophoneOwner.acquire(bubbleSession)
@@ -340,7 +343,7 @@ class MicrophoneOwnershipTest {
             .get()
 
         assertEquals(
-            "the card opened from the notification ran its own " +
+            "the card opened from a plain launch ran its own " +
                 "startDictation() while the bubble held the microphone. That " +
                 "is a second AudioRecord against a live one, and Android " +
                 "answers it by feeding one of them exact zeros — no exception, " +
@@ -505,8 +508,8 @@ class MicrophoneOwnershipTest {
      *
      * 🔴 The guard the old test exercised is NOT deleted.
      * `startDictation`'s `isHeldByOtherThan` check still covers Path A — the
-     * notification / launcher intent, which auto-start on open — and
-     * [theNotificationIntentCannotStartASecondDictationWhileTheMicIsHeld] is
+     * plain launch, which auto-starts on open — and
+     * [aPlainLaunchIntentCannotStartASecondDictationWhileTheMicIsHeld] is
      * what keeps it alive.
      */
     @Test
