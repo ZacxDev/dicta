@@ -18,7 +18,11 @@
 # mismatch) rather than quietly fetching something else, which is the point.
 let
   # nixos-unstable @ 2026-08-19, resolved from the channel this project's
-  # 575-test suite was last run against.
+  # 619-test suite was last run green against (2026-10-23). The suite size is
+  # restated here on purpose — it is what makes "last run against" a checkable
+  # claim rather than a date. It read 575 until 2026-10-23, by which point the
+  # suite had grown to 623; the floor in .github/workflows/tests.yml is derived
+  # from the same number, so update both together.
   rev = "ffb3c9b700e759be2ef13237c9d8f953b32a1e46";
   nixpkgs = builtins.fetchTarball {
     url = "https://github.com/NixOS/nixpkgs/archive/${rev}.tar.gz";

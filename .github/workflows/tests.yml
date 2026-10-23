@@ -36,17 +36,28 @@ jobs:
       # measured nothing is worse than no gate — so the count is asserted, not
       # inferred from the task's exit status.
       #
-      # The floor is 500 against a suite of 575 tests / 49 classes (2026-10-17).
+      # The floor is 538 against a suite of 619 tests / 55 classes (2026-10-23).
       # It was --min 3, which could only ever catch a collapse to almost
       # literally nothing: against this suite 3 IS the "handful" the old comment
       # claimed to catch, so the gate read as coverage while providing nearly
       # none. The ~13% headroom is deliberate — it tolerates deleting a class
-      # during a refactor without tolerating a partial collapse. Raise it when
-      # the suite grows; if you LOWER it, say why in the commit, because
-      # lowering it is how this gate goes quietly back to being decorative.
+      # during a refactor without tolerating a partial collapse.
+      #
+      # 🔴 THE HEADROOM IS THE CONSTANT, NOT THE FLOOR — re-derive it, do not
+      # pick a round number:
+      #     floor = floor(current_total * 500 / 575)      # 0.86957, 13.04% slack
+      # 619 * 500 / 575 = 538.26 -> 538, which is 13.09% slack.
+      # The previous entry read "500 against 575 (2026-10-17)" and was left alone
+      # while the suite grew to 623, drifting the slack to 20% — the gate had
+      # quietly stopped being able to notice a fifth of the suite disappearing,
+      # and its own instruction to raise it had not been followed. So when the
+      # suite grows, recompute BOTH numbers and restate the baseline on the first
+      # line above, or the formula has nothing true to work from. If you LOWER
+      # it, say why in the commit, because lowering it is how this gate goes
+      # quietly back to being decorative.
       - name: Assert tests actually ran
         if: always()
-        run: python3 scripts/assert-tests-ran.py --min 500
+        run: python3 scripts/assert-tests-ran.py --min 538
 
       - name: Upload test reports
         if: always()
