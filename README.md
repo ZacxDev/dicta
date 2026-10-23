@@ -22,14 +22,36 @@ switches the third one on and off:
 2. **Persistent notification** — "Dicta" notification with a Dictate action.
 3. **Quick Settings tile** — swipe down from any app and tap the Dicta tile to
    switch the floating bubble **on or off**. It is a stateful toggle, not a
-   launcher: it reads `BubbleEnabled`, shows `STATE_ACTIVE`/`STATE_INACTIVE`
-   accordingly, and goes `STATE_UNAVAILABLE` when "Display over other apps" is
-   not granted.
+   launcher: it reads `BubbleEnabled.isUp`, shows
+   `STATE_ACTIVE`/`STATE_INACTIVE` accordingly, and goes `STATE_UNAVAILABLE`
+   when "Display over other apps" is not granted. It is deliberately a
+   *standard* tile, not an `ACTIVE_TILE`: an active tile is only bound on
+   add/remove, on a tap, or for an explicit `requestListeningState()`, so it
+   would show a stale reading the next tap would then invert. Standard mode
+   re-renders whenever the panel is visible. (How the shade actually renders a
+   tile and what TalkBack announces are **device-unverified**.)
 
 Whether the bubble is on lives in exactly one place — `BubbleEnabled`, over the
-`dicta`/`bubble_enabled` preference — so the switch in the app, the
-notification's **Hide bubble** action, the tile and the boot receiver cannot
-disagree about it.
+`dicta`/`bubble_enabled` preference. That takes **two** rules, not one, and the
+second was missing while this paragraph claimed the first was enough:
+
+- every **write** goes through `BubbleEnabled`, so the switch in the app, the
+  notification's **Hide bubble** action, the tile and the boot receiver cannot
+  put different values in the preference;
+- everything the user is **shown** derives from `BubbleEnabled.isUp` (the flag
+  *and* the overlay permission), never from the raw flag. The app's switch, the
+  tile's painted state and the tile's *click direction* each used to compute
+  this for themselves, and they disagreed: with the overlay permission revoked
+  the tile painted from one predicate and decided its click from another.
+
+The flag is stored **intent**, so it deliberately outlives the bubble across a
+reboot or a revoked permission. The two cases where intent and reality would
+otherwise come apart with the permission still granted are closed where they
+happen: `BubbleService` clears the flag if its foreground promotion is refused,
+and `BubbleBootReceiver` clears it on `MY_PACKAGE_REPLACED`, because an app
+update stops the service and Android does not restart one across a package
+replacement. Neither restores the bubble — they only stop the surfaces claiming
+one, so a single tap brings it back.
 
 The overlay is a floating dialog-style activity, and it is deliberately
 **minimal at rest**: the transcript, one mic pill, and a small overflow
@@ -151,8 +173,9 @@ directly with `aapt2` + `kotlinc` + `d8` + `apksigner`. Output:
 `build-offline/dicta-debug.apk`. Note that it builds `app/src/main` only — it
 does **not** run the unit tests.
 
-Install with `adb install -r app-debug.apk`, open the app once to grant
-permissions and add the Quick Settings tile, then trigger Dicta from anywhere.
+Install with `adb install -r app-debug.apk`, then open the app once to grant
+permissions, switch the floating bubble on, and add the Quick Settings tile.
+Dictation starts from the bubble; the tile switches the bubble on and off.
 
 ## Project layout
 

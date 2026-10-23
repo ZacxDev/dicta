@@ -6,12 +6,33 @@ import android.content.Intent
 import android.provider.Settings
 
 /**
- * Brings the floating bubble back after a reboot.
+ * Brings the floating bubble back after a reboot — and, on an app update,
+ * stops the flag claiming a bubble that is gone.
  *
  * A user-toggled overlay that silently disappears on every restart is a
  * half-working feature: before this, the only way back was to open the app and
  * toggle the switch — the same complaint as issue #14's notification path, in a
  * different shape.
+ *
+ * ## 🔴 Two actions, deliberately asymmetric
+ *
+ * `BOOT_COMPLETED` **restores** the bubble and never writes the flag.
+ * `MY_PACKAGE_REPLACED` **clears** the flag and starts nothing. The asymmetry
+ * is a decision, not an unfinished half:
+ *
+ *  * An app update stops the service and Android does not restart one across a
+ *    package replacement, so without this branch the flag outlives the bubble.
+ *    Nothing is running, yet `MainActivity`'s switch renders ON — and a `Switch`
+ *    fires its listener only on a **change**, so the first tap does nothing and
+ *    the user has to toggle OFF then ON. Issue #14 verbatim, no reboot
+ *    involved.
+ *  * Re-raising an overlay as a side effect of installing a new version is not
+ *    behaviour to ship, so the bubble is **not** restored. The only claim being
+ *    fixed is that the surfaces stop lying, so that ONE tap brings it back.
+ *
+ * `BootRestoreTest.aPackageReplacementClearsTheStaleFlagAndStartsNothing`
+ * asserts both halves together, because a fix that *did* start the service
+ * would also make the flag honest and would pass a flag-only assertion.
  *
  * ## 🔴 Whether a boot start is even allowed
  *
@@ -58,17 +79,45 @@ import android.provider.Settings
  *
  * ## Why this routes around [BubbleEnabled.turnOn]
  *
- * It calls [BubbleEnabled.isOn] and [BubbleEnabled.startService] and open-codes
- * the `canDrawOverlays` check rather than calling [BubbleEnabled.turnOn]. That
- * is deliberate and is **not** a duplicated predicate to consolidate: `turnOn`
- * *writes* the flag, and a reboot must not be able to touch the user's stored
- * intent in either direction. A revoked overlay permission in particular is not
- * the user changing their mind, so the flag survives it and the bubble returns
- * once the permission is re-granted.
+ * The **boot** path calls [BubbleEnabled.isOn] and [BubbleEnabled.startService]
+ * and open-codes the `canDrawOverlays` check rather than calling
+ * [BubbleEnabled.turnOn]. That is deliberate and is **not** a duplicated
+ * predicate to consolidate: `turnOn` *writes* the flag, and a reboot must not
+ * be able to touch the user's stored intent in either direction. A revoked
+ * overlay permission in particular is not the user changing their mind, so the
+ * flag survives it and the bubble returns once the permission is re-granted.
+ *
+ * 🔴 That argument is about the **boot** path only, and this kdoc used to state
+ * it as though it covered the whole receiver ("must not write the flag at
+ * all"). The update path above writes it on purpose: there, the user's stored
+ * intent has already been overtaken by reality — the service is gone and will
+ * not come back on its own — so leaving the flag alone is what makes the app
+ * lie. Note it reads [BubbleEnabled.isOn] and never `isUp`: this file acts on
+ * stored intent and displays nothing, which is why
+ * `BubbleEnabledWritersSeamTest.everyDisplayedBubbleStateComesFromOnePredicate`
+ * lists it as the one legitimate `isOn` reader.
  */
 class BubbleBootReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent?) {
+        // 🔴 An app update stops the service and Android does NOT restart one
+        // across a package replacement, so without this the flag outlives the
+        // bubble: nothing is running, MainActivity's switch renders ON, and
+        // because a Switch fires its listener only on a CHANGE the first tap
+        // does nothing — the user has to toggle OFF then ON. That is issue #14
+        // verbatim, reached by a route no reboot is involved in.
+        //
+        // 🔴 It clears the flag and starts NOTHING, and that is a decision, not
+        // an unfinished restore: an update is not a reboot, and silently
+        // re-raising an overlay as a side effect of installing a new version is
+        // not behaviour to ship. The point is only that every surface stops
+        // claiming a bubble that is gone, so ONE tap brings it back.
+        // BootRestoreTest keeps ACTION_MY_PACKAGE_REPLACED as a negative
+        // control for the start, which still holds.
+        if (intent?.action == Intent.ACTION_MY_PACKAGE_REPLACED) {
+            BubbleEnabled.set(context, false)
+            return
+        }
         // Explicitly, rather than trusting the manifest filter: a receiver is
         // also reachable by an explicit intent, and only this action means the
         // device has just booted.

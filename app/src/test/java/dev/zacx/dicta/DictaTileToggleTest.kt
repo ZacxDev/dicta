@@ -235,6 +235,60 @@ class DictaTileToggleTest {
         )
     }
 
+    /**
+     * 🔴 A click arriving with the permission revoked and the flag still set
+     * must not throw the user's stored intent away.
+     *
+     * Found by a surviving mutant: deleting `canDrawOverlays` from
+     * [BubbleEnabled.isUp] left the suite green, and this is the case it breaks.
+     * With the permission gone and the flag still `true` — the ordinary state
+     * after the user revokes `Display over other apps` — a click must read the
+     * bubble as **not up** and go the `turnOn` way, which declines without
+     * writing. Branching on the raw flag instead reads it as *on* and calls
+     * `turnOff`, clearing stored intent on a permission revoke. That
+     * contradicts the policy `BubbleBootReceiver` depends on: the flag survives
+     * a revoke so the bubble returns once the permission is re-granted.
+     *
+     * 🔴 Distinct from [withoutTheOverlayPermissionTheTileIsUnavailableAndStartsNothing],
+     * which sets the flag **off** — so there is nothing there for a wrong
+     * predicate to clear, and both directions behave identically. The flag has
+     * to be ON for the two to diverge, which is why that test could not catch
+     * this and this one is not a duplicate of it.
+     *
+     * ⚠ Reachability caveat, stated rather than assumed: `STATE_UNAVAILABLE` is
+     * documented as non-interactive, so SystemUI is not expected to deliver
+     * this click on a device at all. The guard is against the *predicate*,
+     * which `render()` and `MainActivity` both read on paths that certainly do
+     * run — see `DictaTileService`'s kdoc for why the UNAVAILABLE dead end is
+     * deliberate.
+     */
+    @Test
+    fun aClickWithThePermissionRevokedDoesNotDiscardTheStoredIntent() {
+        ShadowSettings.setCanDrawOverlays(false)
+        setFlag(true)
+
+        service.onClick()
+
+        assertTrue(
+            "the tile cleared bubble_enabled because the overlay permission " +
+                "was missing. A revoked permission is not the user changing " +
+                "their mind — the flag must survive it so the bubble comes " +
+                "back when the permission does. The click direction has to " +
+                "come from BubbleEnabled.isUp, not the raw flag.",
+            BubbleEnabled.isOn(service),
+        )
+        assertNull(
+            "the tile started BubbleService with no overlay permission",
+            startedService(),
+        )
+        assertEquals(
+            "the tile left itself looking clickable after a click it could not " +
+                "honour",
+            Tile.STATE_UNAVAILABLE,
+            tile.state,
+        )
+    }
+
     @Test
     fun aMissingTileIsNotACrash() {
         // The system can take qsTile away between callbacks; render() must

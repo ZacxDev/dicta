@@ -89,7 +89,11 @@ class MainActivity : Activity() {
         )
 
         bubbleSwitch.setOnCheckedChangeListener(null)
-        bubbleSwitch.isChecked = BubbleEnabled.isOn(this) && overlayGranted
+        // One predicate, shared with the Quick Settings tile's rendered state
+        // and its click direction — see BubbleEnabled.isUp. This read used to
+        // open-code `isOn && overlayGranted`, which is where the tile's click
+        // drifted away from it.
+        bubbleSwitch.isChecked = BubbleEnabled.isUp(this)
         bubbleSwitch.isEnabled = overlayGranted
         bubbleSwitch.setOnCheckedChangeListener(bubbleToggle)
 
@@ -169,8 +173,10 @@ class MainActivity : Activity() {
                 NotificationManager.IMPORTANCE_LOW
             )
         )
-        // Via DictateLaunch so the notification cannot drift from the bubble
-        // and the tile — all three shared the issue #11 defect.
+        // Via DictateLaunch so the notification cannot drift from the bubble —
+        // both shared the issue #11 defect. (The Quick Settings tile was the
+        // third; it builds no overlay intent now, so there is nothing left for
+        // it to drift from.) This is the ONLY pendingIntent caller in the app.
         val pi = DictateLaunch.pendingIntent(this)
         val notif = Notification.Builder(this, TRIGGER_CHANNEL)
             .setSmallIcon(R.drawable.ic_tile_mic)

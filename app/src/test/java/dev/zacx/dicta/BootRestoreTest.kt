@@ -3,6 +3,7 @@ package dev.zacx.dicta
 import android.content.Context
 import android.content.Intent
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -110,18 +111,71 @@ class BootRestoreTest {
         )
     }
 
+    /**
+     * 🔴 An app update must stop the flag claiming a bubble — and must **not**
+     * bring the bubble back.
+     *
+     * Android does not restart a service across a package replacement, so after
+     * an update there is no bubble. While the flag survived that, every surface
+     * went on reading ON: `MainActivity`'s switch rendered checked, and because
+     * a `Switch` fires its listener only on a **change** the first tap did
+     * nothing and the user had to toggle OFF then ON. That is issue #14's
+     * complaint reached without any reboot.
+     *
+     * 🔴 **The `assertNull` here is the load-bearing half and it is a negative
+     * control on a decision, not a leftover.** Restoring the overlay as a side
+     * effect of installing a new version is deliberately not done; this action
+     * is a *correction* path, not a second restore path. Both halves are
+     * asserted together because a fix that started the service here would still
+     * make the flag honest and would pass a flag-only assertion.
+     *
+     * This test used to be `anUnrelatedBroadcastIsIgnored`, which asserted only
+     * the null. The name became false the moment the receiver started acting on
+     * this action — [anActionTheReceiverKnowsNothingAboutIsIgnored] is the
+     * genuinely-unrelated control that replaces it.
+     */
     @Test
-    fun anUnrelatedBroadcastIsIgnored() {
-        // A receiver is reachable by an explicit intent whatever its filter
-        // says, so the action is checked in code too.
+    fun aPackageReplacementClearsTheStaleFlagAndStartsNothing() {
         ShadowSettings.setCanDrawOverlays(true)
         setFlag(true)
 
         boot(action = Intent.ACTION_MY_PACKAGE_REPLACED)
 
         assertNull(
-            "the receiver acted on a broadcast that is not BOOT_COMPLETED",
+            "the receiver restored the bubble after an app update. That is a " +
+                "deliberate non-behaviour: re-raising an overlay as a side " +
+                "effect of an install is not something to ship. It must only " +
+                "clear the flag so ONE tap brings the bubble back.",
             startedService(),
+        )
+        assertFalse(
+            "an app update left bubble_enabled set with no service running. " +
+                "MainActivity's switch renders from this, a Switch fires only " +
+                "on a CHANGE, so the user's first tap does nothing and they " +
+                "have to toggle OFF then ON — issue #14 verbatim.",
+            BubbleEnabled.isOn(app()),
+        )
+    }
+
+    @Test
+    fun anActionTheReceiverKnowsNothingAboutIsIgnored() {
+        // A receiver is reachable by an explicit intent whatever its filter
+        // says, so the action is checked in code too. Uses an action the
+        // receiver has no branch for, which is what MY_PACKAGE_REPLACED used to
+        // be before it acquired one.
+        ShadowSettings.setCanDrawOverlays(true)
+        setFlag(true)
+
+        boot(action = Intent.ACTION_SCREEN_ON)
+
+        assertNull(
+            "the receiver acted on a broadcast it has no branch for",
+            startedService(),
+        )
+        assertTrue(
+            "the receiver wrote the flag for a broadcast it has no branch for, " +
+                "so some fall-through is reaching a mutator",
+            BubbleEnabled.isOn(app()),
         )
     }
 }

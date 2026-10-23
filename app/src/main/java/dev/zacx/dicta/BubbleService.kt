@@ -299,10 +299,27 @@ class BubbleService : Service() {
     override fun onCreate() {
         super.onCreate()
         if (!Settings.canDrawOverlays(this)) {
+            // 🔴 Deliberately does NOT clear the flag, and the asymmetry with
+            // the branch below is the whole point. A revoked overlay
+            // permission is not the user changing their mind, so their stored
+            // intent survives it and the bubble returns once the permission is
+            // re-granted — the same policy BubbleBootReceiver argues at its own
+            // site. Nothing lies in the meantime because the permission is
+            // part of BubbleEnabled.isUp, which is what every surface the user
+            // sees reads: with canDrawOverlays false they all render off
+            // regardless of the flag.
             stopSelf()
             return
         }
         if (!promoteForeground(recording = false)) {
+            // 🔴 This one MUST clear the flag. Unlike the branch above there is
+            // no mask: canDrawOverlays is true, so BubbleEnabled.isUp would
+            // report the bubble as up while this service is stopping itself
+            // without ever having shown a window. That is issue #14's defect
+            // exactly — MainActivity's switch renders ON with nothing running,
+            // and a Switch fires its listener only on a CHANGE, so one tap
+            // does nothing and the user has to toggle OFF then ON.
+            BubbleEnabled.set(this, false)
             stopSelf()
             return
         }

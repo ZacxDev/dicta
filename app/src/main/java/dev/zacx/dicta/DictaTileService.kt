@@ -20,14 +20,48 @@ import android.service.quicksettings.TileService
  *
  * [onStartListening] previously hardcoded [Tile.STATE_INACTIVE], so even the
  * old tile's state was a constant rather than a reading. It now reflects
- * [BubbleEnabled], which is the same source of truth the app's switch and the
- * notification's Hide action use.
+ * [BubbleEnabled.isUp], which is the same predicate the app's switch renders
+ * and the same one [onClick] takes its direction from. 🔴 Both of those matter:
+ * while `render` used `canDrawOverlays && isOn` and `onClick` branched on bare
+ * `isOn`, the two halves of one toggle were reading different questions.
+ *
+ * ## 🔴 Why there is no `ACTIVE_TILE` in the manifest
+ *
+ * This tile is deliberately a **standard** tile, and `AndroidManifest.xml`
+ * carries the full argument. The short version: an active tile is bound only
+ * for add/remove, for a tap, and for an explicit
+ * `TileService.requestListeningState()` — never on panel open. The state here
+ * is derived and can change with no app code running (the user revoking the
+ * overlay permission), so an active tile would paint a stale reading and the
+ * next tap would invert it. Standard mode re-renders whenever the panel is
+ * visible, with nothing to keep in sync.
+ * `TileManifestTest.anActiveTileMustHaveSomethingThatRefreshesIt` pins the
+ * relationship.
+ *
+ * ## The unavailable state, and why it is a dead end on purpose
  *
  * Without `Display over other apps` the bubble cannot exist at all, so the tile
  * goes [Tile.STATE_UNAVAILABLE] and starts nothing. 🔴 A `TileService` has no
  * screen to toast on — a `Toast` posted from the collapsed shade is at best
  * invisible — so the reason is carried by the tile's own subtitle and content
- * description, which is the only text a tile owns.
+ * description, which is the only text a tile owns. (`subtitle` is API 29+, so
+ * below that the content description is the only carrier; it is what TalkBack
+ * reads, but a sighted user on API 26–28 sees a dimmed tile and no reason.)
+ *
+ * 🔴 **The obvious improvement — route the tap to
+ * `Settings.ACTION_MANAGE_OVERLAY_PERMISSION` via `startActivityAndCollapse` —
+ * cannot be bolted onto [onClick], and a maintainer reaching for it should read
+ * this first.** `STATE_UNAVAILABLE` is documented as a non-interactive state:
+ * SystemUI dims the tile and does not deliver clicks to it, so a branch in
+ * [onClick] for the ungranted case is unreachable by construction. Making it
+ * reachable means giving up `STATE_UNAVAILABLE` for a clickable
+ * `STATE_INACTIVE` that explains itself in its subtitle — which inverts two
+ * decisions this file's own tests assert
+ * (`withoutTheOverlayPermissionTheTileIsUnavailableAndStartsNothing` and
+ * `theUnavailableTileSaysWhyInTheOnlyTextATileHas`). That is a design change
+ * with a device question in the middle of it, not a fix, and it has not been
+ * made. ⚠ The non-interactivity is read off the documented contract; **no
+ * device has been observed** confirming SystemUI withholds the click.
  */
 class DictaTileService : TileService() {
 
@@ -46,7 +80,12 @@ class DictaTileService : TileService() {
         // owner's check always won, and a guard that cannot be reached is a
         // guard nobody can trust. One rule, one place; `render()` below reads
         // the result back rather than assuming the click did anything.
-        if (BubbleEnabled.isOn(this)) {
+        // 🔴 isUp, not isOn — the click direction MUST come from the same
+        // predicate render() paints from, or the tile does the opposite of what
+        // it shows. This branched on bare isOn while render() used
+        // `canDrawOverlays && isOn`, so with the overlay permission revoked the
+        // two halves of one toggle were reading different questions.
+        if (BubbleEnabled.isUp(this)) {
             BubbleEnabled.turnOff(this)
         } else {
             BubbleEnabled.turnOn(this)
@@ -72,7 +111,11 @@ class DictaTileService : TileService() {
     private fun render() {
         val tile = qsTile ?: return
         val granted = Settings.canDrawOverlays(this)
-        val on = granted && BubbleEnabled.isOn(this)
+        // One predicate, shared with onClick and MainActivity's switch — see
+        // BubbleEnabled.isUp. `granted` is still read separately because
+        // UNAVAILABLE is a third state isUp cannot distinguish: it answers
+        // "off", and the tile has to say WHY it is off.
+        val on = BubbleEnabled.isUp(this)
         tile.label = getString(R.string.tile_label)
         tile.state = when {
             !granted -> Tile.STATE_UNAVAILABLE

@@ -26,7 +26,20 @@ import java.io.File
  * surface reaching past the owner into `SharedPreferences`, or a new writer
  * nobody decided on.
  *
- * So three assertions, in three different dimensions:
+ * 🔴 **One owner for the WRITES is only half of the invariant, and this class
+ * used to assert only that half while its wording claimed the whole thing.**
+ * Two surfaces can route every write through [BubbleEnabled] and still *show*
+ * different answers — and they did: `MainActivity` rendered its switch from
+ * `isOn && overlayGranted`, `DictaTileService.render` open-coded the same
+ * conjunction, and that tile's `onClick` branched on bare `isOn`. So the
+ * surfaces could disagree, in the worst possible place: the two halves of a
+ * single toggle. The second half is
+ * [everyDisplayedBubbleStateComesFromOnePredicate] — everything the user sees
+ * derives from `BubbleEnabled.isUp`, and only code acting on stored intent
+ * reads `isOn`.
+ *
+ * So assertions in several different dimensions. First the three about who may
+ * write:
  *
  *  * [onlyTheOwnerTouchesTheRawPreferenceKey] — the **string literal**
  *    `"bubble_enabled"` appears in one file. It fails if the set grows (a
@@ -313,6 +326,248 @@ class BubbleEnabledWritersSeamTest {
         controller.pause().stop().destroy()
     }
 
+    /**
+     * 🔴 The **second** half of "the surfaces cannot disagree", and the half
+     * that was missing while this class's kdoc claimed the whole thing.
+     *
+     * One owner for the writes does not stop two surfaces *displaying*
+     * different answers, and they did. `MainActivity.refreshStatus` rendered
+     * its switch from `isOn && overlayGranted`; `DictaTileService.render`
+     * open-coded the same conjunction; and that tile's `onClick` branched on
+     * bare `isOn`. Three hand-copied readings of one question, which is how the
+     * two halves of a single toggle came to disagree whenever the overlay
+     * permission was revoked.
+     *
+     * So this is a **relationship**, not a count: [READS_STORED_INTENT] must
+     * appear only in the file that legitimately acts on stored *intent* rather
+     * than showing it, and [READS_DISPLAYED_STATE] must be exactly the two
+     * surfaces the user sees. It fails when either set **grows or shrinks** —
+     * a new surface rendering `isOn` is the regression, and a surface dropping
+     * `isUp` means it went back to open-coding the predicate.
+     *
+     * 🔴 What it can and cannot see: it is a text ledger over this package's
+     * sources, so it sees which *predicate* each surface asks. It cannot see
+     * whether the answer is then used the right way round — `BubbleEnabled`'s
+     * own `theOwnerIsTheSingleSourceOfTruthAcrossSurfaces`,
+     * `DictaTileToggleTest` and `BubbleHideFromNotificationTest` are the
+     * behavioural half.
+     */
+    @Test
+    fun everyDisplayedBubbleStateComesFromOnePredicate() {
+        val intent = sourceFiles()
+            .filter { f -> f.name != "BubbleEnabled.kt" }
+            .filter { f -> READS_STORED_INTENT.containsMatchIn(normalise(f.readText())) }
+            .map { it.name }
+            .sorted()
+
+        assertEquals(
+            "the set of files reading BubbleEnabled.isOn changed. isOn is " +
+                "stored INTENT and deliberately outlives the bubble, so a " +
+                "surface that SHOWS it claims a bubble that may not be there — " +
+                "issue #14's defect by a new route. Only code that acts on " +
+                "intent rather than displaying it may read isOn; anything the " +
+                "user sees must read BubbleEnabled.isUp. If you are adding a " +
+                "screen, a tile or a notification here, you want isUp.",
+            listOf(
+                // Acts on stored intent at boot; it displays nothing. It
+                // deliberately does NOT use isUp: isUp folds in the overlay
+                // permission, and the receiver has its own argued reason to
+                // check that separately (see its kdoc).
+                "BubbleBootReceiver.kt",
+            ),
+            intent,
+        )
+
+        val displayed = sourceFiles()
+            .filter { f -> f.name != "BubbleEnabled.kt" }
+            .filter { f -> READS_DISPLAYED_STATE.containsMatchIn(normalise(f.readText())) }
+            .map { it.name }
+            .sorted()
+
+        assertEquals(
+            "the set of files reading BubbleEnabled.isUp changed. These are the " +
+                "surfaces the user can SEE, and every one of them must derive " +
+                "from the one predicate — including a toggle's click direction, " +
+                "not just the state it paints. A surface that disappears from " +
+                "this list has gone back to open-coding the conjunction, which " +
+                "is what let DictaTileService.onClick and its own render() " +
+                "disagree.",
+            listOf(
+                // The Quick Settings tile: both the state it paints AND the
+                // direction its click takes.
+                "DictaTileService.kt",
+                // The switch on the setup screen.
+                "MainActivity.kt",
+            ).sorted(),
+            displayed,
+        )
+    }
+
+    /**
+     * 🔴 Controls for the ledger above. Without these it is a claim about two
+     * regexes — and the risk is concrete here, because `BubbleEnabled.kt`'s own
+     * kdoc discusses `isOn` and `isUp` in prose at length, and so do the
+     * comments at both call sites.
+     */
+    @Test
+    fun thePredicatePatternsSeeCallsAndNotTheProseAboutThem() {
+        val calls = """
+            class X {
+                fun a() = BubbleEnabled.isOn(this)
+                fun b() { if (BubbleEnabled.isOn (context)) {} }
+                fun c() = BubbleEnabled.isOn(
+                    context,
+                )
+            }
+        """.trimIndent()
+        assertEquals(
+            "the isOn pattern must see a call however it is spelled or wrapped",
+            3,
+            READS_STORED_INTENT.findAll(normalise(calls)).count(),
+        )
+        assertEquals(
+            "the isUp pattern fired on isOn calls — the two ledgers would be " +
+                "the same ledger and neither would mean anything",
+            0,
+            READS_DISPLAYED_STATE.findAll(normalise(calls)).count(),
+        )
+
+        val upCalls = """
+            class Y {
+                fun a() = BubbleEnabled.isUp(this)
+                fun b() { if (BubbleEnabled.isUp (ctx)) {} }
+            }
+        """.trimIndent()
+        assertEquals(
+            "the isUp pattern must see a call however it is spelled",
+            2,
+            READS_DISPLAYED_STATE.findAll(normalise(upCalls)).count(),
+        )
+        assertEquals(
+            "the isOn pattern fired on an isUp call — isUp CONTAINS the string " +
+                "isOn nowhere, but a sloppy pattern like `is(On|Up)` would " +
+                "collapse both ledgers into one",
+            0,
+            READS_STORED_INTENT.findAll(normalise(upCalls)).count(),
+        )
+
+        for (sample in listOf(
+            "// render() must use BubbleEnabled.isOn(this) <- comment only",
+            "/** derived from [BubbleEnabled.isUp] */",
+            "private val p = BubbleEnabled::isUp",
+        )) {
+            assertFalse(
+                "a predicate pattern fired on prose, so the ledgers would list " +
+                    "files that read nothing: <$sample>",
+                READS_STORED_INTENT.containsMatchIn(normalise(sample)) ||
+                    READS_DISPLAYED_STATE.containsMatchIn(normalise(sample)),
+            )
+        }
+    }
+
+    /**
+     * 🔴 The behavioural half of the invariant on the one path that could still
+     * break it with the overlay permission GRANTED.
+     *
+     * `BubbleService.onCreate` has two `stopSelf()` guards, and they are
+     * deliberately asymmetric. The `canDrawOverlays` one leaves the flag alone
+     * — a revoked permission is not the user changing their mind, and
+     * `BubbleEnabled.isUp` folds the permission in, so nothing lies. The
+     * `promoteForeground` one has no such mask: the permission is granted, so
+     * `isUp` would report the bubble as up while the service stops itself
+     * without ever showing a window. `MainActivity`'s switch would render ON
+     * with nothing running and, because a `Switch` fires its listener only on a
+     * **change**, one tap would do nothing — issue #14 verbatim.
+     *
+     * Driven through the real service and the real `foregroundPromoter` seam,
+     * not by calling the owner directly, because the claim is about what
+     * `onCreate` does.
+     */
+    @Test
+    fun aRefusedForegroundPromotionLeavesNoSurfaceClaimingABubble() {
+        ShadowSettings.setCanDrawOverlays(true)
+        val app = RuntimeEnvironment.getApplication()
+        BubbleEnabled.set(app, true)
+        assertTrue(
+            "the fixture failed: the flag must start ON or there is nothing " +
+                "for the refused promotion to leave behind",
+            BubbleEnabled.isUp(app),
+        )
+
+        val c = org.robolectric.Robolectric.buildService(BubbleService::class.java)
+        c.get().foregroundPromoter = { false }
+        runCatching { c.create() }
+
+        assertFalse(
+            "BubbleService stopped itself because promoteForeground was " +
+                "refused and left bubble_enabled set. The overlay permission " +
+                "is granted, so nothing masks it: every surface now claims a " +
+                "bubble that does not exist, and MainActivity's switch needs " +
+                "TWO taps to recover.",
+            BubbleEnabled.isUp(app),
+        )
+        runCatching { c.destroy() }
+        OverlayVisibility.clearForTest()
+        BubbleSessionBus.clearForTest()
+        MicrophoneOwner.clearForTest()
+    }
+
+    /**
+     * 🔴 The behavioural pin for [BubbleEnabled.isUp]'s **permission** term.
+     *
+     * Found by a surviving mutant: deleting `canDrawOverlays` from `isUp` left
+     * the whole suite green. Nothing was asserting the case, even though it is
+     * the most ordinary one — the user has the bubble on, revokes `Display over
+     * other apps` from system Settings, and comes back to the app.
+     *
+     * The flag is still `true` (correctly — a revoked permission is not the
+     * user changing their mind, and `BubbleBootReceiver` relies on that), so a
+     * switch rendered from the raw flag reads **ON while disabled**: a control
+     * that claims a bubble exists and cannot be used to do anything about it.
+     * The tile's version is worse, which the sibling case in
+     * `DictaTileToggleTest` covers.
+     *
+     * Asserted together with `isEnabled`, because "off and greyed out" is the
+     * state being claimed and a check on either half alone passes for the
+     * wrong reason: an always-disabled switch would satisfy the first, and a
+     * switch that is enabled-and-off would satisfy the second.
+     */
+    @Test
+    fun revokingTheOverlayPermissionLeavesTheSwitchOffRatherThanLying() {
+        val app = RuntimeEnvironment.getApplication()
+        ShadowSettings.setCanDrawOverlays(true)
+        BubbleEnabled.set(app, true)
+        // The permission goes away while the app is not running — nothing gets
+        // a chance to reconcile the flag, which is the whole point.
+        ShadowSettings.setCanDrawOverlays(false)
+
+        val controller = org.robolectric.Robolectric.buildActivity(MainActivity::class.java)
+            .setup()
+        val activity = controller.get()
+        val switch = activity.findViewById<android.widget.Switch>(R.id.bubble_switch)
+
+        assertTrue(
+            "the fixture failed: bubble_enabled must still be set, or there is " +
+                "no stale intent for the switch to be honest about",
+            BubbleEnabled.isOn(app),
+        )
+        assertFalse(
+            "the switch reads ON with the overlay permission revoked. The " +
+                "bubble cannot exist without that permission, so this is a " +
+                "control claiming something that is not there — and it is " +
+                "DISABLED, so the user cannot even tap it to find out. It must " +
+                "derive from BubbleEnabled.isUp, which folds the permission in, " +
+                "not from the raw flag.",
+            switch.isChecked,
+        )
+        assertFalse(
+            "the switch is enabled with no overlay permission, so tapping it " +
+                "would ask for a bubble the platform will refuse",
+            switch.isEnabled,
+        )
+        controller.pause().stop().destroy()
+    }
+
     private fun sourceFiles(): List<File> {
         val dir = listOf(
             File("app/src/main/java/dev/zacx/dicta"),
@@ -353,6 +608,19 @@ class BubbleEnabledWritersSeamTest {
 
         /** The literal preference key, as a Kotlin string. */
         val TOUCHES_RAW_KEY = Regex(""""bubble_enabled"""")
+
+        /**
+         * A read of **stored intent**. Spelled out separately from
+         * [READS_DISPLAYED_STATE] rather than as one `is(On|Up)` alternation on
+         * purpose: the whole point of
+         * [everyDisplayedBubbleStateComesFromOnePredicate] is that these two
+         * reads mean different things, so one pattern matching both would make
+         * the ledger unable to state its own claim.
+         */
+        val READS_STORED_INTENT = Regex("""BubbleEnabled\.isOn\s*\(""")
+
+        /** A read of **what the user is shown**. */
+        val READS_DISPLAYED_STATE = Regex("""BubbleEnabled\.isUp\s*\(""")
 
         /**
          * Comments out, whitespace collapsed. The order matters: stripping

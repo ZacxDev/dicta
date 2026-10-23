@@ -24,15 +24,41 @@ import android.provider.Settings
  *  * [MainActivity]'s switch and [DictaTileService] — [turnOn] / [turnOff].
  *  * [BubbleService]'s *Hide bubble* path — [set], because the service is
  *    already stopping itself and must not call `stopService` on itself.
- *  * [BubbleBootReceiver] — [isOn] + [startService], plus its own
- *    `canDrawOverlays` check. It deliberately routes *around* [turnOn] because
- *    it must restore the bubble without *writing* the flag at all: nothing the
+ *  * [BubbleBootReceiver] — on `BOOT_COMPLETED`, [isOn] + [startService] plus
+ *    its own `canDrawOverlays` check. It deliberately routes *around* [turnOn]
+ *    because it must restore the bubble without *writing* the flag: nothing the
  *    user did at boot can have changed their stored intent. That open-coded
  *    check is **not** a duplicate to consolidate away; it is argued at the
- *    receiver's own site.
+ *    receiver's own site. On `MY_PACKAGE_REPLACED` the same receiver *does*
+ *    write — [set] to `false` — because an app update has already taken the
+ *    bubble away, and that one is argued there too.
  *
  * All four are pinned by `BubbleEnabledWritersSeamTest`'s mutator ledger, which
  * is why it matches [set] and [startService] and not only [turnOn] / [turnOff].
+ *
+ * ## 🔴 What "the surfaces cannot disagree" does and does NOT mean
+ *
+ * One owner for the *writes* is only half of it, and this kdoc used to stop
+ * there — which made the invariant it claimed **false**, because two surfaces
+ * can route every write through one object and still *display* different
+ * answers. They did: `MainActivity` rendered its switch from
+ * `isOn && overlayGranted`, [DictaTileService] painted the tile from the same
+ * conjunction, and that tile's click branched on bare [isOn]. Three hand-copied
+ * readings of one question.
+ *
+ * So the invariant takes **two** rules, and both are load-bearing:
+ *
+ *  1. every write goes through this object — the mutator ledger in
+ *     `BubbleEnabledWritersSeamTest`;
+ *  2. everything the user is **shown** is derived from [isUp], never from
+ *     [isOn] — `everyDisplayedBubbleStateComesFromOnePredicate` in the same
+ *     file.
+ *
+ * [isOn] is stored intent, for the code that acts on intent
+ * ([BubbleBootReceiver]). It is not for anything the user reads, and the states
+ * where intent and reality come apart are closed where they happen rather than
+ * by a term in [isUp] — see [isUp] for the two of them and why a liveness check
+ * is the wrong instrument.
  *
  * ## The pref file and key are a compatibility contract
  *
@@ -80,8 +106,71 @@ object BubbleEnabled {
         NO_OVERLAY_PERMISSION,
     }
 
+    /**
+     * The **stored intent**: the last on/off the user chose.
+     *
+     * 🔴 This is not "there is a bubble on screen" — see [isUp], which is what
+     * every surface that *displays* the state must read. The flag survives a
+     * reboot, an app update, a revoked overlay permission and a service the
+     * platform killed, by design: none of those is the user changing their
+     * mind. That is exactly why it cannot be shown to the user directly.
+     */
     fun isOn(context: Context): Boolean =
         prefs(context).getBoolean(PREF_KEY, false)
+
+    /**
+     * 🔴 **What the user is shown** — the one predicate every surface that
+     * displays or toggles the bubble must read, instead of [isOn].
+     *
+     * ## Why [isOn] is not what to render
+     *
+     * [isOn] is stored intent, and it deliberately outlives the bubble. The
+     * overlay permission is the part intent cannot speak for: the user can
+     * revoke `Display over other apps` from system Settings at any time, with
+     * no app code running to notice, and without that permission the bubble
+     * cannot exist at all. Rendering [isOn] alone in that state claims a bubble
+     * that is not there, which is issue #14's defect reached by a new route.
+     *
+     * ## 🔴 Why it is one function and not three copies of the `&&`
+     *
+     * This is not tidiness; the duplicates were already disagreeing.
+     * `MainActivity.refreshStatus` open-coded `isOn && overlayGranted` for the
+     * switch, `DictaTileService.render` open-coded the same conjunction for the
+     * tile's state — and that tile's `onClick` branched on bare [isOn]. So with
+     * the permission revoked the tile painted itself from one predicate and
+     * decided its click direction from another. A predicate open-coded at N
+     * sites is wrong at N−1 of them in the same direction, and a toggle is the
+     * worst place for it: the two halves of a toggle disagreeing is a control
+     * that does the opposite of what it displays.
+     * `BubbleEnabledWritersSeamTest.everyDisplayedBubbleStateComesFromOnePredicate`
+     * pins the call sites.
+     *
+     * ## 🔴 What it cannot see, and who covers that
+     *
+     * It is a **synchronous read of the flag and the permission** — it does not
+     * and must not ask whether the service is live. A field recording that was
+     * tried and rejected: `startForegroundService` returns *before* the
+     * service's `onCreate` runs, so a liveness term would make the tile paint
+     * itself INACTIVE in the instant after the user turned the bubble on, which
+     * is a worse lie than the one it set out to fix.
+     *
+     * The two states where the flag is set and no bubble exists *despite* the
+     * permission are therefore closed at their source, by whoever is still
+     * running when it happens — which is why there is no third term here:
+     *
+     *  * `promoteForeground` refused → [BubbleService.onCreate] clears the flag
+     *    before stopping itself.
+     *  * an **app update** stops the service, and Android does not restart one
+     *    across a package replacement → [BubbleBootReceiver] clears the flag on
+     *    `ACTION_MY_PACKAGE_REPLACED`. It deliberately does not restart the
+     *    bubble; it only stops the flag claiming one.
+     *
+     * Not a mutator, so `BubbleEnabledWritersSeamTest`'s ledger excludes it for
+     * the same reason it excludes [isOn]: a reader cannot put the flag out of
+     * step with reality.
+     */
+    fun isUp(context: Context): Boolean =
+        Settings.canDrawOverlays(context) && isOn(context)
 
     /**
      * Records the flag and nothing else.
