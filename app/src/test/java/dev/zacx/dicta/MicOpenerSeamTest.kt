@@ -40,8 +40,11 @@ import java.io.File
  *
  * It is reached by the error route — `settings == null` (no `AndroidKeyStore`,
  * a documented device state here) or a remote session that would not start —
- * and from there the bubble overlay, the QS tile and the notification all open
- * an `AudioRecord` straight into the live `SpeechRecognizer`. 🔴 Android does
+ * and from there the bubble overlay and the notification both open
+ * an `AudioRecord` straight into the live `SpeechRecognizer`.
+ * (The QS tile was named here as a third opener; it toggles the bubble now and
+ * opens no dictation, so the set is two. The seam and the hazard are
+ * unchanged.) 🔴 Android does
  * not refuse that: it feeds one of the two **bit-exact zeros**, with a
  * successful `startRecording()` and no error callback, so the symptom is an
  * empty or invented transcript and it gets investigated as a server bug.

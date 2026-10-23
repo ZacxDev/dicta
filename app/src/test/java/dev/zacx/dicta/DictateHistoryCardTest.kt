@@ -188,9 +188,9 @@ class DictateHistoryCardTest {
     fun aCardOpenedAnyOtherWayIsUnchanged() {
         // 🔴 Positive control for the new branch: a condition that matched
         // every launch would pass every assertion above while silently
-        // breaking the tile, the notification, MainActivity and the
-        // mic-permission fallback — all of which rely on onCreate starting a
-        // dictation.
+        // breaking the notification, MainActivity and the mic-permission
+        // fallback — all of which rely on onCreate starting a dictation.
+        // (The QS tile was first in that list; it opens no card now.)
         //
         // ⚠ The mic-button half of this control is gone, deliberately. It
         // used to assert VISIBLE here, reasoning that a hidden button means
@@ -296,10 +296,12 @@ class DictateHistoryCardTest {
     @Test
     fun anIntentWithNoHistoryIdDoesNotRestartTheCard() {
         // 🔴 Deliberately narrower than re-running the whole three-way
-        // branch. Re-running it would mean a Quick Settings tap on an
+        // branch. Re-running it would mean a notification tap on an
         // already-open card starts a dictation where today it does nothing —
-        // a behaviour change to three entry points, inside a change about a
-        // fourth. This pins the narrowness so it is a decision rather than an
+        // a behaviour change to the other entry points, inside a change about
+        // this one. (It said "a Quick Settings tap … three entry points …
+        // about a fourth": the tile opens no card now, so the count is two
+        // and the narrowness argument is unaffected.) This pins the narrowness so it is a decision rather than an
         // omission someone "fixes" later by accident.
         val id = store("the stored one")
         val controller = open(DictateLaunch.historyIntent(ctx, id))
@@ -336,9 +338,14 @@ class DictateHistoryCardTest {
         //
         // 🔴 WHAT IT DOES NOT PROVE: that the capture actually stops. A live
         // DictationSession is not constructible under Robolectric, so the
-        // stop itself is a DEVICE check: start a dictation from the QS tile,
-        // long-press the bubble, tap a chip, confirm the recording indicator
-        // goes away.
+        // stop itself is a DEVICE check: start a dictation from the
+        // notification's Dictate action, long-press the bubble, tap a chip,
+        // confirm the recording indicator goes away.
+        //
+        // 🔴 This read "start a dictation from the QS tile", which a human
+        // following it CANNOT DO — the tile toggles the bubble and starts no
+        // dictation. The check itself is unchanged and still performable; only
+        // the surface that opens the card was wrong.
         //
         // ⚠ An earlier version of this comment also said the activity
         // "exposes no session seam". That was FALSE — `uiCallbacks()` is

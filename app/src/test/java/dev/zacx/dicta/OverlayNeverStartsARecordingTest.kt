@@ -39,7 +39,7 @@ import java.io.File
  *  * **START** — `@string/start_dictation` ("Speak"), assigned from eleven
  *    sites and the layout default. **Removed**, string included.
  *  * **STOP** — `@string/stop_dictation`. **Preserved**, and it is not
- *    optional: the QS tile, the notification, MainActivity's "Try dictation
+ *    optional: the notification, MainActivity's "Try dictation
  *    now" and the permission-grant path all AUTO-START a recording in
  *    `onCreate`, so without this role those recordings have no end control at
  *    all. [aLiveCaptureStillHasAWorkingStopControl] is that pin.
@@ -209,7 +209,7 @@ class OverlayNeverStartsARecordingTest {
         }
         if (state.expectedLabel != null && control.visibility != View.VISIBLE) {
             found += "<${state.name}>: the control is hidden in a state that " +
-                "NEEDS it. The tile, the notification and MainActivity " +
+                "NEEDS it. The notification and MainActivity " +
                 "auto-start a recording on open; without this role those " +
                 "recordings cannot be ended from the only screen they open"
         }
@@ -469,7 +469,7 @@ class OverlayNeverStartsARecordingTest {
         return open(DictateLaunch.intent(ctx))
     }
 
-    /** The tile/notification path refused because the bubble holds the mic. */
+    /** The notification / launcher path refused because the bubble holds the mic. */
     private fun cardRefusedTheMic(): DictateActivity {
         grantMic()
         MicrophoneOwner.acquire(Any())
@@ -486,9 +486,11 @@ class OverlayNeverStartsARecordingTest {
     private fun liveCaptureCard(): DictateActivity {
         grantMic()
         installRecogniser()
-        // The plain intent is what the QS tile, the notification and
-        // MainActivity all wrap, so onCreate auto-starts the capture itself —
-        // the real route to this state, not a hand-driven one.
+        // The plain intent is what the notification wraps and what
+        // MainActivity's "Try dictation now" opens, so onCreate auto-starts the
+        // capture itself — the real route to this state, not a hand-driven one.
+        // (It said "the QS tile, the notification and MainActivity all wrap";
+        // the tile wraps nothing now, and the route is still real.)
         return open(DictateLaunch.intent(ctx))
     }
 

@@ -31,8 +31,17 @@ import java.io.File
  *     is in a different file;
  *  3. it is **different** from the application's default affinity — the actual
  *     property that was violated, and the one a mere "is it set" check misses;
- *  4. every "from anywhere" entry point goes through [DictateLaunch], asserted
- *     as a ledger so a fourth trigger cannot quietly open-code it again.
+ *  4. every file that **hand-builds an overlay intent** is a declared one,
+ *     asserted as a ledger so a new trigger cannot quietly open-code it again.
+ *
+ * 🔴 Point 4 read "every 'from anywhere' entry point goes through
+ * [DictateLaunch]", which claimed **more than the ledger implements and more
+ * than is true**. The Quick Settings tile is a from-anywhere surface and routes
+ * through [DictateLaunch] nowhere — it toggles the floating bubble and opens no
+ * overlay. The ledger is still correct, because what it actually scans for is a
+ * file CONSTRUCTING a `DictateActivity` intent, and the tile constructs none;
+ * but a reader who took the old wording at face value would believe this file
+ * covers a surface it has never looked at.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -97,8 +106,9 @@ class DictateLaunchTest {
     @Test
     fun neitherPlainLaunchCarriesAHistoryId() {
         // Positive control for the branch in DictateActivity: if the plain or
-        // the attach intent carried a history id, every tile tap would open a
-        // history card instead of a dictation.
+        // the attach intent carried a history id, every notification tap would
+        // open a history card instead of a dictation. (It said "every tile
+        // tap"; the tile builds no overlay intent now.)
         assertEquals(
             null,
             DictateLaunch.intent(ctx).getStringExtra(DictateLaunch.EXTRA_HISTORY_ID),
@@ -230,13 +240,24 @@ class DictateLaunchTest {
     // --- the ledger: who may build an overlay intent ------------------------
 
     /**
-     * Every "from anywhere" trigger must route through [DictateLaunch].
+     * Every surface that **opens the overlay** must route through
+     * [DictateLaunch] — which is narrower than "every trigger", deliberately.
+     *
+     * 🔴 **Read the assertion, not the heading.** What this scans is the set of
+     * files hand-building a `DictateActivity` intent. It therefore says nothing
+     * about a trigger that opens no overlay: the Quick Settings tile is a
+     * from-anywhere surface, routes through [DictateLaunch] nowhere, and is
+     * correctly absent below because it constructs no intent. The old heading
+     * ("every 'from anywhere' trigger must route through DictateLaunch")
+     * described coverage this test does not have — and reading as coverage
+     * while providing none is worse than providing none, because it stops
+     * anyone looking.
      *
      * 🔴 A ledger, not a spot check. #11 was one predicate open-coded at three
      * sites and wrong at all three; the failure mode of fixing it is that a
-     * *fourth* trigger later open-codes it again and nothing goes red. This
+     * *fourth* constructor later open-codes it again and nothing goes red. This
      * fails when the set of files constructing a `DictateActivity` intent grows
-     * **or** shrinks, so adding a trigger forces a decision here.
+     * **or** shrinks, so adding one forces a decision here.
      *
      * `MainActivity` is on the allowed list because its "Try dictation now"
      * button deliberately starts the overlay **in its own task with no flags** —

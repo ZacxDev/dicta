@@ -23,7 +23,12 @@
     <string name="status_not_granted">Not granted</string>
 
     <string name="section_triggers">Triggers (pick any)</string>
-    <string name="tile_row">Quick Settings tile — swipe down from any app and tap Dicta.</string>
+    <!-- 🔴 User-facing, and it used to read "swipe down from any app and tap
+         Dicta", which under the "Triggers" heading promised a third way to
+         START a dictation. The tile switches the floating bubble on and off;
+         it opens nothing. The copy says so rather than leaving the heading to
+         imply otherwise. -->
+    <string name="tile_row">Quick Settings tile — swipe down from any app to switch the bubble on or off.</string>
     <string name="add_tile">Add tile</string>
     <string name="tile_added">Tile added — find it in your Quick Settings panel.</string>
     <string name="tile_add_declined">Tile not added.</string>
@@ -172,9 +177,11 @@
     <string name="bubble_foreground_denied">Could not start recording — Android refused Dicta\'s recording notification. Check that notifications are allowed for Dicta, then try again.</string>
 
     <!-- Refusal shown when a SECOND dictation is attempted while one already
-         holds the microphone (the QS tile or the notification tapped while the
-         bubble is recording — or, the other direction, the bubble tapped while
-         the card's own recogniser is listening). Loud on purpose: the
+         holds the microphone (the notification, or "Try dictation now", tapped
+         while the bubble is recording — or, the other direction, the bubble
+         tapped while the card's own recogniser is listening). This named the QS
+         tile as the first trigger: the tile is the bubble's toggle now and
+         cannot attempt a dictation at all. Loud on purpose: the
          alternative is Android feeding one of the two captures bit-exact
          zeros, which surfaces as an empty or invented transcript and gets
          blamed on the server. Shown on BOTH surfaces: the card's status line
