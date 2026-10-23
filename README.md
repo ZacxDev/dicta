@@ -8,13 +8,26 @@ that backs each piece.
 
 ## How it works
 
-Three independent triggers, all opening the same overlay:
+Three surfaces reach Dicta from anywhere — two triggers, and a tile that
+switches the third one on and off:
 
-1. **Quick Settings tile** — swipe down from any app, tap the Dicta tile.
-   Uses `TileService.onClick()` → `startActivityAndCollapse()`.
-2. **Floating bubble** — an always-on-top mic button (`TYPE_APPLICATION_OVERLAY`)
-   you can drag anywhere. Tap it from any app.
-3. **Persistent notification** — "Dicta" notification with a Dictate action.
+1. **Floating bubble** — an always-on-top mic button (`TYPE_APPLICATION_OVERLAY`)
+   you can drag anywhere. Tap it from any app. `BubbleBootReceiver` asks for it
+   again after a reboot when you had it switched on, and if the platform
+   refuses that start it offers it back in a notification rather than failing
+   silently (device-unverified — see the receiver's kdoc for what the
+   documented rules do and do not promise).
+2. **Persistent notification** — "Dicta" notification with a Dictate action.
+3. **Quick Settings tile** — swipe down from any app and tap the Dicta tile to
+   switch the floating bubble **on or off**. It is a stateful toggle, not a
+   launcher: it reads `BubbleEnabled`, shows `STATE_ACTIVE`/`STATE_INACTIVE`
+   accordingly, and goes `STATE_UNAVAILABLE` when "Display over other apps" is
+   not granted.
+
+Whether the bubble is on lives in exactly one place — `BubbleEnabled`, over the
+`dicta`/`bubble_enabled` preference — so the switch in the app, the
+notification's **Hide bubble** action, the tile and the boot receiver cannot
+disagree about it.
 
 The overlay is a floating dialog-style activity, and it is deliberately
 **minimal at rest**: the transcript, one mic pill, and a small overflow
@@ -147,7 +160,9 @@ app/src/main/
   java/dev/zacx/dicta/
     MainActivity.kt       # setup: permissions, bubble/notification toggles, tile prompt
     DictateActivity.kt    # the overlay: dictate → edit → copy / screenshot / share
-    DictaTileService.kt   # Quick Settings tile trigger
+    DictaTileService.kt   # Quick Settings tile: the bubble's on/off toggle
+    BubbleEnabled.kt      # the one owner of "is the bubble enabled" (+ start/stop)
+    BubbleBootReceiver.kt # restores the bubble after a reboot
     BubbleService.kt      # floating overlay bubble trigger
     SpeechHelper.kt       # SpeechRecognizer wrapper (partial + final results)
     ShareIntents.kt       # ACTION_SEND construction (text, image, chooser, URI grant)
