@@ -23,7 +23,15 @@ app, no accessibility service required.**
 | App widget / launcher shortcut | `AppWidgetProvider` | Home-screen only — doesn't cover "from any app", so it's a bonus, not the core. |
 | Accessibility service | `AccessibilityService` | Can intercept hardware keys/gestures globally, but it's the most invasive permission and unnecessary here. Not used. |
 
-The PoC implements the first three.
+All three of the first mechanisms were built and the research above still
+describes what each API permits. 🔴 **What the PoC uses them FOR has since
+narrowed to one trigger:** tapping the floating bubble is the only way to start
+a recording. The Quick Settings tile is now the bubble's on/off switch rather
+than a launcher, and the persistent notification action — row three, whose
+background-activity-launch exemption is still accurately described — was
+deleted. The row is kept because the finding is about the API, not about Dicta;
+`StartSurfaceLedgerTest` is the enumerated set of places a recording can begin,
+and it fails if that set grows back.
 
 ## 2. The overlay UI
 
@@ -67,21 +75,17 @@ Android 10+ clipboard-access restrictions don't apply.
 - No keylogging, no reading other apps' screens or clipboards — the overlay only
 ever handles text the user dictated or typed into it.
 - `SYSTEM_ALERT_WINDOW` is a sensitive permission (overlay-spoofing risk), so
-the bubble is strictly opt-in and the **notification** path works without it.
-🔴 **Corrected, and it had inverted:** this read "the tile/notification paths
-work without it". The tile is the bubble's switch now, so it *requires*
-`SYSTEM_ALERT_WINDOW` — `DictaTileService.render()` goes
-`Tile.STATE_UNAVAILABLE` and the tile turns nothing on while `canDrawOverlays`
-is false.
-
-🔴 **Second correction, same paragraph:** the line above then read "the
-notification is the only trigger left that works with the permission ungranted",
-and that is false too — it counted the surfaces that reach Dicta *from outside
-the app* and forgot the one inside it. `MainActivity`'s "Try dictation now"
-button starts `DictateActivity` directly and needs no `SYSTEM_ALERT_WINDOW`
-either, which is why `DictateLaunchTest` lists `MainActivity` as an allowed
-direct constructor of that intent. So **two** surfaces still work with the
-permission ungranted — the notification's *Dictate* action and "Try dictation
-now" — which is the same count `MicrophoneOwner`'s kdoc arrives at for the same
-two surfaces. The durable claim is unchanged: the bubble is opt-in, and nothing
-that needs the overlay permission works without it.
+the bubble is strictly opt-in — and **nothing triggers a dictation without it**,
+since tapping the bubble is the only way to start one. Granting the permission is
+a prerequisite for dictating at all, not a convenience.
+🔴 **This paragraph has been wrong twice, in opposite directions, and both errors
+were counts of surfaces.** It first read "the tile/notification paths work
+without it" — the tile is the bubble's switch, so it *requires* the permission:
+`DictaTileService.render()` goes `Tile.STATE_UNAVAILABLE` and turns nothing on
+while `canDrawOverlays` is false. It then read "**two** surfaces still work with
+the permission ungranted — the notification's *Dictate* action and *Try dictation
+now*". Both of those surfaces are now **deleted**, so that count is zero, and
+`DictateLaunchTest` no longer lists `MainActivity` as an allowed direct
+constructor of an overlay intent. The claim that held through every version is
+the one left standing: nothing needing the overlay permission works without it.
+The surface counts were the perishable part and are no longer stated.

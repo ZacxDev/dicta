@@ -18,32 +18,30 @@ import java.util.concurrent.atomic.AtomicReference
  * `AudioRecord` exists under Robolectric.
  *
  * [DictateLaunch.EXTRA_ATTACH_SESSION] suppresses the second session only on
- * the intent **the bubble itself sends**. Neither of the other two surfaces
- * carries it, and they reach `DictateActivity` by different routes: the
- * notification action goes through [DictateLaunch.intent], while
- * `MainActivity`'s "Try dictation now" constructs its own intent — which is why
- * `DictateLaunchTest` lists `MainActivity` as an allowed direct constructor. So
- * while the bubble is recording with nothing on screen, either of them opens a
- * card whose `onCreate` would start a second capture.
+ * the intent the bubble sends for a capture it has **already finished**
+ * ([DictateLaunch.transcribingIntent]). A *plain* [DictateLaunch.intent]
+ * carries no such extra, so the card it opens runs its own `startDictation()`
+ * in `onCreate` — which is why a per-intent flag cannot be the whole answer.
  *
- * ⚠ This used to say both surfaces "go through [DictateLaunch.intent]". The
- * conclusion was right and the mechanism was not — and the mechanism is the
- * part a reader acts on: anyone trying to close this hole by putting the extra
- * inside `DictateLaunch.intent` would leave "Try dictation now" untouched.
+ * 🔴 **Do not read any of this as a count of surfaces.** This paragraph has
+ * been an enumeration twice and gone stale twice: first "the bubble, the tile
+ * and the notification", then "the notification and *Try dictation now* — two,
+ * not three". Every one of those callers is now gone. The tile is the bubble's
+ * on/off switch and references [DictateLaunch] nowhere; the trigger
+ * notification and `MainActivity`'s "Try dictation now" are deleted, and
+ * `DictateLaunch.pendingIntent` went with them. A plain [DictateLaunch.intent]
+ * has exactly **one** production caller today — `BubbleService`'s
+ * mic-permission hop — and `StartSurfaceLedgerTest` is the enumerated set that
+ * fails if that grows.
  *
- * Per-call-site flags are the shape of defect that regenerates at
- * every new surface; a holder that `start()` must acquire fails for surfaces
- * that do not exist yet too.
- *
- * 🔴 **This paragraph used to name the Quick Settings tile ([DictaTileService])
- * as a third such surface. That is no longer true** — the tile is the floating
- * bubble's on/off switch and references [DictateLaunch] nowhere. The correction
- * matters at this site in particular, because this paragraph is the rationale
- * for a process-wide holder: anyone judging whether the holder is still needed
- * has to count the surfaces correctly, and it is **two**, not three. It is
- * still needed, and the last clause is the durable half of the argument — it
- * covers surfaces that do not exist yet, which is why losing one did not make
- * it redundant.
+ * 🔴 **The holder is not justified by that count and must not be judged on
+ * it.** Two openers in this process can be live at once whatever launched
+ * either — the card's own recogniser or upload session, and the bubble's
+ * session — because the bubble stays tappable while the card is up.
+ * Per-call-site flags are the shape of defect that regenerates at every new
+ * surface; a holder that `start()` must acquire fails for surfaces that do not
+ * exist yet too. That last clause is the durable half of the argument, and it
+ * is why shedding callers never made the holder redundant.
  *
  * ## Shape
  *

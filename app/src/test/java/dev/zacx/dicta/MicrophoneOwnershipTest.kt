@@ -26,25 +26,26 @@ import org.robolectric.annotation.Config
  * ## The hole this covers
  *
  * [DictateLaunch.EXTRA_ATTACH_SESSION] suppresses the card's own
- * `startDictation()` only on the intent **the bubble itself sends**.
- * `DictateLaunch.intent()` carries no extra, and the persistent notification
- * ([MainActivity]) goes through `pendingIntent()`, which wraps that bare
- * intent, while `MainActivity`'s "Try dictation now" builds its own plain
- * intent — so:
+ * `startDictation()` only on the intent the bubble sends for a capture it has
+ * already finished. A *plain* `DictateLaunch.intent()` carries no extra — so:
  *
  *  * **Path A.** The bubble is RECORDING and, by design, nothing is on screen.
- *    The user pulls down the shade and taps the notification's Dictate action
- *    (or opens the launcher icon → "Try dictation now"). No card exists,
+ *    A card is then opened by a plain overlay intent. No card exists,
  *    `singleTop` creates one, `onCreate` finds no extra,
  *    `hasMicPermission()` is true → `startDictation()` → a second
  *    `AudioRecord` while the bubble's is live.
  *
- *    🔴 **The QS tile ([DictaTileService]) used to be named first on this path
- *    and is no longer on it at all** — it is the bubble's on/off switch and
- *    references `DictateLaunch` nowhere. Path A is **not** narrowed to nothing
- *    by that: the notification and "Try dictation now" still reach it exactly
- *    as described, so the behaviour under test and the guard that covers it are
- *    unchanged. Only the surface names were wrong.
+ *    🔴 **Path A is stated as a property of the INTENT, because every surface
+ *    it used to name has gone.** First the QS tile ([DictaTileService]), which
+ *    is the bubble's on/off switch and references `DictateLaunch` nowhere; then
+ *    the persistent trigger notification and `MainActivity`'s "Try dictation
+ *    now", both deleted along with `DictateLaunch.pendingIntent`. The one
+ *    production caller of a plain intent left is `BubbleService`'s
+ *    mic-permission hop. Path A is **not** narrowed to nothing by that: the
+ *    behaviour under test is `onCreate`'s own auto-start on an intent with no
+ *    attach extra, and [aPlainLaunchIntentCannotStartASecondDictationWhileTheMicIsHeld]
+ *    builds that intent itself rather than going through any surface, so the
+ *    guard it pins is unaffected by which callers exist.
  *  * **Path B.** The attached "transcribing…" card left `micButton` fully
  *    enabled — `attachToBubbleSession` only changed its *text*. Past the 1.5 s
  *    grace the bubble is tappable too, so card-mic plus bubble-tap in either

@@ -495,11 +495,14 @@ class OverlayNeverStartsARecordingTest {
     private fun liveCaptureCard(): DictateActivity {
         grantMic()
         installRecogniser()
-        // The plain intent is what the notification wraps and what
-        // MainActivity's "Try dictation now" opens, so onCreate auto-starts the
-        // capture itself — the real route to this state, not a hand-driven one.
-        // (It said "the QS tile, the notification and MainActivity all wrap";
-        // the tile wraps nothing now, and the route is still real.)
+        // A PLAIN overlay intent — no EXTRA_ATTACH_SESSION — so onCreate
+        // auto-starts the capture itself: the real route to this state, not a
+        // hand-driven one. Its one production caller is BubbleService's
+        // mic-permission hop, reached when a bubble tap finds RECORD_AUDIO
+        // ungranted. (This has named three caller sets in turn — "the QS tile,
+        // the notification and MainActivity", then "the notification and Try
+        // dictation now" — and all of them are now gone. The route is a
+        // property of the intent, which is why it survived each of them.)
         return open(DictateLaunch.intent(ctx))
     }
 

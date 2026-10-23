@@ -42,10 +42,14 @@ import java.io.File
  * ## The negative control is load-bearing, not decoration
  *
  * [theCleanupIsScopedToTheDeletedNotificationAndNothingElse] seeds **three**
- * notifications on three channels — the stale one, `BubbleService`'s, and
- * `BubbleBootReceiver`'s `3002` — and asserts the two siblings survive. Without
+ * notifications on three channels — the stale one, `BubbleService`'s, and one
+ * synthetic unrelated sibling — and asserts the two siblings survive. Without
  * them, "3001 is gone" is satisfied by any wiring at all, including one that
  * cancels everything, and "one removal" is a constant rather than a reading.
+ * (The third seed was `BubbleBootReceiver`'s `3002` restore offer until that
+ * notification was deleted as unreachable; a literal replaced it rather than
+ * the seed being dropped, because the claim is about arbitrary notifications,
+ * not about that feature.)
  *
  * ## Statelessness, deliberately
  *
@@ -81,9 +85,22 @@ class TriggerNotificationCleanupTest {
     private val serviceId = 2001
     private val serviceChannel = "dicta_service"
 
-    /** `BubbleBootReceiver`'s restore offer — a second must-survive sibling. */
-    private val bootId = BubbleBootReceiver.NOTIF_ID
-    private val bootChannel = BubbleBootReceiver.CHANNEL_ID
+    /**
+     * A second must-survive sibling, deliberately **synthetic**.
+     *
+     * 🔴 This read `BubbleBootReceiver.NOTIF_ID` / `.CHANNEL_ID` — the
+     * boot-restore offer — and those constants were deleted along with that
+     * notification, which cannot occur (see `BubbleEnabled.startService`'s
+     * kdoc). The sibling is not dropped with them: a cleanup that cancels one
+     * of *two* is much weaker evidence of scoping than one that cancels one of
+     * *three*, and the claim under test is "exactly the stale id and nothing
+     * else", which is about arbitrary other notifications rather than about any
+     * particular feature. So the values are literals belonging to no production
+     * symbol, and this fixture cannot be invalidated again by a surface going
+     * away.
+     */
+    private val otherId = 4242
+    private val otherChannel = "dicta_some_other_category"
 
     // --- the fixture: an install that had the notification switched on -------
 
@@ -115,7 +132,7 @@ class TriggerNotificationCleanupTest {
     fun theCleanupIsScopedToTheDeletedNotificationAndNothingElse() {
         postedBy(staleChannel, staleId, ongoing = true)
         postedBy(serviceChannel, serviceId, ongoing = true)
-        postedBy(bootChannel, bootId, ongoing = false)
+        postedBy(otherChannel, otherId, ongoing = false)
 
         // 🔴 Negative control, before anything is cleaned: all three really are
         // posted and all three channels really exist. A "3001 is gone"
@@ -125,7 +142,7 @@ class TriggerNotificationCleanupTest {
         assertEquals(
             "precondition: the fixture did not post all three notifications, " +
                 "so nothing below is a measurement",
-            setOf(staleId, serviceId, bootId),
+            setOf(staleId, serviceId, otherId),
             shade(),
         )
         assertTrue(
@@ -139,10 +156,10 @@ class TriggerNotificationCleanupTest {
             "the cleanup removed the wrong set of notifications. It must take " +
                 "exactly the stale trigger notification ($staleId) and leave " +
                 "BubbleService's foreground notification ($serviceId) — which " +
-                "carries the only Hide bubble action — and the boot-restore " +
-                "offer ($bootId) alone. A cancelAll() fails here, and so does " +
-                "a cleanup pointed at the wrong id.",
-            setOf(serviceId, bootId),
+                "carries the only Hide bubble action — and an unrelated " +
+                "notification ($otherId) alone. A cancelAll() fails here, and " +
+                "so does a cleanup pointed at the wrong id.",
+            setOf(serviceId, otherId),
             shade(),
         )
         assertEquals(
@@ -150,7 +167,7 @@ class TriggerNotificationCleanupTest {
                 "\"$staleChannel\" category must go — it survives a reboot and " +
                 "would sit in the app's notification settings forever with " +
                 "nothing able to post to it — and the other two must stay.",
-            setOf(serviceChannel, bootChannel),
+            setOf(serviceChannel, otherChannel),
             channels(),
         )
     }

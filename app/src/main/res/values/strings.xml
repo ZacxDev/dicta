@@ -198,11 +198,19 @@
     <string name="bubble_foreground_denied">Could not start recording — Android refused Dicta\'s recording notification. Check that notifications are allowed for Dicta, then try again.</string>
 
     <!-- Refusal shown when a SECOND dictation is attempted while one already
-         holds the microphone (the notification, or "Try dictation now", tapped
-         while the bubble is recording — or, the other direction, the bubble
-         tapped while the card's own recogniser is listening). This named the QS
-         tile as the first trigger: the tile is the bubble's toggle now and
-         cannot attempt a dictation at all. Loud on purpose: the
+         holds the microphone: a plain launch of the card (any overlay intent
+         carrying no EXTRA_ATTACH_SESSION) while the bubble is recording, or,
+         the other direction, the bubble tapped while the card's own recogniser
+         is listening.
+
+         🔴 This used to enumerate the surfaces instead — first the QS tile,
+         then the trigger notification and "Try dictation now". All three are
+         gone: the tile is the bubble's toggle and attempts no dictation, and
+         the other two are deleted. Naming the INTENT rather than the callers
+         is what stops this comment going stale again; MicrophoneOwnershipTest
+         drives that intent directly, so the guard is pinned whatever opens it.
+
+         Loud on purpose: the
          alternative is Android feeding one of the two captures bit-exact
          zeros, which surfaces as an empty or invented transcript and gets
          blamed on the server. Shown on BOTH surfaces: the card's status line
