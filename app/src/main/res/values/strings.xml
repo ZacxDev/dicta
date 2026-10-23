@@ -13,7 +13,11 @@
     <string name="tile_bubble_off">Bubble off</string>
     <string name="tile_needs_overlay">Needs “Display over other apps”</string>
 
-    <string name="intro">Trigger voice dictation from anywhere on your device, then copy the text to your clipboard or send it somewhere.</string>
+    <!-- Names the ONE trigger, because there is now only one: the bubble's tap
+         is the only way to start a recording. The previous wording ("Trigger
+         voice dictation from anywhere on your device") was true of a screen
+         that offered three trigger surfaces and said nothing about how. -->
+    <string name="intro">Dictate from anywhere with a floating mic button. Tap it in any app, then copy the text to your clipboard or send it somewhere.</string>
 
     <string name="section_permissions">Permissions</string>
     <string name="mic_row">Microphone (for dictation)</string>
@@ -22,40 +26,40 @@
     <string name="status_granted">Granted ✓</string>
     <string name="status_not_granted">Not granted</string>
 
-    <!-- 🔴 This read "Triggers (pick any)" and the heading itself was the
-         remaining half of the defect below. Three rows sit under it — the
-         Quick Settings tile, the floating bubble and the notification — and
-         only the last two start a dictation. The tile is the bubble's on/off
-         switch, so a heading calling everything beneath it a trigger promised
-         the third way in that @string/tile_row had just been corrected to deny:
-         the copy said "not a trigger" directly under a heading that said it
-         was. "From anywhere" is true of all three rows and claims nothing about
-         what any of them does; each row's own copy says that.
-
-         The resource NAME is deliberately left as section_triggers. It is an
-         identifier, not user-facing, its group's membership has not changed,
-         and renaming it would touch activity_main.xml for no user-visible
-         effect. It is now narrower than the group it labels; that is a known
-         imprecision in an identifier, not in anything a user reads. -->
-    <string name="section_triggers">From anywhere</string>
-    <!-- 🔴 User-facing, and it used to read "swipe down from any app and tap
-         Dicta", which under the old "Triggers" heading promised a third way to
-         START a dictation. The tile switches the floating bubble on and off;
-         it opens nothing. The copy says so — and the heading above no longer
-         contradicts it. (The previous version of this comment claimed the copy
-         fixed the contradiction "rather than leaving the heading to imply
-         otherwise". The heading was in fact left; that claim was false until
-         the edit above.) -->
-    <string name="tile_row">Quick Settings tile — swipe down from any app to switch the bubble on or off.</string>
+    <!-- 🔴 Was @string/section_triggers, "Triggers (pick any)". Renamed rather
+         than reworded: there is exactly one trigger now, so a name meaning
+         "the list of triggers" would be wrong about its own contents, and a
+         resource whose name has drifted from its meaning is how the next
+         author reintroduces the thing it used to describe. This group is the
+         floating bubble and its Quick Settings control. -->
+    <string name="section_bubble">Floating bubble</string>
+    <!-- Says what the tile DOES, which is switch the bubble on and off
+         (DictaTileService reads the same BubbleEnabled flag as the switch). The
+         old wording — "swipe down from any app and tap Dicta" — described the
+         tile from before it became a toggle, when tapping it opened the overlay
+         and started a recording. -->
+    <string name="tile_row">Quick Settings tile — switch the bubble on or off from the shade of any app.</string>
     <string name="add_tile">Add tile</string>
     <string name="tile_added">Tile added — find it in your Quick Settings panel.</string>
     <string name="tile_add_declined">Tile not added.</string>
     <string name="tile_add_manual">On this Android version, add the tile manually: swipe down twice, tap edit, drag Dicta in.</string>
-    <string name="bubble_row">Floating bubble — an always-on-top mic button, draggable anywhere.</string>
-    <string name="notif_row">Notification — a persistent notification with a Dictate action.</string>
+    <!-- Names the tap, because the tap is the whole trigger. The old wording
+         stopped at "an always-on-top mic button, draggable anywhere" and left
+         the one thing a user has to know — that this is how you dictate —
+         to the deleted "Try dictation now" button. -->
+    <string name="bubble_row">Show the bubble — an always-on-top mic button, draggable anywhere. Tap it to dictate.</string>
     <string name="need_overlay_first">Allow “Display over other apps” first.</string>
 
-    <string name="try_now">Try dictation now</string>
+    <!-- 🔴 @string/notif_row, @string/notif_text, @string/trigger_channel and
+         @string/try_now WERE HERE AND ARE DELETED, with the surfaces that used
+         them: a persistent notification carrying a Dictate action, and a "Try
+         dictation now" button. Both started a recording, and the floating
+         bubble's tap is now the only thing that may. @string/dictate went with
+         them — the notification's action label was its only consumer.
+
+         Deleted rather than left unreferenced, for the reason
+         @string/start_dictation was: a string that still exists is a role a new
+         call site can reinstate just by spelling it. -->
 
     <string name="dictate_title">Dicta</string>
     <!-- The resting status line.
@@ -85,7 +89,6 @@
     <string name="copy">Copy</string>
     <string name="share">Send</string>
     <string name="close">Close</string>
-    <string name="dictate">Dictate</string>
     <string name="copied">Copied to clipboard</string>
     <string name="nothing_to_copy">Nothing to copy yet — dictate something first.</string>
     <string name="nothing_to_share">Nothing to send yet — dictate something or attach a screenshot first.</string>
@@ -219,8 +222,6 @@
          needed; if a string is wanted here again, that kdoc is the thing to
          read first. The only decline the user can actually be told about is a
          missing overlay permission, which is @string/need_overlay_first. -->
-    <string name="trigger_channel">Dicta quick trigger</string>
-    <string name="notif_text">Tap Dictate to capture a voice note from anywhere.</string>
 
     <!-- ===== Remote transcription ===== -->
     <string name="settings_title">Transcription settings</string>
@@ -233,7 +234,7 @@
     <!-- Issue #10. The three group labels on the settings screen, rendered
          through @style/Text.Dicta.SectionHeading — so they are written in
          sentence case here and uppercased by the style, exactly as
-         @string/section_permissions and @string/section_triggers are. -->
+         @string/section_permissions and @string/section_bubble are. -->
     <string name="stt_section_service">Service</string>
     <string name="stt_section_language">Language</string>
     <string name="stt_section_connection">Connection</string>

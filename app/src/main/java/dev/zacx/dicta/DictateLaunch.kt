@@ -1,6 +1,5 @@
 package dev.zacx.dicta
 
-import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 
@@ -9,20 +8,18 @@ import android.content.Intent
  *
  * ## Why this exists rather than three `Intent(...)` calls
  *
- * **History, and it is written in the past tense on purpose.** The bubble, the
- * Quick Settings tile and the persistent notification were three "trigger from
- * anywhere" entry points, all open-coding the same two-line construction and
- * all wrong in the same direction (issue #11) — the characteristic failure of a
- * predicate spelled at N sites: it gets fixed at one and silently kept at the
- * others.
+ * The bubble, the Quick Settings tile and the persistent notification were once
+ * three "trigger from anywhere" entry points, and all three were open-coding
+ * the same two-line construction. All three were wrong in the same direction
+ * (issue #11), which is the characteristic failure of a predicate spelled at N
+ * sites: it gets fixed at one and silently kept at the others.
  *
- * 🔴 **The present-tense set is TWO: the bubble and the notification.** The
- * Quick Settings tile is no longer an overlay launcher — it is the floating
- * bubble's on/off switch and does not reference this file at all. So "every
- * trigger goes through [DictateLaunch]" is the wrong summary to carry around;
- * the true one is **every surface that OPENS THE OVERLAY from outside the app**
- * goes through here, which is also exactly how `DictateLaunchTest`'s ledger is
- * scoped.
+ * 🔴 Only the bubble remains — the tile is a bubble toggle that starts no
+ * activity, and the notification is deleted — so this object now has a single
+ * production caller, `BubbleService`. It stays an object rather than collapsing
+ * back into that one call site because the thing it owns is the pairing with
+ * the manifest's `taskAffinity` described below, which is a two-file invariant
+ * however many callers there are.
  *
  * ## 🔴 The flag is only half the mechanism — the other half is in the manifest
  *
@@ -40,13 +37,15 @@ import android.content.Intent
  * same string — `DictateLaunchTest` pins the two together, because they live in
  * different files and a drift between them restores the bug silently.
  *
- * ## What is deliberately NOT routed through here
+ * ## 🔴 Nothing is routed around this any more
  *
- * `MainActivity`'s own "Try dictation now" button starts the overlay with **no
- * flags**, staying inside `MainActivity`'s task. That is correct there: the
- * user is looking at the app, so the card belongs over the app. `taskAffinity`
- * is consulted only when `NEW_TASK` is set, so that path is unaffected by the
- * manifest change.
+ * `MainActivity`'s "Try dictation now" button used to start the overlay with
+ * **no flags**, staying inside `MainActivity`'s task — correct there, since the
+ * user was looking at the app — and it was listed here as the one deliberate
+ * exception. That button is deleted (it was a second way to start a recording),
+ * so `MainActivity` constructs no overlay intent at all and
+ * `DictateLaunchTest.onlyDictateLaunchConstructsOverlayIntents` is now a ledger
+ * of one file.
  */
 object DictateLaunch {
 
@@ -80,9 +79,11 @@ object DictateLaunch {
      * silently feeding one of them exact zeros, so it surfaces as "the
      * transcript came back empty" and looks like a server bug.
      *
-     * Absent (the tile, the notification, MainActivity, and the mic-permission
-     * fallback) it keeps the original behaviour exactly: open the card and start
-     * recording.
+     * Absent — which today means exactly one call site, `BubbleService`'s
+     * mic-permission fallback — it keeps the original behaviour: open the card
+     * and start recording. 🔴 That makes a plain [intent] a *recording trigger*,
+     * which is why `StartSurfaceLedgerTest` enumerates its call sites: adding
+     * one adds a way to start a recording that is not the bubble's tap.
      */
     const val EXTRA_ATTACH_SESSION: String = "dev.zacx.dicta.ATTACH_SESSION"
 
@@ -124,29 +125,21 @@ object DictateLaunch {
     fun historyIntent(context: Context, historyId: String): Intent =
         intent(context).putExtra(EXTRA_HISTORY_ID, historyId)
 
-    /**
-     * [intent] wrapped for a caller that cannot start an activity directly —
-     * today that is **only** `MainActivity`'s persistent trigger
-     * notification.
+    /*
+     * 🔴 `pendingIntent(context)` WAS HERE AND IS DELETED.
      *
-     * 🔴 This used to name the Quick Settings tile as the other caller, and
-     * carried the `startActivityAndCollapse`-is-deprecated-as-of-API-34
-     * rationale with it. Both are gone: the tile toggles the floating bubble
-     * and starts no activity, so it has no use for a `PendingIntent`. Keeping
-     * one `PendingIntent` builder for one caller is still the right shape —
-     * `intent` has several, and the flags below are the part that is easy to
-     * get wrong — but do not read this kdoc as evidence that a second caller
-     * exists.
+     * It wrapped [intent] for the two callers that could not start an activity
+     * directly: the Quick Settings tile and the persistent notification's
+     * Dictate action. The tile is a bubble toggle now and starts no activity at
+     * all, and the notification is gone — so it had no production caller left.
      *
-     * `FLAG_IMMUTABLE` because nothing may rewrite the target, and
-     * `FLAG_UPDATE_CURRENT` so re-registering replaces the existing one rather
-     * than accumulating.
+     * Deleted rather than kept for a future caller, and that is the point: a
+     * plain [intent] auto-starts a capture in `DictateActivity.onCreate`, so a
+     * `PendingIntent` wrapping one is a *recording trigger in a can* — exactly
+     * the shape a notification action or a widget reaches for. Leaving it is how
+     * a second start surface gets added without anybody deciding to add one.
+     * `StartSurfaceLedgerTest` counts call sites of the starting launch helpers,
+     * and this deletion is what keeps that count honest about the deleted
+     * surfaces rather than only about the ones that exist today.
      */
-    fun pendingIntent(context: Context): PendingIntent =
-        PendingIntent.getActivity(
-            context,
-            0,
-            intent(context),
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
-        )
 }

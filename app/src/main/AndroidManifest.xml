@@ -240,6 +240,25 @@
         </receiver>
 
         <!--
+          Cancels the orphaned trigger notification on the first start of a new
+          build. See TriggerNotificationCleanup's kdoc for the hazard: the
+          deleted notification was setOngoing(true), so it cannot be swiped
+          away and outlives the code that posted it.
+
+          exported="true" for the same documented reason as the boot receiver
+          above — ACTION_MY_PACKAGE_REPLACED is a protected system broadcast —
+          and the receiver checks the action itself regardless of the filter.
+        -->
+        <receiver
+            android:name=".PackageReplacedReceiver"
+            android:exported="true"
+            android:directBootAware="false">
+            <intent-filter>
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+
+        <!--
           Serves the captured PNG to the share target. Hand-rolled rather than
           androidx.core FileProvider so the APK keeps zero runtime
           dependencies — see DictaFileProvider's kdoc. grantUriPermissions is
