@@ -1,9 +1,5 @@
 package dev.zacx.dicta
 
-import android.app.Notification
-import android.app.NotificationChannel
-import android.app.NotificationManager
-import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -17,7 +13,7 @@ import android.provider.Settings
  * toggle the switch — the same complaint as issue #14's notification path, in a
  * different shape.
  *
- * ## 🔴 Whether a boot start is even allowed — measured, not assumed
+ * ## 🔴 Whether a boot start is even allowed
  *
  * [BubbleService] declares `microphone|specialUse`, and the documented platform
  * rules are type-specific, not service-specific:
@@ -25,7 +21,7 @@ import android.provider.Settings
  *  * Android 12+ refuses background foreground-service starts, **but
  *    `ACTION_BOOT_COMPLETED` is on the documented exemption list** — as is
  *    holding `SYSTEM_ALERT_WINDOW`, which this app does and which is the very
- *    permission checked below.
+ *    permission checked below. This path is therefore exempt twice over.
  *  * A `microphone`-typed start from a `BOOT_COMPLETED` receiver is refused
  *    from Android 14 on. This does not apply to the start made here: the
  *    service promotes to `microphone` only while *recording* and uses
@@ -36,17 +32,39 @@ import android.provider.Settings
  *    does not apply at all today. 🔴 It *will* the day targetSdk moves — and
  *    `specialUse` is still not on the list even then.
  *
- * So the start is expected to be permitted. "Expected" is as far as a JVM test
- * can take it, which is why the refusal is handled rather than assumed away:
- * [BubbleEnabled.startService] catches it and this receiver offers the bubble
- * back through a low-importance notification instead of leaving the user with
- * nothing. That is also the path a future platform change lands on, rather than
- * a crash in a boot receiver.
+ * ## 🔴 There is no refusal fallback, and that is not an omission
  *
- * The flag is **not** cleared on a refusal here, and that asymmetry with
- * [BubbleEnabled.turnOn] is deliberate: the user did ask for the bubble and
- * nothing they did has changed that, so their stored intent stands and the next
- * boot will try again.
+ * An earlier version of this receiver posted a low-importance "the bubble could
+ * not start after the restart" notification when [BubbleEnabled.startService]
+ * reported a refusal. **It was deleted, because the condition it handled cannot
+ * occur and the signal it read could not carry it** — and it has no replacement
+ * rationale. Two independent reasons, either one sufficient:
+ *
+ *  1. The only refusal `startForegroundService` itself raises is the Android
+ *     12+ background-start restriction, which the two bullets above exempt
+ *     twice on exactly this path.
+ *  2. The FGS-*type* refusal the bullets above discuss is thrown out of
+ *     `Service.startForeground`, not `startForegroundService` — in the
+ *     service's own process, after the call here has already returned.
+ *     `BubbleService.platformPromoteForeground` catches it there and answers it
+ *     with `stopSelf()`. Nothing about it was ever observable from here, so the
+ *     fallback could not have fired even on a device that refused the start.
+ *
+ * The handler could only ever be reached by a test injecting a throw, which is
+ * what the deleted `BubbleEnabled.serviceStarter` seam existed to do. 🔴 If a
+ * future platform change really does start refusing this, the place that learns
+ * about it is `platformPromoteForeground` — fix it there and let it report
+ * outward; do not restore a branch here that cannot see it.
+ *
+ * ## Why this routes around [BubbleEnabled.turnOn]
+ *
+ * It calls [BubbleEnabled.isOn] and [BubbleEnabled.startService] and open-codes
+ * the `canDrawOverlays` check rather than calling [BubbleEnabled.turnOn]. That
+ * is deliberate and is **not** a duplicated predicate to consolidate: `turnOn`
+ * *writes* the flag, and a reboot must not be able to touch the user's stored
+ * intent in either direction. A revoked overlay permission in particular is not
+ * the user changing their mind, so the flag survives it and the bubble returns
+ * once the permission is re-granted.
  */
 class BubbleBootReceiver : BroadcastReceiver() {
 
@@ -59,59 +77,6 @@ class BubbleBootReceiver : BroadcastReceiver() {
         // The permission survives reboots but not a user who revoked it, and an
         // overlay service with no overlay permission stops itself immediately.
         if (!Settings.canDrawOverlays(context)) return
-        if (!BubbleEnabled.startService(context)) {
-            offerRestore(context)
-        }
-    }
-
-    /**
-     * The fallback when the platform refused the boot start.
-     *
-     * A notification action's `PendingIntent` is itself on the exemption list
-     * for background foreground-service starts, so the tap has a route the boot
-     * broadcast did not. It targets [BubbleService] directly — that service is
-     * not exported, so nothing outside the app can send it.
-     */
-    private fun offerRestore(context: Context) {
-        runCatching {
-            val nm = context.getSystemService(NotificationManager::class.java)
-            nm.createNotificationChannel(
-                NotificationChannel(
-                    CHANNEL_ID,
-                    context.getString(R.string.boot_restore_channel),
-                    NotificationManager.IMPORTANCE_LOW,
-                )
-            )
-            val pi = PendingIntent.getForegroundService(
-                context,
-                0,
-                Intent(context, BubbleService::class.java),
-                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
-            )
-            nm.notify(
-                NOTIF_ID,
-                Notification.Builder(context, CHANNEL_ID)
-                    .setSmallIcon(R.drawable.ic_tile_mic)
-                    .setColor(context.getColor(R.color.dicta_accent))
-                    .setColorized(false)
-                    .setContentTitle(context.getString(R.string.app_name))
-                    .setContentText(context.getString(R.string.boot_restore_text))
-                    .setContentIntent(pi)
-                    .addAction(
-                        Notification.Action.Builder(
-                            null,
-                            context.getString(R.string.boot_restore_action),
-                            pi,
-                        ).build()
-                    )
-                    .setAutoCancel(true)
-                    .build(),
-            )
-        }
-    }
-
-    internal companion object {
-        const val CHANNEL_ID = "dicta_boot_restore"
-        const val NOTIF_ID = 3002
+        BubbleEnabled.startService(context)
     }
 }

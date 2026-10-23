@@ -1,7 +1,6 @@
 package dev.zacx.dicta
 
 import android.content.Context
-import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -27,13 +26,32 @@ import java.io.File
  * surface reaching past the owner into `SharedPreferences`, or a new writer
  * nobody decided on.
  *
- * So two assertions, in two different dimensions:
+ * So three assertions, in three different dimensions:
  *
- *  * [onlyTheOwnerTouchesTheRawPreferenceKey] — the *key* is reachable from one
- *    file. It fails if the set grows (a second file open-coding the pref) or
- *    shrinks (the owner stopped being the owner).
+ *  * [onlyTheOwnerTouchesTheRawPreferenceKey] — the **string literal**
+ *    `"bubble_enabled"` appears in one file. It fails if the set grows (a
+ *    second file spelling the key out) or shrinks (the owner stopped being the
+ *    owner). It does **not** cover the pref *file* name `"dicta"`: other files
+ *    legitimately open that same file for unrelated keys, so [TOUCHES_RAW_KEY]
+ *    matches the key only.
  *  * [onlyTheDeclaredSurfacesChangeWhetherTheBubbleIsOn] — the *mutators* are called from a
  *    declared set of files. It fails when that set grows **or shrinks**.
+ *  * [onlyTheOwnerCanNameThePreferenceFileAndKey] — the *constants* are
+ *    `private`, which is what makes the first assertion's claim a claim about
+ *    the key rather than only about a literal.
+ *
+ * 🔴 **The first assertion is narrower than it reads, and the third is why that
+ * is now safe.** [TOUCHES_RAW_KEY] matches the literal `"bubble_enabled"`; it
+ * says nothing about a file that writes the same key *through the owner's
+ * constants*. While `BubbleEnabled.PREF_FILE` / `PREF_KEY` were `internal`,
+ * `getSharedPreferences(BubbleEnabled.PREF_FILE, …)` + `putBoolean(BubbleEnabled.PREF_KEY, …)`
+ * was a live evasion of **both** text ledgers at once: it spells no literal, so
+ * the raw-key scan misses it — indeed that scan's own control at
+ * [thePatternsSeeEveryCallSpellingAndNoneOfTheMereMentions] asserts it must
+ * *not* fire on `BubbleEnabled.PREF_KEY` — and it calls no
+ * `BubbleEnabled.<mutator>(`, so [CHANGES_BUBBLE_STATE] misses it too. No text
+ * scan can close that hole. Both constants are now `private`, so the compiler
+ * does, and the third assertion pins the visibility that is doing the work.
  *
  * ## Why the scan strips comments and normalises whitespace
  *
@@ -54,19 +72,6 @@ import java.io.File
 @Config(sdk = [34])
 class BubbleEnabledWritersSeamTest {
 
-    /**
-     * 🔴 Not optional tidiness. [BubbleEnabled.serviceStarter] is process-wide
-     * state, and a test that sets it and then *fails* never reaches a cleanup
-     * line at the end of its own body — the refusal seam then leaks into
-     * whatever test runs next, which showed up here as a sibling reporting
-     * REFUSED where it asserted STARTED. A failing test must not be able to
-     * change what its neighbours measure.
-     */
-    @After
-    fun tearDown() {
-        BubbleEnabled.serviceStarter = null
-    }
-
     @Test
     fun onlyTheOwnerTouchesTheRawPreferenceKey() {
         val files = sourceFiles()
@@ -75,16 +80,57 @@ class BubbleEnabledWritersSeamTest {
             .sorted()
 
         assertEquals(
-            "the set of files naming the raw \"bubble_enabled\" preference key " +
-                "changed. It must be reachable from BubbleEnabled.kt and " +
-                "nowhere else: a surface that open-codes the pref cannot be " +
-                "made to agree with the others, which is exactly how the " +
-                "notification's Hide action and MainActivity's switch came to " +
-                "disagree (issue #14). Route the new surface through " +
-                "BubbleEnabled instead of adding it here.",
+            "the set of files SPELLING OUT the raw \"bubble_enabled\" " +
+                "preference key changed. It must be written as a literal in " +
+                "BubbleEnabled.kt and nowhere else: a surface that open-codes " +
+                "the pref cannot be made to agree with the others, which is " +
+                "exactly how the notification's Hide action and MainActivity's " +
+                "switch came to disagree (issue #14). Route the new surface " +
+                "through BubbleEnabled instead of adding it here. (This checks " +
+                "the LITERAL only — reaching the same key through the owner's " +
+                "constants is closed by their visibility, which " +
+                "onlyTheOwnerCanNameThePreferenceFileAndKey pins.)",
             listOf("BubbleEnabled.kt"),
             files,
         )
+    }
+
+    /**
+     * 🔴 Closes the one route past **both** text ledgers: naming the pref
+     * through [BubbleEnabled]'s own constants instead of a literal. See this
+     * class's kdoc for why neither scan can see that spelling.
+     *
+     * Asserted through the JVM modifiers rather than by scanning the source for
+     * the word `private`, because the modifier is what the compiler actually
+     * enforces and a source scan would be a third text ledger with the same
+     * blind spot as the other two. Kotlin's `internal` compiles to a **public**
+     * JVM member — a `const val` is not name-mangled — so this does distinguish
+     * the two, which is exactly the regression it has to catch.
+     */
+    @Test
+    fun onlyTheOwnerCanNameThePreferenceFileAndKey() {
+        for (name in listOf("PREF_FILE", "PREF_KEY")) {
+            val field = BubbleEnabled::class.java.declaredFields.firstOrNull { it.name == name }
+            assertTrue(
+                "BubbleEnabled has no declared field named $name, so this " +
+                    "assertion is checking nothing. Either the constant was " +
+                    "renamed — which silently resets every existing install to " +
+                    "bubble-off, see BubbleEnabled's kdoc — or it stopped being " +
+                    "a `const val`. Fix the name here deliberately.",
+                field != null,
+            )
+            assertTrue(
+                "BubbleEnabled.$name is reachable from outside BubbleEnabled.kt " +
+                    "(JVM modifiers: ${java.lang.reflect.Modifier.toString(field!!.modifiers)}). " +
+                    "It must be `private`. While it is `internal` — which is " +
+                    "PUBLIC in the bytecode — any file in app/src/main can write " +
+                    "the flag as getSharedPreferences(BubbleEnabled.PREF_FILE, " +
+                    "..).putBoolean(BubbleEnabled.PREF_KEY, ..), which spells no " +
+                    "literal and calls no mutator and so evades BOTH ledgers in " +
+                    "this class. Route the new surface through BubbleEnabled.",
+                java.lang.reflect.Modifier.isPrivate(field.modifiers),
+            )
+        }
     }
 
     @Test
@@ -263,42 +309,6 @@ class BubbleEnabledWritersSeamTest {
                 "overlay stays on screen with the switch claiming otherwise",
             BubbleService::class.java.name,
             stopped?.component?.className,
-        )
-        controller.pause().stop().destroy()
-    }
-
-    /**
-     * A switch that asked for a bubble the platform refused must not stay ON.
-     *
-     * The refusal leaves the flag cleared, so a switch left `checked` is the
-     * same disagreement between the UI and reality that issue #14 reported —
-     * and because a `Switch` fires its listener only on a change, the user
-     * would again have to toggle off before they could retry.
-     */
-    @Test
-    fun aRefusedStartPutsTheSwitchBackInsteadOfLeavingItOn() {
-        ShadowSettings.setCanDrawOverlays(true)
-        val app = RuntimeEnvironment.getApplication()
-        app.getSharedPreferences("dicta", Context.MODE_PRIVATE)
-            .edit().putBoolean("bubble_enabled", false).commit()
-
-        val controller = org.robolectric.Robolectric.buildActivity(MainActivity::class.java)
-            .setup()
-        val activity = controller.get()
-        val switch = activity.findViewById<android.widget.Switch>(R.id.bubble_switch)
-        assertFalse("the fixture should start with the bubble off", switch.isChecked)
-        BubbleEnabled.serviceStarter = { throw IllegalStateException("refused") }
-
-        switch.isChecked = true
-
-        assertFalse(
-            "the switch stayed ON after the platform refused the start, so it " +
-                "claims a bubble that does not exist and the next tap is a no-op",
-            switch.isChecked,
-        )
-        assertFalse(
-            "a refused start left bubble_enabled set",
-            BubbleEnabled.isOn(app),
         )
         controller.pause().stop().destroy()
     }

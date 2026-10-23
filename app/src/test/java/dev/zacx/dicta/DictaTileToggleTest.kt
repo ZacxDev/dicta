@@ -2,7 +2,6 @@ package dev.zacx.dicta
 
 import android.content.Context
 import android.service.quicksettings.Tile
-import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -60,11 +59,6 @@ class DictaTileToggleTest {
     @Before
     fun setUp() {
         service = Robolectric.buildService(DictaTileService::class.java).create().get()
-    }
-
-    @After
-    fun tearDown() {
-        BubbleEnabled.serviceStarter = null
     }
 
     /**
@@ -238,32 +232,6 @@ class DictaTileToggleTest {
                 "is what TalkBack reads, and below API 29 it is the only text",
             expected,
             tile.contentDescription?.toString(),
-        )
-    }
-
-    @Test
-    fun aRefusedStartLeavesNeitherTheFlagNorTheTileClaimingABubble() {
-        // The platform can refuse a foreground start. Robolectric never does,
-        // hence the seam — without it this path is unreachable and the
-        // "re-read the flag after turnOn" logic in render() is pinned by
-        // nothing.
-        ShadowSettings.setCanDrawOverlays(true)
-        setFlag(false)
-        BubbleEnabled.serviceStarter = { throw IllegalStateException("refused") }
-
-        service.onClick()
-
-        assertFalse(
-            "a refused foreground start left bubble_enabled=true, so the app's " +
-                "switch and this tile would both claim a bubble that does not " +
-                "exist",
-            BubbleEnabled.isOn(service),
-        )
-        assertEquals(
-            "the tile painted itself ACTIVE after a refused start. render() " +
-                "must read the flag back rather than assume the click worked.",
-            Tile.STATE_INACTIVE,
-            tile.state,
         )
     }
 

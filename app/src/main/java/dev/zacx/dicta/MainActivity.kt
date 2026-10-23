@@ -107,10 +107,16 @@ class MainActivity : Activity() {
      * persisted flag and re-attach it afterwards. Two inline lambdas is how
      * the two copies drifted apart in the first place.
      *
-     * 🔴 On a refusal the switch is put back to `false` — with the listener
-     * detached, or the assignment would re-enter this lambda and attempt a
-     * `turnOff` for a bubble that never started. A switch left ON after a
-     * refused start is the same lie as the one issue #14 reported.
+     * 🔴 When the overlay permission is missing the switch is put back to
+     * `false` — with the listener detached, or the assignment would re-enter
+     * this lambda and attempt a `turnOff` for a bubble that never started. A
+     * switch left ON with nothing running is the same lie as the one issue #14
+     * reported.
+     *
+     * That is the only arm that reverts, because it is the only way
+     * [BubbleEnabled.turnOn] can decline. A third arm once handled a
+     * platform-refused foreground start; it was deleted as unreachable and has
+     * no replacement rationale — [BubbleEnabled.startService] says why.
      */
     private val bubbleToggle = CompoundButton.OnCheckedChangeListener { _, checked ->
         if (!checked) {
@@ -121,10 +127,6 @@ class MainActivity : Activity() {
             BubbleEnabled.Start.STARTED -> Unit
             BubbleEnabled.Start.NO_OVERLAY_PERMISSION -> {
                 toast(R.string.need_overlay_first)
-                revertBubbleSwitch()
-            }
-            BubbleEnabled.Start.REFUSED -> {
-                toast(R.string.bubble_start_refused)
                 revertBubbleSwitch()
             }
         }

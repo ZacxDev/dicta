@@ -56,9 +56,18 @@ class DictaTileService : TileService() {
 
     /**
      * Paints the tile from the persisted flag and the overlay permission —
-     * never from an assumption about what the click did. [BubbleEnabled.turnOn]
-     * clears the flag again when the platform refuses the start, so reading it
-     * back is what keeps the tile from claiming a bubble that is not there.
+     * never from an assumption about what the click did. [onClick] discards
+     * [BubbleEnabled.turnOn]'s return value for that reason: `turnOn` declines
+     * without writing anything when `canDrawOverlays` is false, so re-reading
+     * the flag and the permission here covers that case without this file
+     * holding a second copy of the predicate.
+     *
+     * 🔴 The wider justification this comment used to give — that `turnOn`
+     * *clears* the flag again when the platform refuses the start — is gone
+     * with the refusal path itself, which was deleted as unreachable
+     * ([BubbleEnabled.startService] says why). Reading back is still the right
+     * shape, but for the narrower reason above only. Do not reinstate the
+     * larger claim.
      */
     private fun render() {
         val tile = qsTile ?: return

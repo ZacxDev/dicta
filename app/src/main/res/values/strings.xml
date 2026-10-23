@@ -184,17 +184,16 @@
     <string name="bubble_channel">Dicta bubble</string>
     <string name="bubble_active">Floating mic bubble is active</string>
     <string name="hide_bubble">Hide bubble</string>
-    <!-- Shown when the platform refuses the foreground start outright. Not the
-         same as a missing overlay permission (need_overlay_first), which the
-         user can fix: this one is the system's decision. -->
-    <string name="bubble_start_refused">Android refused to start the bubble. Try again from the app.</string>
-    <!-- The boot-restore fallback: only reached if the system refuses the
-         service start from the BOOT_COMPLETED receiver. A notification's
-         PendingIntent is itself exempt from the background-start restriction,
-         so the tap has a route the broadcast did not. -->
-    <string name="boot_restore_channel">Dicta bubble restore</string>
-    <string name="boot_restore_text">The floating bubble could not start after the restart.</string>
-    <string name="boot_restore_action">Show bubble</string>
+    <!-- 🔴 @string/bubble_start_refused and the three @string/boot_restore_*
+         strings stood here and were DELETED, not renamed. They were the copy
+         for a platform-refused foreground start: a toast from MainActivity's
+         switch, and a boot-time "could not start after the restart"
+         notification. The refusal cannot occur on either path and the signal
+         could not have carried it either way — BubbleEnabled.startService's
+         kdoc sets out both reasons. There is no replacement copy and none is
+         needed; if a string is wanted here again, that kdoc is the thing to
+         read first. The only decline the user can actually be told about is a
+         missing overlay permission, which is @string/need_overlay_first. -->
     <string name="trigger_channel">Dicta quick trigger</string>
     <string name="notif_text">Tap Dictate to capture a voice note from anywhere.</string>
 

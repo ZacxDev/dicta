@@ -13,10 +13,12 @@ switches the third one on and off:
 
 1. **Floating bubble** — an always-on-top mic button (`TYPE_APPLICATION_OVERLAY`)
    you can drag anywhere. Tap it from any app. `BubbleBootReceiver` asks for it
-   again after a reboot when you had it switched on, and if the platform
-   refuses that start it offers it back in a notification rather than failing
-   silently (device-unverified — see the receiver's kdoc for what the
-   documented rules do and do not promise).
+   again after a reboot when you had it switched on — the one start it makes,
+   with no fallback, because the platform restrictions that could refuse it
+   exempt this path twice over (see the receiver's kdoc for the documented
+   rules, and for why the fallback that used to live there was deleted as
+   unreachable). The restore is device-unverified: a JVM test can pin the
+   receiver's decision table but not Android's permission for the start.
 2. **Persistent notification** — "Dicta" notification with a Dictate action.
 3. **Quick Settings tile** — swipe down from any app and tap the Dicta tile to
    switch the floating bubble **on or off**. It is a stateful toggle, not a

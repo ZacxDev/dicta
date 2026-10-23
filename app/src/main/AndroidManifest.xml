@@ -182,7 +182,11 @@
           BOOT_COMPLETED receiver is refused from Android 14 on, and the wider
           Android 15 list of disallowed types (dataSync, camera, mediaPlayback,
           phoneCall, mediaProjection, microphone) still does not include
-          specialUse. See BubbleBootReceiver's kdoc for the whole measurement.
+          specialUse. See BubbleBootReceiver's kdoc for the full argument from
+          the documented rules — it is an argument, NOT a measurement: nothing
+          here or in the unit suite has observed a real device's answer, and the
+          receiver has no fallback if one ever refuses (that kdoc says why a
+          fallback here could not have worked anyway).
         -->
         <receiver
             android:name=".BubbleBootReceiver"
