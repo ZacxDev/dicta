@@ -296,12 +296,16 @@ class DictateHistoryCardTest {
     @Test
     fun anIntentWithNoHistoryIdDoesNotRestartTheCard() {
         // 🔴 Deliberately narrower than re-running the whole three-way
-        // branch. Re-running it would mean a notification tap on an
-        // already-open card starts a dictation where today it does nothing —
-        // a behaviour change to the other entry points, inside a change about
-        // this one. (It said "a Quick Settings tap … three entry points …
-        // about a fourth": the tile opens no card now, so the count is two
-        // and the narrowness argument is unaffected.) This pins the narrowness so it is a decision rather than an
+        // branch. Re-running it would mean a PLAIN overlay intent — one
+        // carrying no attach extra and no history id — delivered to an
+        // already-open card starting a dictation where today it does nothing:
+        // a behaviour change to another arm, inside a change about this one.
+        // (This enumerated the callers instead and was recounted twice as they
+        // went away — "a Quick Settings tap … three entry points … about a
+        // fourth", then "the tile opens no card now, so the count is two".
+        // The notification and "Try dictation now" are deleted too. The
+        // argument never depended on a count, so it is stated without one.)
+        // This pins the narrowness so it is a decision rather than an
         // omission someone "fixes" later by accident.
         val id = store("the stored one")
         val controller = open(DictateLaunch.historyIntent(ctx, id))

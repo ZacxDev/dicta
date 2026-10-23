@@ -63,8 +63,9 @@ jobs:
       # 🔴 THE HEADROOM IS THE CONSTANT, NOT THE FLOOR — re-derive it, do not
       # pick a round number:
       #     floor = floor(current_total * 500 / 575)      # 0.86957, 13.04% slack
-      # 638 * 500 / 575 = 554.78 -> 554, which is 13.17% slack.
-      # (Previous entry: 633 * 500 / 575 = 550.43 -> 550, 13.11% slack.)
+      # 651 * 500 / 575 = 566.09 -> 566, which is 13.06% slack.
+      # (Previous entries: 638 * 500 / 575 = 554.78 -> 554, 13.17% slack;
+      #  633 * 500 / 575 = 550.43 -> 550, 13.11% slack.)
       #
       # 🔴 CORRECTION (2026-10-23). This block used to say the previous entry
       # "was left alone while the suite grew to 623, drifting the slack to 20%".
