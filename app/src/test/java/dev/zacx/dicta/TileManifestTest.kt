@@ -165,6 +165,72 @@ class TileManifestTest {
         )
     }
 
+    /**
+     * 🔴 The control the old scan could not have passed: **attribute order
+     * carries no meaning in XML, so the scan must not depend on it.**
+     *
+     * [declaresMetaData] used to require `android:name` before
+     * `android:value="true"`, which made a value-attribute-first re-add of
+     * `ACTIVE_TILE` invisible — and invisible in the fail-OPEN direction for
+     * [anActiveTileMustHaveSomethingThatRefreshesIt], which then passes with the
+     * stale-tile hazard present. Every fixture in this file, including that
+     * assertion's own positive control, spelled the attributes name-first, so
+     * nothing here could observe it.
+     *
+     * Both orders of the *same* declaration must give the same answer, and the
+     * negatives must stay negative — a different short name, and
+     * `android:value="false"`, which is not a declaration of anything.
+     */
+    @Test
+    fun theMetaDataScanIsIndifferentToAttributeOrder() {
+        fun block(metaData: String) = tileElementBlockIn(
+            withoutComments(
+                """
+                <manifest><application>
+                <service android:name=".DictaTileService" android:exported="true">
+                    $metaData
+                </service>
+                </application></manifest>
+                """.trimIndent()
+            )
+        )
+
+        val active = "android.service.quicksettings.ACTIVE_TILE"
+        val nameFirst = """<meta-data android:name="$active" android:value="true" />"""
+        val valueFirst = """<meta-data android:value="true" android:name="$active" />"""
+        val valueFalse = """<meta-data android:value="false" android:name="$active" />"""
+
+        assertTrue(
+            "the scan cannot see an ACTIVE_TILE declaration spelled " +
+                "name-attribute-first, so the order control below would be " +
+                "comparing two negatives",
+            declaresMetaData(block(nameFirst), "ACTIVE_TILE"),
+        )
+        assertTrue(
+            "the meta-data scan MISSED an ACTIVE_TILE declaration spelled " +
+                "value-attribute-first. XML attribute order means nothing, so " +
+                "that is the same declaration as the one above — and the miss " +
+                "fails OPEN: anActiveTileMustHaveSomethingThatRefreshesIt " +
+                "reads !declaresActive as true and goes green with a stale " +
+                "active tile shipped. Read the state out of a parse tree, not " +
+                "out of one spelling of it.",
+            declaresMetaData(block(valueFirst), "ACTIVE_TILE"),
+        )
+        assertFalse(
+            "the scan answered yes for TOGGLEABLE_TILE while only ACTIVE_TILE " +
+                "was declared, so the short name is not being compared and " +
+                "both meta-data assertions in this file mean the same thing",
+            declaresMetaData(block(valueFirst), "TOGGLEABLE_TILE"),
+        )
+        assertFalse(
+            "android:value=\"false\" satisfied the scan. The platform reads " +
+                "the value, so a declaration switched off is not a declaration " +
+                "— and counting it would make theTileDeclaresItselfAToggle " +
+                "pass for a tile that declares itself NOT toggleable.",
+            declaresMetaData(block(valueFalse), "ACTIVE_TILE"),
+        )
+    }
+
     @Test
     fun theTileDeclaresItselfAToggle() {
         assertTrue(
@@ -302,13 +368,64 @@ class TileManifestTest {
         return m!!.value
     }
 
-    /** Whether the element declares a `<meta-data>` with this short name. */
-    private fun declaresMetaData(element: String, shortName: String): Boolean =
-        Regex(
-            "<meta-data\\b[^>]*android:name=\"android\\.service\\.quicksettings\\." +
-                "$shortName\"[^>]*android:value=\"true\"",
-            RegexOption.DOT_MATCHES_ALL,
-        ).containsMatchIn(element)
+    /**
+     * Whether the element declares a `<meta-data>` with this short name and
+     * `android:value="true"`.
+     *
+     * 🔴 **Parsed, not pattern-matched, and that is the point.** This used to be
+     * a regex requiring `android:name="…"` to appear *before*
+     * `android:value="true"` inside the element. XML attribute order carries no
+     * meaning, so `<meta-data android:value="true"
+     * android:name="…ACTIVE_TILE" />` is the **same declaration** and the regex
+     * could not see it — and for [anActiveTileMustHaveSomethingThatRefreshesIt]
+     * that miss **FAILS OPEN**: `declaresActive` reads `false`,
+     * `!declaresActive` is `true`, and the test passes with a stale active tile
+     * shipped. (The `TOGGLEABLE_TILE` assertion fails closed under the same
+     * mutation, so only one direction was walkable — one is enough.) Every
+     * fixture in this file spelled the attributes name-first, so its own
+     * positive control could not see it either;
+     * [theMetaDataScanIsIndifferentToAttributeOrder] is what now does.
+     *
+     * A guard that can pass while the hazard exists in a different *spelling*
+     * is not a guard on the hazard, so the state is read out of a parse tree
+     * where spelling has already been normalised away.
+     */
+    private fun declaresMetaData(element: String, shortName: String): Boolean {
+        val nodes = parseXml(element).getElementsByTagName("meta-data")
+        return (0 until nodes.length).any { i ->
+            val attrs = nodes.item(i).attributes ?: return@any false
+            attrs.getNamedItem("android:name")?.nodeValue ==
+                "android.service.quicksettings.$shortName" &&
+                attrs.getNamedItem("android:value")?.nodeValue == "true"
+        }
+    }
+
+    /**
+     * Namespace-**unaware** on purpose: these fragments are cut out of the
+     * manifest, so the `android` prefix's `xmlns` declaration is left behind on
+     * `<manifest>` and a namespace-aware parse would fail on every one of them.
+     * Unaware, the attribute's literal qualified name is just a name, which is
+     * what is compared.
+     *
+     * A parse failure is asserted rather than swallowed: a `false` from an
+     * unparsed fragment is a confident absence for a declaration nothing ever
+     * looked at, which is the same fail-open shape the regex had.
+     */
+    private fun parseXml(xml: String): org.w3c.dom.Document {
+        val factory = javax.xml.parsers.DocumentBuilderFactory.newInstance()
+        factory.isNamespaceAware = false
+        val parsed = runCatching {
+            factory.newDocumentBuilder()
+                .parse(java.io.ByteArrayInputStream(xml.toByteArray()))
+        }
+        assertTrue(
+            "could not parse this XML fragment (${parsed.exceptionOrNull()}), " +
+                "so every meta-data assertion over it would report a confident " +
+                "absence for a declaration it never read:\n$xml",
+            parsed.isSuccess,
+        )
+        return parsed.getOrThrow()
+    }
 
     /** Production files containing a call matching [pattern]. */
     private fun sourcesCalling(pattern: Regex): List<String> {

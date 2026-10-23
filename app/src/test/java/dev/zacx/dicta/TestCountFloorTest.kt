@@ -89,8 +89,9 @@ class TestCountFloorTest {
      * The counter is a proxy — `@Test` annotations in the sources, not executed
      * tests — so it is pinned against a known value here, and it was validated
      * against the JUnit XML per class: a full run's `TEST-*.xml` reported the
-     * same number for every one of the 57 test classes that this counter
-     * returns for the corresponding source file. 🔴 That per-class comparison
+     * same number for every one of the 58 test classes that this counter
+     * returns for the corresponding source file — first done at 57 classes, and
+     * re-run at 58 by the commit that added one. 🔴 That per-class comparison
      * is what found the string-literal defect [countTests] documents; a
      * whole-suite total would have hidden it behind a 4-test discrepancy that
      * made the floor look safer rather than failing.

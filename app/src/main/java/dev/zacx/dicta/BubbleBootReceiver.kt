@@ -71,6 +71,18 @@ import android.provider.Settings
  *     with `stopSelf()`. Nothing about it was ever observable from here, so the
  *     fallback could not have fired even on a device that refused the start.
  *
+ * 🔴 That second bullet is also where this file's "a reboot must not touch the
+ * user's stored intent" policy nearly came undone, and it is worth knowing
+ * about here because the site that broke it is not in this file. The refused
+ * promotion is answered in the service's process, and for a while it cleared
+ * the flag there unconditionally — so a boot restore the platform refused
+ * destroyed the stored intent, and the bubble then did not return on that boot
+ * or any later one. [BubbleEnabled.startService] now carries the origin of the
+ * start it was asked to make and `BubbleEnabled.foregroundPromotionRefused`
+ * clears the flag only for a start the user made, which is what keeps the
+ * policy true end to end rather than only as far as this file's own two
+ * checks. `BootRestoreTest` drives both directions through this receiver.
+ *
  * The handler could only ever be reached by a test injecting a throw, which is
  * what the deleted `BubbleEnabled.serviceStarter` seam existed to do. 🔴 If a
  * future platform change really does start refusing this, the place that learns
@@ -126,6 +138,10 @@ class BubbleBootReceiver : BroadcastReceiver() {
         // The permission survives reboots but not a user who revoked it, and an
         // overlay service with no overlay permission stops itself immediately.
         if (!Settings.canDrawOverlays(context)) return
-        BubbleEnabled.startService(context)
+        // 🔴 userAsked = false is load-bearing, not boilerplate: it is what
+        // stops a refused promotion in the service's process clearing the flag
+        // and taking the bubble away for good. Nothing the user did at boot
+        // can have changed their stored intent, including a platform refusal.
+        BubbleEnabled.startService(context, userAsked = false)
     }
 }

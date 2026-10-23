@@ -22,12 +22,30 @@
     <string name="status_granted">Granted ✓</string>
     <string name="status_not_granted">Not granted</string>
 
-    <string name="section_triggers">Triggers (pick any)</string>
+    <!-- 🔴 This read "Triggers (pick any)" and the heading itself was the
+         remaining half of the defect below. Three rows sit under it — the
+         Quick Settings tile, the floating bubble and the notification — and
+         only the last two start a dictation. The tile is the bubble's on/off
+         switch, so a heading calling everything beneath it a trigger promised
+         the third way in that @string/tile_row had just been corrected to deny:
+         the copy said "not a trigger" directly under a heading that said it
+         was. "From anywhere" is true of all three rows and claims nothing about
+         what any of them does; each row's own copy says that.
+
+         The resource NAME is deliberately left as section_triggers. It is an
+         identifier, not user-facing, its group's membership has not changed,
+         and renaming it would touch activity_main.xml for no user-visible
+         effect. It is now narrower than the group it labels; that is a known
+         imprecision in an identifier, not in anything a user reads. -->
+    <string name="section_triggers">From anywhere</string>
     <!-- 🔴 User-facing, and it used to read "swipe down from any app and tap
-         Dicta", which under the "Triggers" heading promised a third way to
+         Dicta", which under the old "Triggers" heading promised a third way to
          START a dictation. The tile switches the floating bubble on and off;
-         it opens nothing. The copy says so rather than leaving the heading to
-         imply otherwise. -->
+         it opens nothing. The copy says so — and the heading above no longer
+         contradicts it. (The previous version of this comment claimed the copy
+         fixed the contradiction "rather than leaving the heading to imply
+         otherwise". The heading was in fact left; that claim was false until
+         the edit above.) -->
     <string name="tile_row">Quick Settings tile — swipe down from any app to switch the bubble on or off.</string>
     <string name="add_tile">Add tile</string>
     <string name="tile_added">Tile added — find it in your Quick Settings panel.</string>

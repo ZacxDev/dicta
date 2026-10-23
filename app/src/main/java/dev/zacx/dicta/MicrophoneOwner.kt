@@ -18,11 +18,20 @@ import java.util.concurrent.atomic.AtomicReference
  * `AudioRecord` exists under Robolectric.
  *
  * [DictateLaunch.EXTRA_ATTACH_SESSION] suppresses the second session only on
- * the intent **the bubble itself sends**. The notification action and
- * `MainActivity`'s "Try dictation now" both go through [DictateLaunch.intent],
- * which carries no extra — so while the bubble is recording with nothing on
- * screen, either of them opens a card whose `onCreate` would start a second
- * capture. Per-call-site flags are the shape of defect that regenerates at
+ * the intent **the bubble itself sends**. Neither of the other two surfaces
+ * carries it, and they reach `DictateActivity` by different routes: the
+ * notification action goes through [DictateLaunch.intent], while
+ * `MainActivity`'s "Try dictation now" constructs its own intent — which is why
+ * `DictateLaunchTest` lists `MainActivity` as an allowed direct constructor. So
+ * while the bubble is recording with nothing on screen, either of them opens a
+ * card whose `onCreate` would start a second capture.
+ *
+ * ⚠ This used to say both surfaces "go through [DictateLaunch.intent]". The
+ * conclusion was right and the mechanism was not — and the mechanism is the
+ * part a reader acts on: anyone trying to close this hole by putting the extra
+ * inside `DictateLaunch.intent` would leave "Try dictation now" untouched.
+ *
+ * Per-call-site flags are the shape of defect that regenerates at
  * every new surface; a holder that `start()` must acquire fails for surfaces
  * that do not exist yet too.
  *

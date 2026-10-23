@@ -23,7 +23,11 @@ import android.provider.Settings
  *
  *  * [MainActivity]'s switch and [DictaTileService] — [turnOn] / [turnOff].
  *  * [BubbleService]'s *Hide bubble* path — [set], because the service is
- *    already stopping itself and must not call `stopService` on itself.
+ *    already stopping itself and must not call `stopService` on itself. The
+ *    same file also reports a refused foreground promotion through
+ *    [foregroundPromotionRefused], which is a *conditional* write: whether it
+ *    changes anything depends on who asked for the start, and that decision is
+ *    made here rather than at the call site.
  *  * [BubbleBootReceiver] — on `BOOT_COMPLETED`, [isOn] + [startService] plus
  *    its own `canDrawOverlays` check. It deliberately routes *around* [turnOn]
  *    because it must restore the bubble without *writing* the flag: nothing the
@@ -34,7 +38,8 @@ import android.provider.Settings
  *    bubble away, and that one is argued there too.
  *
  * All four are pinned by `BubbleEnabledWritersSeamTest`'s mutator ledger, which
- * is why it matches [set] and [startService] and not only [turnOn] / [turnOff].
+ * is why it matches [set], [startService] and [foregroundPromotionRefused] and
+ * not only [turnOn] / [turnOff].
  *
  * ## 🔴 What "the surfaces cannot disagree" does and does NOT mean
  *
@@ -158,8 +163,15 @@ object BubbleEnabled {
      * permission are therefore closed at their source, by whoever is still
      * running when it happens — which is why there is no third term here:
      *
-     *  * `promoteForeground` refused → [BubbleService.onCreate] clears the flag
-     *    before stopping itself.
+     *  * `promoteForeground` refused → [BubbleService.onCreate] hands it to
+     *    [foregroundPromotionRefused], which clears the flag before the service
+     *    stops itself — **for a start the user asked for.** 🔴 A refused *boot*
+     *    restore deliberately does not clear it, because clearing it there
+     *    means the bubble never returns, on that boot or any later one. That
+     *    one case therefore does leave the flag set with no bubble until the
+     *    next start, and [isUp] cannot see it. The trade is deliberate and is
+     *    argued at [foregroundPromotionRefused]: the alternative is destroying
+     *    stored intent the user can only restore by rediscovering the switch.
      *  * an **app update** stops the service, and Android does not restart one
      *    across a package replacement → [BubbleBootReceiver] clears the flag on
      *    `ACTION_MY_PACKAGE_REPLACED`. It deliberately does not restart the
@@ -171,6 +183,38 @@ object BubbleEnabled {
      */
     fun isUp(context: Context): Boolean =
         Settings.canDrawOverlays(context) && isOn(context)
+
+    /**
+     * 🔴 Whether the start request this process most recently issued was the
+     * **user** asking for the bubble — the one condition under which a platform
+     * refusal may undo their stored intent. Read only by
+     * [foregroundPromotionRefused].
+     *
+     * Process-local and deliberately **not** persisted: it describes a start
+     * request *this process* made, and a process that made none has nothing to
+     * say about origin. `false` is therefore the fail-safe initial value, and it
+     * is also what a `START_STICKY` restart after a process kill reads — nobody
+     * asked for that start either, so it must not be able to delete what the
+     * user chose.
+     *
+     * Safe as a single field rather than something handed along: the manifest
+     * declares no `android:process` (`TileManifestTest.theAppIsSingleProcess`),
+     * so there is one copy of it, and every writer and the reader run on the
+     * main thread — [BubbleBootReceiver.onReceive], [MainActivity] and
+     * [DictaTileService] through [turnOn], and [BubbleService.onCreate].
+     * `@Volatile` is belt-and-braces, not a claim that a second thread exists.
+     *
+     * 🔴 It is **not** an intent extra, which is where an origin would normally
+     * ride. `Service.onCreate` — the only place the refusal is observable — is
+     * not handed the starting `Intent`; `onStartCommand` is, and moving the
+     * promotion there to reach it would rest on an ordering claim about whether
+     * `onStartCommand` is still dispatched after an `onCreate` that called
+     * `stopSelf`. No device has been attached to this project, so that claim
+     * could not be checked, and this mechanism needs no claim beyond
+     * single-process.
+     */
+    @Volatile
+    private var userAskedForTheLatestStart = false
 
     /**
      * Records the flag and nothing else.
@@ -197,7 +241,7 @@ object BubbleEnabled {
     fun turnOn(context: Context): Start {
         if (!Settings.canDrawOverlays(context)) return Start.NO_OVERLAY_PERMISSION
         set(context, true)
-        startService(context)
+        startService(context, userAsked = true)
         return Start.STARTED
     }
 
@@ -244,11 +288,62 @@ object BubbleEnabled {
      * none is wanted.** Reaching for a fresh reason to put the signal back is
      * how it comes back: if you want one, the thing to change is where the
      * refusal is *caught* (`platformPromoteForeground`), not this function.
+     *
+     * @param userAsked whether this start is the user turning the bubble on
+     *   right now. It is recorded in [userAskedForTheLatestStart] and is the
+     *   only thing that may later authorise clearing the flag — see
+     *   [foregroundPromotionRefused]. **Deliberately has no default**: both
+     *   call sites have a definite answer, and a default is precisely how the
+     *   boot path would silently acquire the wrong one.
      */
-    internal fun startService(context: Context) {
+    internal fun startService(context: Context, userAsked: Boolean) {
+        userAskedForTheLatestStart = userAsked
         runCatching {
             context.startForegroundService(Intent(context, BubbleService::class.java))
         }
+    }
+
+    /**
+     * The platform refused to promote the started service to the foreground, so
+     * there is no bubble and never was one for that start. Clears the flag —
+     * **only if the user asked for that start.**
+     *
+     * ## Why the asymmetry
+     *
+     * With `canDrawOverlays` true nothing masks a set flag, so a *user*-initiated
+     * refusal that left it set is issue #14 verbatim: [MainActivity]'s switch
+     * renders ON with nothing running, and a `Switch` fires its listener only
+     * on a **change**, so one tap does nothing and the user has to toggle OFF
+     * then ON. That is the case this clears.
+     *
+     * 🔴 A **boot** start is the opposite case, and clearing there destroys
+     * something the user cannot get back by looking at the screen. [isOn] is
+     * stored intent and survives a reboot by design; a platform refusal during
+     * a boot restore is not the user changing their mind. Cleared, the bubble
+     * does not come back on this boot *or any later one*, and the only route
+     * back is rediscovering the switch in the app — the complaint issue #14 is
+     * about. [BubbleBootReceiver] argues exactly this policy for its own two
+     * checks, and the refusal handled here is the one that arrives *after* that
+     * receiver has returned, in the service's process, which is why the policy
+     * has to be applied a second time at a different site.
+     *
+     * Reachability today is low and not zero. `targetSdk` is 34 and every
+     * foreground-service permission is declared, so the FGS-type restrictions
+     * the receiver's kdoc sets out do not bite yet — but the `specialUse` one
+     * is gated on `targetSdk >= 35`, and
+     * [BubbleService.platformPromoteForeground] turns **any** throw out of
+     * `buildNotification` or `startForeground` into a refusal, not only that
+     * one. No device has been attached to this project, so none of that is
+     * measured; it is read off the documented contracts.
+     *
+     * 🔴 This is a method on the owner rather than a predicate [BubbleService]
+     * branches on, because the owner is the only place allowed to decide
+     * whether the flag changes. Exporting the question for the call site to
+     * answer would put a second copy of the policy there, which is the shape
+     * this object exists to prevent.
+     */
+    internal fun foregroundPromotionRefused(context: Context) {
+        if (userAskedForTheLatestStart) set(context, false)
     }
 
     private fun prefs(context: Context) =

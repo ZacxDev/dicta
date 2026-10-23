@@ -199,13 +199,14 @@ class BubbleEnabledWritersSeamTest {
                     false,
                 )
                 fun d() { BubbleEnabled.set (ctx, on = true) }
-                fun e() { BubbleEnabled.startService(ctx) }
+                fun e() { BubbleEnabled.startService(ctx, userAsked = false) }
+                fun f() { BubbleEnabled.foregroundPromotionRefused(this) }
             }
         """.trimIndent()
         assertEquals(
             "the pattern must see a call however it is spelled or wrapped — a " +
                 "ktfmt reformat must not change the ledger",
-            5,
+            6,
             CHANGES_BUBBLE_STATE.findAll(normalise(calls)).count(),
         )
 
@@ -482,12 +483,27 @@ class BubbleEnabledWritersSeamTest {
      * Driven through the real service and the real `foregroundPromoter` seam,
      * not by calling the owner directly, because the claim is about what
      * `onCreate` does.
+     *
+     * 🔴 **Scope: this is the USER-initiated half only, and the fixture now has
+     * to say so.** `BubbleEnabled.foregroundPromotionRefused` clears the flag
+     * only for a start the user asked for, so the fixture reaches the flag
+     * through `turnOn` — the actual user path — rather than through `set`,
+     * which would set the flag without establishing who asked and would make
+     * this assertion about the fail-safe default instead of about the user
+     * path. The boot half (a refused restore must *keep* the flag) is
+     * `BootRestoreTest.aRefusedPromotionKeepsBootIntentButClearsAUserStart`,
+     * which drives both directions through the receiver.
      */
     @Test
     fun aRefusedForegroundPromotionLeavesNoSurfaceClaimingABubble() {
         ShadowSettings.setCanDrawOverlays(true)
         val app = RuntimeEnvironment.getApplication()
-        BubbleEnabled.set(app, true)
+        assertEquals(
+            "the fixture failed: turnOn must report STARTED, or the user path " +
+                "this test is about was never taken",
+            BubbleEnabled.Start.STARTED,
+            BubbleEnabled.turnOn(app),
+        )
         assertTrue(
             "the fixture failed: the flag must start ON or there is nothing " +
                 "for the refused promotion to leave behind",
@@ -599,12 +615,21 @@ class BubbleEnabledWritersSeamTest {
          * starts the service without writing the flag, and a ledger that could
          * not see it would be narrower than its own description.
          *
+         * `foregroundPromotionRefused` is a member for the same reason, and it
+         * is the one that would otherwise have been missed: it writes the flag
+         * *conditionally*, so a file that called it would change whether the
+         * bubble is on without spelling `set`, `turnOn` or `turnOff` anywhere.
+         * A mutator the ledger cannot see makes the ledger narrower than its
+         * own description, which is the defect this class keeps finding.
+         *
          * `isOn` is deliberately excluded: a reader cannot put the flag out of
          * step with reality, and including it would make every file that merely
          * *consults* the bubble a member.
          */
-        val CHANGES_BUBBLE_STATE =
-            Regex("""BubbleEnabled\.(set|turnOn|turnOff|startService)\s*\(""")
+        val CHANGES_BUBBLE_STATE = Regex(
+            """BubbleEnabled\.""" +
+                """(set|turnOn|turnOff|startService|foregroundPromotionRefused)\s*\("""
+        )
 
         /** The literal preference key, as a Kotlin string. */
         val TOUCHES_RAW_KEY = Regex(""""bubble_enabled"""")

@@ -72,5 +72,16 @@ the bubble is strictly opt-in and the **notification** path works without it.
 work without it". The tile is the bubble's switch now, so it *requires*
 `SYSTEM_ALERT_WINDOW` — `DictaTileService.render()` goes
 `Tile.STATE_UNAVAILABLE` and the tile turns nothing on while `canDrawOverlays`
-is false. The notification is the only trigger left that works with the
-permission ungranted.
+is false.
+
+🔴 **Second correction, same paragraph:** the line above then read "the
+notification is the only trigger left that works with the permission ungranted",
+and that is false too — it counted the surfaces that reach Dicta *from outside
+the app* and forgot the one inside it. `MainActivity`'s "Try dictation now"
+button starts `DictateActivity` directly and needs no `SYSTEM_ALERT_WINDOW`
+either, which is why `DictateLaunchTest` lists `MainActivity` as an allowed
+direct constructor of that intent. So **two** surfaces still work with the
+permission ungranted — the notification's *Dictate* action and "Try dictation
+now" — which is the same count `MicrophoneOwner`'s kdoc arrives at for the same
+two surfaces. The durable claim is unchanged: the bubble is opt-in, and nothing
+that needs the overlay permission works without it.

@@ -47,11 +47,18 @@ second was missing while this paragraph claimed the first was enough:
 The flag is stored **intent**, so it deliberately outlives the bubble across a
 reboot or a revoked permission. The two cases where intent and reality would
 otherwise come apart with the permission still granted are closed where they
-happen: `BubbleService` clears the flag if its foreground promotion is refused,
-and `BubbleBootReceiver` clears it on `MY_PACKAGE_REPLACED`, because an app
-update stops the service and Android does not restart one across a package
-replacement. Neither restores the bubble — they only stop the surfaces claiming
-one, so a single tap brings it back.
+happen: `BubbleService` clears the flag when the foreground promotion of a start
+**the user asked for** is refused, and `BubbleBootReceiver` clears it on
+`MY_PACKAGE_REPLACED`, because an app update stops the service and Android does
+not restart one across a package replacement. Neither restores the bubble — they
+only stop the surfaces claiming one, so a single tap brings it back.
+
+A refused *boot* restore is the deliberate exception: it keeps the flag. Clearing
+it there would mean the bubble does not return on that boot **or any later one**,
+which is exactly the thing the paragraph above says a reboot must not be able to
+do, so that one case leaves the flag set with no bubble until the next start.
+`BubbleEnabled` owns the distinction — `startService` records whether the user
+asked, and `foregroundPromotionRefused` is the only thing that reads it.
 
 The overlay is a floating dialog-style activity, and it is deliberately
 **minimal at rest**: the transcript, one mic pill, and a small overflow

@@ -312,14 +312,26 @@ class BubbleService : Service() {
             return
         }
         if (!promoteForeground(recording = false)) {
-            // 🔴 This one MUST clear the flag. Unlike the branch above there is
-            // no mask: canDrawOverlays is true, so BubbleEnabled.isUp would
-            // report the bubble as up while this service is stopping itself
-            // without ever having shown a window. That is issue #14's defect
-            // exactly — MainActivity's switch renders ON with nothing running,
-            // and a Switch fires its listener only on a CHANGE, so one tap
-            // does nothing and the user has to toggle OFF then ON.
-            BubbleEnabled.set(this, false)
+            // 🔴 Whether the flag changes here depends on WHO asked for this
+            // start, and the owner decides — this site does not branch.
+            //
+            // For a start the USER just made it must be cleared. Unlike the
+            // branch above there is no mask: canDrawOverlays is true, so
+            // BubbleEnabled.isUp would report the bubble as up while this
+            // service stops itself without ever having shown a window. That is
+            // issue #14's defect exactly — MainActivity's switch renders ON
+            // with nothing running, and a Switch fires its listener only on a
+            // CHANGE, so one tap does nothing and the user has to toggle OFF
+            // then ON.
+            //
+            // 🔴 For a BOOT restore it must NOT be cleared, and this used to
+            // clear it unconditionally. The flag is stored intent that survives
+            // a reboot by design, so clearing it on a refusal reached through
+            // BubbleBootReceiver means the bubble does not come back on this
+            // boot OR ANY LATER ONE and the user has to rediscover the switch —
+            // which is the thing the receiver, BubbleEnabled.isOn and the
+            // README all say a reboot must not be able to do.
+            BubbleEnabled.foregroundPromotionRefused(this)
             stopSelf()
             return
         }
