@@ -516,6 +516,14 @@ class BubbleService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) {
+            // 🔴 Clearing the flag is the whole of issue #14's "no way to get
+            // the bubble back". The notification's Hide action used to only
+            // stopSelf(), so MainActivity's switch — which derives from this
+            // flag — went on reading ON with nothing running, and a Switch
+            // fires its listener only on a CHANGE: tapping it did nothing and
+            // the operator had to toggle OFF then ON. stopSelf, not
+            // BubbleEnabled.turnOff: this service is already stopping itself.
+            BubbleEnabled.set(this, false)
             stopSelf()
             return START_NOT_STICKY
         }

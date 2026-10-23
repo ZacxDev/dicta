@@ -2,7 +2,16 @@
 <resources>
     <string name="app_name">Dicta</string>
     <string name="tile_label">Dicta</string>
-    <string name="tile_description">Open voice dictation</string>
+    <!-- The tile is the floating bubble's on/off switch, not a launcher: the
+         old tile_description ("Open voice dictation") described a tile that
+         opened the overlay, and the overlay is no longer where a recording
+         starts. A TileService has no screen to toast on, so these three
+         strings are the only place it can say what state it is in and why it
+         is unavailable — they land in its subtitle (API 29+) and its content
+         description. -->
+    <string name="tile_bubble_on">Bubble on</string>
+    <string name="tile_bubble_off">Bubble off</string>
+    <string name="tile_needs_overlay">Needs “Display over other apps”</string>
 
     <string name="intro">Trigger voice dictation from anywhere on your device, then copy the text to your clipboard or send it somewhere.</string>
 
@@ -175,6 +184,17 @@
     <string name="bubble_channel">Dicta bubble</string>
     <string name="bubble_active">Floating mic bubble is active</string>
     <string name="hide_bubble">Hide bubble</string>
+    <!-- Shown when the platform refuses the foreground start outright. Not the
+         same as a missing overlay permission (need_overlay_first), which the
+         user can fix: this one is the system's decision. -->
+    <string name="bubble_start_refused">Android refused to start the bubble. Try again from the app.</string>
+    <!-- The boot-restore fallback: only reached if the system refuses the
+         service start from the BOOT_COMPLETED receiver. A notification's
+         PendingIntent is itself exempt from the background-start restriction,
+         so the tap has a route the broadcast did not. -->
+    <string name="boot_restore_channel">Dicta bubble restore</string>
+    <string name="boot_restore_text">The floating bubble could not start after the restart.</string>
+    <string name="boot_restore_action">Show bubble</string>
     <string name="trigger_channel">Dicta quick trigger</string>
     <string name="notif_text">Tap Dictate to capture a voice note from anywhere.</string>
 

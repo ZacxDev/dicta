@@ -17,6 +17,11 @@
          of startForeground the first time the user taps the bubble. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- 🔴 Without this the BOOT_COMPLETED receiver below is simply never
+         invoked: the broadcast is not delivered, no exception is raised and no
+         build warning appears, so the only symptom is a bubble that quietly
+         fails to come back after a reboot. -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
     <!-- icon/roundIcon point at the adaptive icon in mipmap-anydpi-v26, NOT at a
          bare drawable: a 24dp vector used directly as a launcher icon is drawn
@@ -161,6 +166,32 @@
             android:name=".ProjectionService"
             android:exported="false"
             android:foregroundServiceType="mediaProjection" />
+
+        <!--
+          Restores the bubble after a reboot when the user had it on.
+
+          exported="true" is deliberate and is the documented requirement for a
+          manifest receiver that listens for a system broadcast on Android 12+;
+          BOOT_COMPLETED is a protected action, so only the system can send it.
+          The receiver additionally checks the action itself, because a receiver
+          is reachable by an explicit intent whatever its filter says.
+
+          🔴 The service it starts is specialUse AT REST — BubbleService only
+          promotes to microphone while recording. That distinction is what makes
+          this start legal: a microphone-typed FGS launched from a
+          BOOT_COMPLETED receiver is refused from Android 14 on, and the wider
+          Android 15 list of disallowed types (dataSync, camera, mediaPlayback,
+          phoneCall, mediaProjection, microphone) still does not include
+          specialUse. See BubbleBootReceiver's kdoc for the whole measurement.
+        -->
+        <receiver
+            android:name=".BubbleBootReceiver"
+            android:exported="true"
+            android:directBootAware="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
 
         <!--
           Serves the captured PNG to the share target. Hand-rolled rather than
