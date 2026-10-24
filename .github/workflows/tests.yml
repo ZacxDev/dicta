@@ -37,16 +37,24 @@ jobs:
       # inferred from the task's exit status.
       #
       # BASELINE: 600 against a suite of 691 tests / 63 classes, measured from
-      # the JUnit XML of a full run of the tree THIS COMMIT creates on
-      # feat/stt-reachability-precheck (2026-10-23) — i.e. the reachability
-      # pre-check stacked on 433fbc8, the tip of feat/ui-surface-cleanup, which
-      # is itself stacked on ae1b464 (feat/bubble-state-tile-boot). That is the
-      # tree this number is about and no other: this is a three-deep stack and
-      # each branch adds test classes the ones below it do not have, so no
-      # lower branch's count applies here. It reconciles as 651/60 at 433fbc8
-      # plus this branch's +40 tests / +3 classes
-      # (SttReachabilityTest, SttReachabilityLedgerTest,
-      # BubbleUnreachableWarningTest).
+      # the JUnit XML of a full run on feat/stt-reachability-precheck
+      # (2026-10-23) — the reachability pre-check stacked on 433fbc8, the tip
+      # of feat/ui-surface-cleanup, which is itself stacked on ae1b464
+      # (feat/bubble-state-tile-boot). That is the tree this number is about
+      # and no other: this is a three-deep stack and each branch adds test
+      # classes the ones below it do not have, so no lower branch's count
+      # applies here. It reconciles as 651/60 at 433fbc8 plus this branch's
+      # +40 tests / +3 classes (SttReachabilityTest,
+      # SttReachabilityLedgerTest, BubbleUnreachableWarningTest).
+      #
+      # 🔴 COMMITS COUNTED ON, since a branch is not a tree: 691/63 was read
+      # from the XML at 11f2a9c (the commit that adds the feature) and read
+      # again, unchanged, at 65e6f7b (the last of the four follow-ups that
+      # close the mutation-sweep findings and retract two prose claims). Those
+      # follow-ups delete one production line, add no test and remove none, so
+      # the count is constant across this branch — stated because "measured on
+      # the branch" is exactly the imprecision the correction note below is
+      # about.
       #
       # The previous entries said "566 against 651 / 60" at the rebased tip of
       # feat/ui-surface-cleanup, "554 against 638 / 58" at ae1b464 and, before
