@@ -274,6 +274,21 @@ class BubbleUnreachableWarningTest {
         bubble(service).performClick()
         assertNotNull(dialog(service))
 
+        // 🔴 PAST THE DEBOUNCE, and this line is the whole test.
+        //
+        // Measured: without it, deleting `if (warning != null) return` from
+        // BubbleService.tapped() leaves the full 691-test suite GREEN. Two
+        // clicks inside BubbleDictation.MIN_RECORDING_MS are swallowed by the
+        // machine's own debounce, which produces exactly the observable this
+        // test asserts — so every assertion below held for a reason that had
+        // nothing to do with the guard, and the guard was covered by nothing.
+        //
+        // A real sleep because the machine's clock is System.currentTimeMillis
+        // and a Service does not inject it; advancing Robolectric's scheduler
+        // does not move it. BubbleServiceFlowTest does the same, for the same
+        // reason.
+        Thread.sleep(BubbleDictation.MIN_RECORDING_MS + 50)
+
         bubble(service).performClick()
 
         assertEquals(
@@ -285,7 +300,15 @@ class BubbleUnreachableWarningTest {
             fake.submits,
         )
         assertEquals(0, fake.starts)
-        assertNull(shadowOf(service).nextStartedActivity)
+        assertNull(
+            "🔴 the discriminating assertion. Past the debounce, a second tap " +
+                "that reached the machine emits SubmitRecording AND " +
+                "OpenOverlayTranscribing — and the submit is INVISIBLE here " +
+                "(there is no session to submit, so fake.submits stays 0), " +
+                "which leaves the opened card as the only observable that can " +
+                "tell the guard from the debounce.",
+            shadowOf(service).nextStartedActivity,
+        )
         assertNotNull("and the dialog must still be up", dialog(service))
     }
 

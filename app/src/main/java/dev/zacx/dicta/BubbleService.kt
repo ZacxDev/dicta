@@ -683,15 +683,20 @@ class BubbleService : Service() {
     override fun onDestroy() {
         OverlayVisibility.unregister(visibilitySink)
         unregisterScreenReceiver()
-        // 🔴 Explicit, even though `removeCallbacksAndMessages(null)` on the
-        // next line also drops it. The periodic probe is a SELF-RESCHEDULING
-        // chain, so the one thing that must be true after this method is that
-        // no further tick can be posted — and the blanket clear is a statement
-        // about the queue, while this is a statement about this chain. Keeping
-        // both means reordering or narrowing the blanket clear cannot silently
-        // leave the probe running against a destroyed service.
-        main.removeCallbacks(probeTick)
         removeWarning()
+        // 🔴 This is what stops the periodic probe, which is a
+        // SELF-RESCHEDULING chain — one surviving tick keeps probing against a
+        // destroyed service for the life of the process. Pinned by
+        // `BubbleUnreachableWarningTest.theProbeStopsOnDestroy`.
+        //
+        // ⚠ An explicit `main.removeCallbacks(probeTick)` stood immediately
+        // above this, justified as insurance against "narrowing the blanket
+        // clear". It guarded nothing measurable: deleting EITHER line on its
+        // own left the whole 691-test suite green, because each one fully
+        // covers the other, so no test could reach either. Two mutually
+        // redundant lines are worse than one covered line — the pair reads as
+        // defence while nothing can tell whether either works. One line, one
+        // test.
         main.removeCallbacksAndMessages(null)
         // Discard rather than submit: the service going away is not the user
         // asking for a transcript, and an upload whose card can never open
