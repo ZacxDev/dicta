@@ -684,19 +684,24 @@ class BubbleService : Service() {
         OverlayVisibility.unregister(visibilitySink)
         unregisterScreenReceiver()
         removeWarning()
-        // 🔴 This is what stops the periodic probe, which is a
-        // SELF-RESCHEDULING chain — one surviving tick keeps probing against a
-        // destroyed service for the life of the process. Pinned by
-        // `BubbleUnreachableWarningTest.theProbeStopsOnDestroy`.
+        // Pre-existing, and it clears `maxDurationGuard` and the long-press
+        // runnable as well as any pending `probeTick`.
+        //
+        // ⚠ **It is NOT what stops the periodic probe, and no test here pins
+        // it.** Deleting this whole line leaves the full 691-test suite green,
+        // measured. What actually terminates the probe chain is the
+        // `root == null` branch at the top of [runProbe] — `onDestroy` nulls
+        // `root` below, so a tick that survives this line returns without
+        // probing and without rescheduling. That branch is where
+        // `BubbleUnreachableWarningTest.theProbeStopsOnDestroy` really lands,
+        // and it is labelled as such at its own site.
         //
         // ⚠ An explicit `main.removeCallbacks(probeTick)` stood immediately
-        // above this, justified as insurance against "narrowing the blanket
-        // clear". It guarded nothing measurable: deleting EITHER line on its
-        // own left the whole 691-test suite green, because each one fully
-        // covers the other, so no test could reach either. Two mutually
-        // redundant lines are worse than one covered line — the pair reads as
-        // defence while nothing can tell whether either works. One line, one
-        // test.
+        // above this line and was deleted: it was redundant twice over, and
+        // deleting either it or this line alone left the suite green. This
+        // paragraph replaced a claim that THIS line "is what stops the
+        // periodic probe" — written one commit earlier and measured false by
+        // the very next mutant. Do not restore that sentence.
         main.removeCallbacksAndMessages(null)
         // Discard rather than submit: the service going away is not the user
         // asking for a transcript, and an upload whose card can never open
@@ -1631,9 +1636,14 @@ class BubbleService : Service() {
      * for the settings one.
      */
     private fun runProbe() {
-        // The window is gone: the service is being torn down, or onCreate
-        // refused. Deliberately does NOT reschedule — this is the one
-        // terminal branch.
+        // 🔴 The window is gone: the service is being torn down, or onCreate
+        // refused. Deliberately does NOT reschedule — this is the one terminal
+        // branch, and it is what actually stops the chain after `onDestroy`.
+        // `onDestroy` nulls `root`, so a tick already on the queue returns
+        // here without probing. Not the handler clear in `onDestroy`:
+        // deleting that line leaves the suite green, while deleting this one
+        // fails `theProbeStopsOnDestroy` — so this is the guard that test
+        // pins, measured both ways.
         if (root == null) return
         val settings = sttSettings()
         if (!settings.isRemoteConfigured) {
