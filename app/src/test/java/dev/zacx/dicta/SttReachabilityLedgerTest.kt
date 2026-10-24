@@ -334,12 +334,15 @@ class SttReachabilityLedgerTest {
          * out, then all whitespace collapsed to single spaces.
          *
          * 🔴 Literals **before** comments, which is [TestCountFloorTest]'s
-         * order and is the one that was measured on this tree. The other way
-         * round, a string containing `//` — and this tree has several — has its
-         * own closing quote eaten by the line-comment regex, after which the
-         * literal regex pairs that orphaned quote with the next one it finds
-         * and silently deletes real code between them. Raw strings go first
-         * because they can contain comment delimiters.
+         * order. The other way round, a string containing `//` — and this tree
+         * has several — has its own closing quote eaten by the line-comment
+         * regex, after which the literal regex pairs that orphaned quote with
+         * the next one it finds and silently deletes real code between them.
+         * That is not reasoning: it is the case in
+         * [everyPatternHasBothControls]'s `normalise()` assertion, which was
+         * first written comments-first, watched to produce the wrong answer,
+         * and then reordered. Raw strings go first because they can contain
+         * comment delimiters.
          *
          * Whitespace is collapsed last so the patterns can be written with
          * single `\s*` tolerance and a pure `ktfmt` reformat cannot move any
