@@ -39,10 +39,18 @@ import java.io.File
  *  * **START** — `@string/start_dictation` ("Speak"), assigned from eleven
  *    sites and the layout default. **Removed**, string included.
  *  * **STOP** — `@string/stop_dictation`. **Preserved**, and it is not
- *    optional: the notification, MainActivity's "Try dictation
- *    now" and the permission-grant path all AUTO-START a recording in
- *    `onCreate`, so without this role those recordings have no end control at
- *    all. [aLiveCaptureStillHasAWorkingStopControl] is that pin.
+ *    optional: a plain launch AUTO-STARTS a recording in `onCreate`, so without
+ *    this role that recording has no end control at all.
+ *    [aLiveCaptureStillHasAWorkingStopControl] is that pin.
+ *
+ *    🔴 This used to read "the QS tile, the notification, MainActivity's *Try
+ *    dictation now* and the permission-grant path all auto-start a recording".
+ *    Three of those four are gone — the tile is a bubble toggle, and the
+ *    notification and the button are deleted, because the floating bubble's tap
+ *    is now the only way to start a recording. The **permission-grant path
+ *    remains**, reached when a bubble tap finds `RECORD_AUDIO` ungranted, and
+ *    it is why this role still has to work. `StartSurfaceLedgerTest` is the
+ *    enumerated set.
  *  * **MIC-DENIED FALLBACK** — `@string/use_system_voice_typing`.
  *    **Preserved**: it opens no microphone of ours, it hands the utterance to
  *    the system voice-typing UI, and [BubbleService] documents this activity
@@ -209,9 +217,10 @@ class OverlayNeverStartsARecordingTest {
         }
         if (state.expectedLabel != null && control.visibility != View.VISIBLE) {
             found += "<${state.name}>: the control is hidden in a state that " +
-                "NEEDS it. The notification and MainActivity " +
-                "auto-start a recording on open; without this role those " +
-                "recordings cannot be ended from the only screen they open"
+                "NEEDS it. A plain launch auto-starts a recording on open " +
+                "— today that is the bubble tap's mic-permission hop — and " +
+                "without this role that recording cannot be ended from the " +
+                "only screen it opens"
         }
         if (state.expectedLabel != null && label != state.expectedLabel) {
             found += "<${state.name}>: the control reads <$label>, expected " +
@@ -469,7 +478,7 @@ class OverlayNeverStartsARecordingTest {
         return open(DictateLaunch.intent(ctx))
     }
 
-    /** The notification / launcher path refused because the bubble holds the mic. */
+    /** A plain launch refused because the bubble already holds the mic. */
     private fun cardRefusedTheMic(): DictateActivity {
         grantMic()
         MicrophoneOwner.acquire(Any())
@@ -486,11 +495,14 @@ class OverlayNeverStartsARecordingTest {
     private fun liveCaptureCard(): DictateActivity {
         grantMic()
         installRecogniser()
-        // The plain intent is what the notification wraps and what
-        // MainActivity's "Try dictation now" opens, so onCreate auto-starts the
-        // capture itself — the real route to this state, not a hand-driven one.
-        // (It said "the QS tile, the notification and MainActivity all wrap";
-        // the tile wraps nothing now, and the route is still real.)
+        // A PLAIN overlay intent — no EXTRA_ATTACH_SESSION — so onCreate
+        // auto-starts the capture itself: the real route to this state, not a
+        // hand-driven one. Its one production caller is BubbleService's
+        // mic-permission hop, reached when a bubble tap finds RECORD_AUDIO
+        // ungranted. (This has named three caller sets in turn — "the QS tile,
+        // the notification and MainActivity", then "the notification and Try
+        // dictation now" — and all of them are now gone. The route is a
+        // property of the intent, which is why it survived each of them.)
         return open(DictateLaunch.intent(ctx))
     }
 

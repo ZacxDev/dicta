@@ -36,14 +36,23 @@ jobs:
       # measured nothing is worse than no gate — so the count is asserted, not
       # inferred from the task's exit status.
       #
-      # BASELINE: 554 against a suite of 638 tests / 58 classes, measured from
+      # BASELINE: 566 against a suite of 651 tests / 60 classes, measured from
       # the JUnit XML of a full run of the tree THIS COMMIT creates on
-      # feat/bubble-state-tile-boot (2026-10-23) — the audit-fix commit that
-      # stopped a refused boot restore clearing bubble_enabled. The previous
-      # entry said "550 against 633 / 57" and was measured at ce38e39 on the
-      # same branch and the same day, which is exactly why the date alone does
-      # not identify the tree. 🔴 NAME THE TREE YOU COUNTED ON, not just the
-      # date — the correction note below is entirely about why.
+      # feat/ui-surface-cleanup (2026-10-23) — i.e. feat/ui-surface-cleanup
+      # REBASED onto ae1b464, the tip of feat/bubble-state-tile-boot. That is
+      # the tree this number is about and no other: the two branches each add
+      # test classes the other does not have, so neither branch's own count
+      # applies to the merge. For the record, the counts that reconcile to it:
+      # 599/51 at 475118f (main), 623/55 at 32b089c (the merge base), 638/58 at
+      # ae1b464 (#24's tip, +15/+3 over the base), 636/57 at 89addcd (#25
+      # pre-rebase, +13/+2 over the same base), and 623 + 15 + 13 = 651 with
+      # 55 + 3 + 2 = 60 here.
+      #
+      # The previous entries said "554 against 638 / 58" at ae1b464 and, before
+      # that, "550 against 633 / 57" at ce38e39 — same branch, same day, which
+      # is exactly why the date alone does not identify the tree.
+      # 🔴 NAME THE TREE YOU COUNTED ON, not just the date — the correction
+      # note below is entirely about why.
       #
       # It was --min 3, which could only ever catch a collapse to almost
       # literally nothing: against this suite 3 IS the "handful" the old comment
@@ -54,8 +63,9 @@ jobs:
       # 🔴 THE HEADROOM IS THE CONSTANT, NOT THE FLOOR — re-derive it, do not
       # pick a round number:
       #     floor = floor(current_total * 500 / 575)      # 0.86957, 13.04% slack
-      # 638 * 500 / 575 = 554.78 -> 554, which is 13.17% slack.
-      # (Previous entry: 633 * 500 / 575 = 550.43 -> 550, 13.11% slack.)
+      # 651 * 500 / 575 = 566.09 -> 566, which is 13.06% slack.
+      # (Previous entries: 638 * 500 / 575 = 554.78 -> 554, 13.17% slack;
+      #  633 * 500 / 575 = 550.43 -> 550, 13.11% slack.)
       #
       # 🔴 CORRECTION (2026-10-23). This block used to say the previous entry
       # "was left alone while the suite grew to 623, drifting the slack to 20%".
@@ -82,7 +92,7 @@ jobs:
       # one place.
       - name: Assert tests actually ran
         if: always()
-        run: python3 scripts/assert-tests-ran.py --min 554
+        run: python3 scripts/assert-tests-ran.py --min 566
 
       - name: Upload test reports
         if: always()

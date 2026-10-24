@@ -93,9 +93,11 @@ class SettingsThemingTest {
      * that needs justifying: a framework `CheckBox` draws its box and tick from
      * `colorControlNormal` / `colorControlActivated`, which `Theme.Dicta`
      * already points at the ember accent, so a background drawable would add
-     * nothing — exactly as MainActivity leaves `bubble_switch` and
-     * `notif_switch` bare. The claim for that control is made on its label
-     * instead, by [everyTextBearingControlUsesTheOnSurfaceColour].
+     * nothing — exactly as MainActivity leaves `bubble_switch` bare. (That
+     * sentence used to name `notif_switch` as a second example; it was the
+     * persistent trigger notification's toggle and is deleted.) The claim for
+     * that control is made on its label instead, by
+     * [everyTextBearingControlUsesTheOnSurfaceColour].
      */
     private val controlBackgrounds: Map<String, String?> = mapOf(
         "stt_remote_enabled" to null,
@@ -296,8 +298,10 @@ class SettingsThemingTest {
 
     /**
      * The group labels must be the accent uppercase label MainActivity uses
-     * ("PERMISSIONS", "TRIGGERS (PICK ANY)"), not the bare bold `TextView`s
-     * this screen shipped with.
+     * ("PERMISSIONS", "FLOATING BUBBLE"), not the bare bold `TextView`s this
+     * screen shipped with. (The second example read "TRIGGERS (PICK ANY)" until
+     * the bubble became the only trigger and that heading was renamed to
+     * `@string/section_bubble`.)
      *
      * Asserted on resolved VALUES — accent colour, the style's tracking, the
      * all-caps transformation — rather than on `style="…"`, which an inflated

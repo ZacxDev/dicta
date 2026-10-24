@@ -89,12 +89,19 @@ class TestCountFloorTest {
      * The counter is a proxy — `@Test` annotations in the sources, not executed
      * tests — so it is pinned against a known value here, and it was validated
      * against the JUnit XML per class: a full run's `TEST-*.xml` reported the
-     * same number for every one of the 58 test classes that this counter
-     * returns for the corresponding source file — first done at 57 classes, and
-     * re-run at 58 by the commit that added one. 🔴 That per-class comparison
-     * is what found the string-literal defect [countTests] documents; a
-     * whole-suite total would have hidden it behind a 4-test discrepancy that
-     * made the floor look safer rather than failing.
+     * same number for every one of the **60** test classes that this counter
+     * returns for the corresponding source file, with no mismatch. First done
+     * at 57 classes, re-run at 58 by the commit that added one, and re-run
+     * again at 60 on the tree that rebased `feat/ui-surface-cleanup` onto
+     * `feat/bubble-state-tile-boot` — which added two classes, so the
+     * comparison was redone rather than the previous result reused. 🔴 That
+     * per-class comparison is what found the string-literal defect [countTests]
+     * documents; a whole-suite total would have hidden it behind a 4-test
+     * discrepancy that made the floor look safer rather than failing. It is
+     * also why the re-run is per class every time: the discrepancy it catches
+     * is invisible in a total, and at 60 classes a naive `grep -c '@Test'`
+     * still reports 653 against the XML's 651 — the two phantoms being this
+     * file's own fixture strings.
      */
     @Test
     fun bothInstrumentsAreValidated() {

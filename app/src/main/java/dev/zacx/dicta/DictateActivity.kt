@@ -25,16 +25,17 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
 /**
- * The dictation overlay: floating dialog-style activity opened from the
- * floating bubble, the notification action, or `MainActivity`'s "Try dictation
- * now".
+ * The dictation overlay: floating dialog-style activity opened by
+ * [BubbleService], and by nothing else.
  *
- * 🔴 **No longer from the Quick Settings tile**, which used to be the headline
- * entry point and is named across this file's older comments. It is now the
- * bubble's on/off switch ([DictaTileService]) and opens nothing. The
- * enumerations below have been corrected; if you find another "the tile, the
- * notification and …" list in this file, it is stale rather than a surface you
- * have not met.
+ * 🔴 **Every other entry point this file's comments have ever named is gone.**
+ * The Quick Settings tile used to be the headline one and is now the bubble's
+ * on/off switch ([DictaTileService]), which opens nothing; the persistent
+ * trigger notification and `MainActivity`'s "Try dictation now" are deleted,
+ * because tapping the floating bubble is the only way a recording may begin.
+ * The enumerations below have been corrected to name the INTENT instead of its
+ * callers; if you find another "the tile, the notification and …" list in this
+ * file, it is stale rather than a surface you have not met.
  *
  * Flow: a recording is started elsewhere → live transcription → edit →
  * Copy / Send.
@@ -277,13 +278,15 @@ class DictateActivity : Activity() {
      * ## Why only the history arm is re-run
      *
      * Deliberately narrower than [applyLaunchIntent]. Re-running the whole
-     * branch would mean the notification action (or MainActivity's "Try
-     * dictation now") on an already-open card now starts a dictation where
-     * today it does nothing — a behaviour change to the other entry points, in
-     * a change about this one. (It read "a Quick Settings tap … three entry
-     * points, in a change about a fourth" — the tile has not opened this card
-     * since it became the bubble's toggle, so the count is two, and the
-     * argument is unaffected.)
+     * branch would mean a *plain* launch — an overlay intent carrying neither
+     * [DictateLaunch.EXTRA_ATTACH_SESSION] nor
+     * [DictateLaunch.EXTRA_HISTORY_ID] — delivered to an already-open card now
+     * starting a dictation where today it does nothing: a behaviour change to
+     * another arm, in a change about this one. (This enumerated the callers
+     * instead and had to be recounted twice as they went away — "a Quick
+     * Settings tap … three entry points, in a change about a fourth", then
+     * "the notification action or *Try dictation now* … so the count is two".
+     * The argument never depended on the count, so it is stated without one.)
      * 🔴 The ATTACH arm is the exception, and it is re-run. This paragraph
      * used to say it was "left alone" because it "survives a dropped extra
      * today only because `busSink` stays registered … which is luck rather
@@ -427,18 +430,20 @@ class DictateActivity : Activity() {
         // the text area, while the status line read "the microphone is off."
         //
         // Reachable because the bubble's machine and the card's session are
-        // independent: open the card from the notification's Dictate action
-        // (or MainActivity's "Try dictation now") — onCreate auto-starts a
+        // independent: open the card with a PLAIN overlay intent — one
+        // carrying no EXTRA_ATTACH_SESSION, so onCreate auto-starts a
         // dictation — the bubble machine stays IDLE so a long press still
         // reveals, and a chip tap delivers onNewIntent to the card on top.
         // Audit round 1 of #17, F3.
         //
-        // 🔴 This route used to be written as "open the card from the QS tile".
-        // The tile no longer opens the card at all, so that spelling of the
-        // route is gone. The MECHANISM is unchanged and the guard is still
-        // reachable — any surface whose intent carries no EXTRA_ATTACH_SESSION
-        // makes onCreate auto-start a dictation, and two of those remain. Only
-        // the surface naming was corrected; no new justification was invented
+        // 🔴 This route has been respelled twice as its callers went away:
+        // "open the card from the QS tile", then "from the notification's
+        // Dictate action (or MainActivity's Try dictation now)". The tile
+        // opens no card, and the other two are deleted. The MECHANISM is
+        // unchanged and the guard is still reachable — it is a property of the
+        // INTENT, not of whoever sends it, which is why it is now written that
+        // way and carries no count. DictateHistoryCardTest drives it directly.
+        // Only the naming has ever changed; no new justification was invented
         // for this guard.
         //
         // Stop rather than discard, for the reason requestScreenshot already
@@ -825,15 +830,20 @@ class DictateActivity : Activity() {
      */
     private fun startDictation() {
         haveRemoteTranscript = false
-        // 🔴 The path this method has to refuse: the bubble is RECORDING and
-        // by design nothing is on screen. The user pulls down the shade and
-        // taps the notification's Dictate action (or opens the launcher icon →
-        // "Try dictation now"). Neither carries EXTRA_ATTACH_SESSION — so
-        // `singleTop` creates a card, `onCreate` finds no extra,
-        // `hasMicPermission()` is true, and a second capture starts against a
-        // live one. Same for the attached card's own mic button, which
-        // `attachToBubbleSession` leaves fully enabled. Android does not error
-        // on either: it feeds one of the two captures exact zeros.
+        // 🔴 The path this method has to refuse: the bubble is RECORDING and a
+        // card is opened by a PLAIN overlay intent — one carrying no
+        // EXTRA_ATTACH_SESSION. `singleTop` creates a card, `onCreate` finds
+        // no extra, `hasMicPermission()` is true, and a second capture starts
+        // against a live one. Same for the attached card's own mic button,
+        // which `attachToBubbleSession` leaves fully enabled. Android does not
+        // error on either: it feeds one of the two captures exact zeros.
+        //
+        // 🔴 Stated as a property of the INTENT, because the callers it used
+        // to name have all gone: the QS tile (now the bubble's toggle), then
+        // the notification's Dictate action and the launcher icon's "Try
+        // dictation now" (both deleted). The guard is pinned by
+        // MicrophoneOwnershipTest, which constructs that intent itself and so
+        // does not depend on any surface existing.
         //
         // 🔴 ONE check, up front, covering BOTH of this method's two
         // microphone openers:

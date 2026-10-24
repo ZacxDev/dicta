@@ -259,12 +259,15 @@ class DictateLaunchTest {
      * fails when the set of files constructing a `DictateActivity` intent grows
      * **or** shrinks, so adding one forces a decision here.
      *
-     * `MainActivity` is on the allowed list because its "Try dictation now"
-     * button deliberately starts the overlay **in its own task with no flags** —
-     * correct there, since the user is already looking at the app.
+     * 🔴 `MainActivity` **was** on the allowed list, for its "Try dictation now"
+     * button, which deliberately started the overlay in its own task with no
+     * flags — correct there, since the user was already looking at the app.
+     * That button is deleted: it was a second way to start a recording, and the
+     * floating bubble's tap is now the only one. So the ledger is a set of ONE,
+     * and the exception it carried is gone with the surface that needed it.
      */
     @Test
-    fun onlyDictateLaunchAndMainActivityConstructOverlayIntents() {
+    fun onlyDictateLaunchConstructsOverlayIntents() {
         val srcDir = listOf(
             File("app/src/main/java/dev/zacx/dicta"),
             File("src/main/java/dev/zacx/dicta"),
@@ -286,8 +289,10 @@ class DictateLaunchTest {
                 "Every trigger that opens the overlay from OUTSIDE the app must " +
                 "go through DictateLaunch, or it will repeat issue #11. If you " +
                 "added a trigger, route it through DictateLaunch; if you " +
-                "genuinely need a new in-task launch, add it here deliberately.",
-            listOf("DictateLaunch.kt", "MainActivity.kt"),
+                "genuinely need a new in-task launch, add it here deliberately " +
+                "— and note that a PLAIN launch auto-starts a recording, so " +
+                "StartSurfaceLedgerTest has to agree with you as well.",
+            listOf("DictateLaunch.kt"),
             constructors,
         )
     }

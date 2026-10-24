@@ -26,25 +26,26 @@ import org.robolectric.annotation.Config
  * ## The hole this covers
  *
  * [DictateLaunch.EXTRA_ATTACH_SESSION] suppresses the card's own
- * `startDictation()` only on the intent **the bubble itself sends**.
- * `DictateLaunch.intent()` carries no extra, and the persistent notification
- * ([MainActivity]) goes through `pendingIntent()`, which wraps that bare
- * intent, while `MainActivity`'s "Try dictation now" builds its own plain
- * intent — so:
+ * `startDictation()` only on the intent the bubble sends for a capture it has
+ * already finished. A *plain* `DictateLaunch.intent()` carries no extra — so:
  *
  *  * **Path A.** The bubble is RECORDING and, by design, nothing is on screen.
- *    The user pulls down the shade and taps the notification's Dictate action
- *    (or opens the launcher icon → "Try dictation now"). No card exists,
+ *    A card is then opened by a plain overlay intent. No card exists,
  *    `singleTop` creates one, `onCreate` finds no extra,
  *    `hasMicPermission()` is true → `startDictation()` → a second
  *    `AudioRecord` while the bubble's is live.
  *
- *    🔴 **The QS tile ([DictaTileService]) used to be named first on this path
- *    and is no longer on it at all** — it is the bubble's on/off switch and
- *    references `DictateLaunch` nowhere. Path A is **not** narrowed to nothing
- *    by that: the notification and "Try dictation now" still reach it exactly
- *    as described, so the behaviour under test and the guard that covers it are
- *    unchanged. Only the surface names were wrong.
+ *    🔴 **Path A is stated as a property of the INTENT, because every surface
+ *    it used to name has gone.** First the QS tile ([DictaTileService]), which
+ *    is the bubble's on/off switch and references `DictateLaunch` nowhere; then
+ *    the persistent trigger notification and `MainActivity`'s "Try dictation
+ *    now", both deleted along with `DictateLaunch.pendingIntent`. The one
+ *    production caller of a plain intent left is `BubbleService`'s
+ *    mic-permission hop. Path A is **not** narrowed to nothing by that: the
+ *    behaviour under test is `onCreate`'s own auto-start on an intent with no
+ *    attach extra, and [aPlainLaunchIntentCannotStartASecondDictationWhileTheMicIsHeld]
+ *    builds that intent itself rather than going through any surface, so the
+ *    guard it pins is unaffected by which callers exist.
  *  * **Path B.** The attached "transcribing…" card left `micButton` fully
  *    enabled — `attachToBubbleSession` only changed its *text*. Past the 1.5 s
  *    grace the bubble is tappable too, so card-mic plus bubble-tap in either
@@ -53,7 +54,7 @@ import org.robolectric.annotation.Config
  *    no control that starts a recording in any state, so this path no longer
  *    depends on the refusal — see
  *    [theAttachedCardOffersNoControlThatCouldStartASecondCapture]. Path A
- *    still does, because the tile/notification intent auto-starts in
+ *    still does, because a plain launch auto-starts in
  *    `onCreate`.
  *
  * 🔴 Neither path errors. Android resolves microphone contention by feeding the
@@ -69,7 +70,7 @@ import org.robolectric.annotation.Config
  * behavioural claim — **no second capture is attempted** — and it carries it
  * with a positive control, because a zero from a harness that never reaches
  * `MicCapture` is indistinguishable from a zero caused by the guard. The
- * activity-level tests carry the *surface* claim: that the tile/notification
+ * activity-level tests carry the *surface* claim: that a plain-launch
  * path and the card's own mic button refuse and report, instead of starting
  * something. They discriminate on the status line, which is a genuine
  * behavioural tell for "which branch of `startDictation()` ran" — the same
@@ -313,23 +314,26 @@ class MicrophoneOwnershipTest {
         )
     }
 
-    // --- Path A: the notification / launcher intent --------------------------
+    // --- Path A: the plain-launch intent -------------------------------------
 
     /**
      * 🔴 Path A end to end, from the card's side.
      *
-     * The intent is [DictateLaunch.intent] — literally what the notification
-     * action wraps (`pendingIntent()`), and what MainActivity's "Try dictation
-     * now" opens the card with. It carries no `EXTRA_ATTACH_SESSION`, so the
-     * attach branch does not fire and `onCreate` goes on to `startDictation()`.
+     * The intent is [DictateLaunch.intent] — the plain launch, carrying no
+     * `EXTRA_ATTACH_SESSION`, so the attach branch does not fire and `onCreate`
+     * goes on to `startDictation()`. Its one production caller is
+     * `BubbleService`'s mic-permission fallback.
      *
-     * 🔴 Named `theTileIntent…` until the Quick Settings tile stopped opening
-     * the card. **No coverage changed with the rename** — the intent under test
-     * is the same `DictateLaunch.intent`, and the notification still wraps it;
-     * the old name simply claimed a caller that no longer exists.
+     * 🔴 Named `theTileIntent…`, then `theNotificationIntent…`, and now neither:
+     * the Quick Settings tile stopped opening the card, and the trigger
+     * notification and MainActivity's "Try dictation now" were both deleted.
+     * **No coverage changed across either rename** — the intent under test is
+     * the same `DictateLaunch.intent` throughout; each old name simply claimed a
+     * caller that no longer exists. The name is now the intent's own shape
+     * rather than a caller's, so a caller going away cannot falsify it again.
      */
     @Test
-    fun theNotificationIntentCannotStartASecondDictationWhileTheMicIsHeld() {
+    fun aPlainLaunchIntentCannotStartASecondDictationWhileTheMicIsHeld() {
         grantMic()
         val bubbleSession = Any()
         MicrophoneOwner.acquire(bubbleSession)
@@ -340,7 +344,7 @@ class MicrophoneOwnershipTest {
             .get()
 
         assertEquals(
-            "the card opened from the notification ran its own " +
+            "the card opened from a plain launch ran its own " +
                 "startDictation() while the bubble held the microphone. That " +
                 "is a second AudioRecord against a live one, and Android " +
                 "answers it by feeding one of them exact zeros — no exception, " +
@@ -505,8 +509,8 @@ class MicrophoneOwnershipTest {
      *
      * 🔴 The guard the old test exercised is NOT deleted.
      * `startDictation`'s `isHeldByOtherThan` check still covers Path A — the
-     * notification / launcher intent, which auto-start on open — and
-     * [theNotificationIntentCannotStartASecondDictationWhileTheMicIsHeld] is
+     * plain launch, which auto-starts on open — and
+     * [aPlainLaunchIntentCannotStartASecondDictationWhileTheMicIsHeld] is
      * what keeps it alive.
      */
     @Test

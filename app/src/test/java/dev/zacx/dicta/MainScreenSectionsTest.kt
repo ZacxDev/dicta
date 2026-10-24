@@ -24,9 +24,18 @@ import javax.xml.parsers.DocumentBuilderFactory
  * The copy denied in words what the heading two lines above asserted, and the
  * commit that corrected the copy claimed it had done so "rather than leaving
  * the heading to imply otherwise". The heading was left. A screen whose heading
- * and whose first row disagree is the same class of defect as two surfaces
- * rendering one flag from two predicates: whichever the user reads first is the
- * one they act on.
+ * and whose rows disagree is the same class of defect as two surfaces rendering
+ * one flag from two predicates: whichever the user reads first is the one they
+ * act on.
+ *
+ * 🔴 The heading has since been **renamed** rather than reworded —
+ * `@string/section_triggers` → `@string/section_bubble`, "Floating bubble" —
+ * because the group's third row (the persistent trigger notification) was
+ * deleted along with the surface, leaving the floating bubble as the one
+ * trigger. A name meaning "the list of triggers" over a list of one trigger and
+ * one toggle was the identifier drifting from its meaning, which is how the next
+ * author reinstates what it used to describe. The defect class is unchanged, and
+ * so is this test's job.
  *
  * ## Why a whole-string pin and not a keyword check
  *
@@ -62,47 +71,74 @@ class MainScreenSectionsTest {
 
         assertTrue(
             "the layout parse produced no section groups at all, so the " +
-                "assertion below would compare an absent list against an " +
-                "absent list. Found: ${groups.keys}",
+                "assertion below would compare an absent map against an " +
+                "absent map. Found: ${groups.keys}",
             groups.size >= 2,
         )
+        // 🔴 The WHOLE map, not one group. The name of this test says "each
+        // heading"; asserting a single group would be a docstring claiming
+        // coverage the body does not provide — and a row moved from one group
+        // into another would pass, which is the exact mis-attribution the
+        // parse exists to catch. Pinned as an ordered ledger so the set
+        // failing when it GROWS or SHRINKS is the same assertion.
         assertEquals(
-            "the rows under @string/section_triggers changed. This group's " +
-                "heading has to be true of EVERY row in it, and the rows are " +
-                "not all triggers: @string/tile_row is the bubble's on/off " +
-                "switch and starts nothing, which is why the heading reads " +
-                "\"From anywhere\" rather than naming triggers. If you add a " +
-                "row here, check the heading still describes it — and if you " +
-                "move one out, check the heading has not become narrower than " +
-                "it needs to be. Found: ${groups["@string/section_triggers"]}",
-            listOf("@string/tile_row", "@string/bubble_row", "@string/notif_row"),
-            groups["@string/section_triggers"],
+            "the setup screen's heading→rows ledger changed. Each heading has " +
+                "to be true of EVERY row beneath it: @string/section_bubble " +
+                "covers the bubble itself (the one trigger) and " +
+                "@string/tile_row, which is the bubble's on/off switch and " +
+                "starts nothing — which is why the heading names the bubble " +
+                "rather than naming triggers. @string/notif_row was a third " +
+                "row here and is deleted with the trigger notification. If you " +
+                "add a row, check its heading still describes it; if you move " +
+                "one out, check that heading has not become narrower than it " +
+                "needs to be. The @string/status_not_granted entries are the " +
+                "two permission rows' status placeholders — the layout spells " +
+                "the ungranted value and MainActivity rewrites it at runtime " +
+                "— and they are copy under that heading, so they are listed " +
+                "rather than filtered away.",
+            linkedMapOf(
+                "@string/section_permissions" to listOf(
+                    "@string/mic_row",
+                    "@string/status_not_granted",
+                    "@string/overlay_row",
+                    "@string/status_not_granted",
+                ),
+                "@string/section_bubble" to
+                    listOf("@string/bubble_row", "@string/tile_row"),
+            ),
+            groups,
         )
     }
 
     /**
      * The prose half: the two strings that have to agree, pinned whole.
      *
-     * The heading must not promise a way to START a dictation, because the
-     * first row under it is the tile and the tile opens nothing. Both values are
-     * asserted here rather than one, because the contradiction is a
-     * *relationship*: correcting either string on its own is how this screen
-     * came to say two different things.
+     * The heading must not promise a way to START a dictation beyond the one
+     * there is, because one of the rows under it is the tile and the tile opens
+     * nothing. Both values are asserted here rather than one, because the
+     * contradiction is a *relationship*: correcting either string on its own is
+     * how this screen came to say two different things.
+     *
+     * 🔴 The heading asserted here is `@string/section_bubble`. The old
+     * `@string/section_triggers` must be **absent**, not merely unused — a
+     * string that still exists is a heading a layout can reinstate just by
+     * spelling it, and the one it names ("Triggers (pick any)") is the exact
+     * false promise this test was written for.
      */
     @Test
     fun theHeadingAndTheTileRowStillSayTheSameThing() {
         val strings = stringsIn(read(*STRINGS, what = "strings.xml"))
 
         assertEquals(
-            "@string/section_triggers changed. It labels a group whose first " +
-                "row is the Quick Settings tile, and the tile switches the " +
-                "floating bubble on and off — it starts no dictation. A " +
-                "heading that calls the rows beneath it triggers therefore " +
-                "contradicts @string/tile_row directly below it, which is the " +
-                "state this screen shipped in once. If the new wording keeps " +
-                "that true, update this expectation deliberately.",
-            "From anywhere",
-            strings["section_triggers"],
+            "@string/section_bubble changed. It labels a group containing the " +
+                "Quick Settings tile, and the tile switches the floating " +
+                "bubble on and off — it starts no dictation. A heading that " +
+                "calls the rows beneath it triggers therefore contradicts " +
+                "@string/tile_row in the same group, which is the state this " +
+                "screen shipped in once. If the new wording keeps that true, " +
+                "update this expectation deliberately.",
+            "Floating bubble",
+            strings["section_bubble"],
         )
         assertEquals(
             "@string/tile_row changed. It is the sentence that tells the user " +
@@ -110,8 +146,18 @@ class MainScreenSectionsTest {
                 "heading above it has to stay consistent with. Its previous " +
                 "wording — \"swipe down from any app and tap Dicta\" — " +
                 "promised a dictation the tile does not start.",
-            "Quick Settings tile — swipe down from any app to switch the bubble on or off.",
+            "Quick Settings tile — switch the bubble on or off from the shade of any app.",
             strings["tile_row"],
+        )
+        assertEquals(
+            "@string/section_triggers is back. It read \"Triggers (pick any)\" " +
+                "over a group whose first row denied being a trigger, and it " +
+                "was renamed to @string/section_bubble rather than reworded so " +
+                "that the identifier could not outlive its meaning. A string " +
+                "that exists is a heading a layout can reinstate by spelling " +
+                "it. Found: ${strings["section_triggers"]}",
+            null,
+            strings["section_triggers"],
         )
     }
 
@@ -124,7 +170,7 @@ class MainScreenSectionsTest {
      * see a row **nested** inside a panel rather than only a direct child,
      * which is how every row in the real layout is written; and it must ignore
      * a container that is not a row panel, which is how `@id/settings_slot`
-     * stays out of the triggers group.
+     * stays out of the bubble group.
      */
     @Test
     fun theGrouperActuallyGroups() {
@@ -184,7 +230,7 @@ class MainScreenSectionsTest {
         )
         assertTrue(
             "the grouper counted a container that is NOT a row panel. That is " +
-                "what keeps @id/settings_slot out of the triggers group, so " +
+                "what keeps @id/settings_slot out of the bubble group, so " +
                 "without it the ledger would churn on an unrelated slot: " +
                 "$everything",
             !everything.contains("@string/not_a_row_panel"),
@@ -209,9 +255,10 @@ class MainScreenSectionsTest {
      * Anything before the first heading belongs to no section and is dropped.
      *
      * 🔴 The row-panel filter is why `@id/settings_slot` is not in any group.
-     * It is a `FrameLayout` with no `row_bg`, deliberately placed after the
-     * triggers it configures and before the call to action (see the layout's
-     * own header), so it is not copy that a section heading has to be true of.
+     * It is a `FrameLayout` with no `row_bg`, deliberately placed after the bubble
+     * group it configures (see the layout's own header), so it is not copy that a
+     * section heading has to be true of. The call to action it used to sit above
+     * — `@id/try_now_button` — is deleted.
      * [theGrouperActuallyGroups] pins that the filter excludes it.
      */
     private fun groupsIn(layout: String): LinkedHashMap<String, List<String>> {
