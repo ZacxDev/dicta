@@ -20,13 +20,25 @@ import java.io.File
  * user just took and shared.
  *
  * A **second overlay window** is the way that regresses, and nothing
- * structural was watching for one. Hence a ledger rather than a count: it
- * fails when the set **grows or shrinks**, so a new overlay surface forces a
- * deliberate decision here instead of inheriting the old bug.
+ * structural was watching for one. Hence a ledger: it fails when the set
+ * **grows or shrinks**, so a new overlay surface forces a deliberate decision
+ * here instead of inheriting the old bug.
  *
- *  * `BubbleService.kt` — the bubble and its cancel button share one window,
- *    and it registers a sink (`OverlayVisibility.register(visibilitySink)` in
- *    `onCreate`) that both hides the view and zeroes `params.alpha`.
+ * 🔴 The ledger is a map from file to **how many** windows that file adds, not
+ * a list of files. A set of file names passes unchanged when an existing owner
+ * opens a second window, which is a guard that can be satisfied while the
+ * exact hazard it names exists in a different shape — and it is the shape that
+ * arrived: the unreachable-server warning is a second `addView` inside
+ * `BubbleService.kt`.
+ *
+ *  * `BubbleService.kt` — **two** windows. (1) the bubble, which shares its
+ *    window with the cancel button and the history row; (2) the
+ *    unreachable-server warning dialog, which cannot be a child of (1) because
+ *    that window is dragged, `WRAP_CONTENT` and positioned at `Gravity.TOP|END`
+ *    — see the field kdoc on `BubbleService.warning`. One
+ *    `OverlayVisibility.register(visibilitySink)` in `onCreate` drives both,
+ *    from one boolean, so the two windows cannot disagree about whether Dicta
+ *    is on screen.
  *
  * 🔴 **Receiver-spelling insensitivity is load-bearing, and was learned the
  * hard way.** [DictationSessionLedgerTest]'s kdoc records the sibling ledger's
@@ -46,30 +58,34 @@ import java.io.File
  * `WindowManager` obtained in one file and handed to another. The ledger
  * tracks textual call sites of the platform API, not the behaviour.
  *
- * Measured over every `.kt` file in `app/src/main/java/dev/zacx/dicta` before
- * the set below was pinned: exactly one file matches, with exactly one call —
- * `BubbleService.kt`'s `wm.addView(container, params)`.
+ * Measured over every `.kt` file in `app/src/main/java/dev/zacx/dicta`: exactly
+ * one file matches, with exactly two calls — `BubbleService.kt`'s
+ * `wm.addView(container, params)` and `wm.addView(view, p)`.
  */
 class OverlayWindowLedgerTest {
 
     @Test
     fun onlyTheDeclaredOwnersAddAWindowManagerView() {
         val adders = sourceFiles()
-            .filter { f -> windowManagerAddViewCount(f.readText()) > 0 }
-            .map { it.name }
-            .sorted()
+            .map { it.name to windowManagerAddViewCount(it.readText()) }
+            .filter { (_, n) -> n > 0 }
+            .sortedBy { (name, _) -> name }
+            .toMap()
 
         assertEquals(
-            "the set of files that add a WindowManager view changed. Every " +
+            "the per-file count of WindowManager.addView calls changed. Every " +
                 "such view is an overlay window, and MediaProjection " +
                 "composites an overlay window into EVERY frame it captures — " +
                 "which is how Dicta's own UI ended up inside the user's " +
-                "screenshots (PR #4). If you added an overlay window: register " +
-                "an OverlayVisibility sink for it that hides it for the " +
-                "duration of a capture, or put the view inside the existing " +
-                "window instead of opening a second one. Then add the file " +
-                "here deliberately.",
-            listOf("BubbleService.kt"),
+                "screenshots (PR #4). If you added an overlay window: drive it " +
+                "from the SAME OverlayVisibility sink as the existing ones, so " +
+                "it is hidden for the duration of a capture, or put the view " +
+                "inside an existing window instead of opening another. Then " +
+                "change the count here deliberately. 🔴 A COUNT and not a set " +
+                "of file names: a set passes unchanged when an existing owner " +
+                "opens a second window, which is exactly how this feature's " +
+                "warning dialog arrived.",
+            mapOf("BubbleService.kt" to 2),
             adders,
         )
     }

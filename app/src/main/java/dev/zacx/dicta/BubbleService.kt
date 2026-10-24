@@ -6,7 +6,10 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.graphics.PixelFormat
@@ -14,6 +17,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.os.PowerManager
 import android.provider.Settings
 import android.view.Gravity
 import android.view.MotionEvent
@@ -24,6 +28,7 @@ import android.widget.FrameLayout
 import android.widget.ImageButton
 import android.widget.LinearLayout
 import android.widget.ListView
+import android.widget.TextView
 import android.widget.Toast
 import kotlin.math.abs
 
@@ -54,14 +59,30 @@ import kotlin.math.abs
  *     tested. What is left here is window handling, animation and platform
  *     calls: device evidence only.
  *
- * ## One window, not two
+ * ## Two windows, and one sink
  *
- * The bubble and the cancel button share a single [WindowManager] view. 🔴 Not
- * tidiness: [OverlayVisibility] hides Dicta's own overlay for the duration of a
- * MediaProjection capture by zeroing `params.alpha` on **one** `params`, and a
- * second window would be a second thing to remember to hide. Missing one
- * composites Dicta's own UI into every screenshot the user takes, which this
- * app has already shipped once.
+ * 🔴 **CORRECTION.** This section read *"One window, not two"* and said that
+ * the bubble and the cancel button share a single [WindowManager] view, which
+ * they do — but it then generalised to the file, and that is no longer true:
+ * the unreachable-server warning ([warning]) is a second
+ * `TYPE_APPLICATION_OVERLAY` window added by this same class. The *hazard* the
+ * old wording existed for is unchanged and is the reason the correction is
+ * worth more than a deletion: [OverlayVisibility] takes Dicta's overlays off
+ * the screen for the duration of a MediaProjection capture, and an overlay
+ * window nobody remembers to hide is composited into every screenshot the user
+ * takes — which this app has already shipped once (PR #4).
+ *
+ * What replaces "one window" as the actual invariant is **one sink**: the
+ * single `visibilitySink` registered in [onCreate] drives *both* windows from
+ * one boolean, so they cannot disagree about whether Dicta is on screen, and
+ * adding a window without adding it to that sink is what
+ * [OverlayWindowLedgerTest] fails on — it counts `addView` calls **per file**
+ * rather than listing files, precisely because a file-name set stays green when
+ * an existing owner opens a second window.
+ *
+ * The cancel button and the history row are still children of the bubble's
+ * window rather than windows of their own, for the reason each of their fields
+ * gives. The warning dialog cannot be: see [warning].
  */
 class BubbleService : Service() {
 
@@ -98,10 +119,15 @@ class BubbleService : Service() {
     /**
      * The recent-dictations row, revealed by a long press. 🔴 A child of the
      * existing window, **never a second window** — see the class header and
-     * [OverlayWindowLedgerTest]. A second overlay window would need its own
-     * `params`, its own alpha, its own add/remove lifecycle, its own clamp and
-     * its own [OverlayVisibility] sink; forgetting the last of those is PR #4's
-     * bug, which put Dicta's own UI inside the user's screenshots.
+     * [OverlayWindowLedgerTest]. As a window it would need its own `params`,
+     * its own alpha, its own add/remove lifecycle and its own place in the
+     * clamp arithmetic, and it needs none of those as a child.
+     *
+     * ⚠ This used to end *"and its own [OverlayVisibility] sink; forgetting the
+     * last of those is PR #4's bug"*. The hazard is real and is still PR #4's
+     * bug, but "its own sink" is not how it is paid: [warning] is a second
+     * window and shares the ONE sink registered in [onCreate], deliberately,
+     * so that two windows cannot disagree about whether Dicta is on screen.
      */
     private var historyRow: ListView? = null
 
@@ -216,6 +242,75 @@ class BubbleService : Service() {
 
     /** Off-main-thread reads of the history index. See [loadRecentHistory]. */
     private val worker = java.util.concurrent.Executors.newSingleThreadExecutor()
+
+    /**
+     * The **one** holder of what is known about the transcription server's
+     * reachability. See [SttReachability] for the fail-open contract and
+     * [SttReachabilityLedgerTest] for who may touch it.
+     *
+     * `internal var` for the same reason as [sessionFactory]: the staleness
+     * rule is a function of a clock, and a test that slept through a 60 s
+     * window would be a test of `Thread.sleep`.
+     */
+    internal var reachability: SttReachability = SttReachability()
+
+    /**
+     * The warning dialog's own `WindowManager` view, or null when none is up.
+     *
+     * 🔴 A SECOND overlay window, which this file's class header argues
+     * against for the cancel button and the history row. The difference is not
+     * that the hazard went away — it is that this surface cannot be a child of
+     * the bubble's window. That window is `WRAP_CONTENT` at `Gravity.TOP|END`
+     * with a `y` the user drags, and every piece of [clampWindow]'s arithmetic
+     * is written in terms of the bubble staying put as children are added
+     * above and below it. A ~300 dp card centred on the display is not
+     * expressible there: it would have to widen the dragged window to most of
+     * the screen, and that window consumes every touch inside its bounds.
+     *
+     * So the hazard is paid rather than dodged: [visibilitySink] drives BOTH
+     * windows, and [OverlayWindowLedgerTest] counts calls per file rather than
+     * merely listing files, so this second `addView` had to be declared.
+     */
+    private var warning: View? = null
+
+    /** [warning]'s layout params, so [visibilitySink] can zero its alpha. */
+    private var warningParams: WindowManager.LayoutParams? = null
+
+    /**
+     * Registered in [onCreate] and unregistered in [onDestroy]; the flag is
+     * what makes the unregister safe when `onCreate` returned early (no
+     * overlay permission, or a refused promotion), since
+     * `unregisterReceiver` throws for a receiver that was never registered.
+     */
+    private var screenReceiverRegistered = false
+
+    /**
+     * Where the `/healthz` probe runs. `null` means [SttHttp].
+     *
+     * 🔴 Not a second probe. `SttHttp.healthz()` is the probe — it already
+     * carries its own short read timeout and `SttRetryPolicy`'s connect
+     * timeout, and it already turns every transport failure into `false`. This
+     * seam exists so a test can decide what the server says without opening a
+     * socket, and the token it is handed is empty because `healthz()` sends no
+     * `Authorization` header: the endpoint is unauthenticated, and attaching
+     * one would make a token fault look like an outage.
+     */
+    internal var healthProbe: ((String) -> Boolean)? = null
+
+    /** Where [healthProbe] runs. `null` means [worker]. As [historyExecutor]. */
+    internal var probeExecutor: java.util.concurrent.Executor? = null
+
+    /**
+     * Where the base URL and the remote opt-out come from. `null` means
+     * [SttSettings.create].
+     *
+     * A seam because [KeystoreCipher] has no Robolectric implementation, so a
+     * token cannot be *stored* off-device — and `isRemoteConfigured` is
+     * `remoteEnabled && hasToken`. A test therefore builds a real
+     * [SttSettings] over a real `SharedPreferences` with a reversible cipher,
+     * which exercises the production predicate rather than a stand-in for it.
+     */
+    internal var settingsProvider: (() -> SttSettings)? = null
 
     /**
      * Swappable session construction.
@@ -338,6 +433,13 @@ class BubbleService : Service() {
         wm = getSystemService(WindowManager::class.java)
         buildWindow()
         OverlayVisibility.register(visibilitySink)
+        registerScreenReceiver()
+        // 🔴 Immediately, not after one interval. The operator's first case is
+        // "as soon as the bubble opens": a bubble that has been up for two
+        // seconds has no knowledge, which is a PROCEED, so without this the
+        // warning is unavailable for the first minute of every service life —
+        // and the service is restarted on every boot and every upgrade.
+        scheduleProbe(0L)
     }
 
     // --- the window ---------------------------------------------------------
@@ -540,6 +642,25 @@ class BubbleService : Service() {
                 }
                 runCatching { wm.updateViewLayout(view, params) }
             }
+            // 🔴 The warning dialog is a second overlay window and therefore a
+            // second thing MediaProjection composites into the user's
+            // screenshot — the omission this file's header calls PR #4's bug.
+            // Driven from the same sink and the same boolean so the two
+            // windows cannot disagree about whether Dicta is on screen.
+            val dialog = warning
+            val dialogParams = warningParams
+            if (dialog != null && dialogParams != null) {
+                dialog.visibility = if (visible) View.VISIBLE else View.INVISIBLE
+                dialogParams.alpha = if (visible) 1f else 0f
+                dialogParams.flags = if (visible) {
+                    dialogParams.flags and
+                        WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
+                } else {
+                    dialogParams.flags or
+                        WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+                }
+                runCatching { wm.updateViewLayout(dialog, dialogParams) }
+            }
         }
     }
 
@@ -561,6 +682,16 @@ class BubbleService : Service() {
 
     override fun onDestroy() {
         OverlayVisibility.unregister(visibilitySink)
+        unregisterScreenReceiver()
+        // 🔴 Explicit, even though `removeCallbacksAndMessages(null)` on the
+        // next line also drops it. The periodic probe is a SELF-RESCHEDULING
+        // chain, so the one thing that must be true after this method is that
+        // no further tick can be posted — and the blanket clear is a statement
+        // about the queue, while this is a statement about this chain. Keeping
+        // both means reordering or narrowing the blanket clear cannot silently
+        // leave the probe running against a destroyed service.
+        main.removeCallbacks(probeTick)
+        removeWarning()
         main.removeCallbacksAndMessages(null)
         // Discard rather than submit: the service going away is not the user
         // asking for a transcript, and an upload whose card can never open
@@ -587,13 +718,50 @@ class BubbleService : Service() {
     // --- the state machine --------------------------------------------------
 
     private fun tapped() {
+        // 🔴 While the warning dialog is up the machine is already in
+        // RECORDING, holding the tap that opened the dialog — see
+        // [applyEffects]. A second tap would therefore read as tap 2:
+        // stop-and-submit, opening the transcription card for a recording that
+        // never started. The bubble is still on screen and still tappable
+        // underneath the dialog, so this is reachable by a user who taps the
+        // bubble instead of answering.
+        if (warning != null) return
         val granted = checkSelfPermission(Manifest.permission.RECORD_AUDIO) ==
             PackageManager.PERMISSION_GRANTED
         applyEffects(machine.on(BubbleDictation.Event.BubbleTapped(granted)))
     }
 
-    /** Carries out the machine's decisions. Exhaustive `when` on purpose. */
+    /**
+     * Carries out the machine's decisions, **except** that a start which would
+     * record against an unreachable server is handed to the user first.
+     *
+     * 🔴 The gate sits here, at the one place [BubbleDictation.Effect.StartRecording]
+     * is dispatched, rather than in [tapped]: the predicate "this would start a
+     * recording" is the machine's and asking it again in the shell would be a
+     * second copy of the state, the debounce and the permission branch. It also
+     * means a future emitter of that effect inherits the gate.
+     *
+     * 🔴 When the dialog is shown this returns **without applying any effect
+     * and without rendering**. The machine has already moved to RECORDING, but
+     * nothing on screen says so — no pulse ring, no cancel button — so the
+     * bubble still looks idle while the user decides. Both exits then go
+     * through the ordinary paths: the primary button applies the very effect
+     * list that was withheld, and the secondary feeds
+     * [BubbleDictation.Event.CancelTapped], which is the existing "RECORDING →
+     * IDLE, discard, upload nothing" transition and is what puts the machine
+     * back where the user thinks it is.
+     */
     private fun applyEffects(effects: List<BubbleDictation.Effect>) {
+        if (effects.contains(BubbleDictation.Effect.StartRecording) &&
+            warnBeforeStarting(effects)
+        ) {
+            return
+        }
+        carryOut(effects)
+    }
+
+    /** Carries out the machine's decisions. Exhaustive `when` on purpose. */
+    private fun carryOut(effects: List<BubbleDictation.Effect>) {
         for (effect in effects) {
             when (effect) {
                 BubbleDictation.Effect.StartRecording -> startRecording()
@@ -1352,6 +1520,364 @@ class BubbleService : Service() {
         runCatching { Toast.makeText(this, getString(message), Toast.LENGTH_LONG).show() }
     }
 
+    // --- the reachability probe ----------------------------------------------
+
+    /**
+     * The base URL and the remote opt-out, through [settingsProvider].
+     *
+     * Constructed per call rather than cached: `SttSettings` reads through to
+     * `SharedPreferences` on every access, so the live value is what comes
+     * back when the user changes the setting in `SettingsActivity` while the
+     * bubble is up. `create` is `getSharedPreferences` plus two constructors —
+     * see [realSession] for why that reaches no keystore.
+     */
+    private fun sttSettings(): SttSettings =
+        settingsProvider?.invoke() ?: SttSettings.create(this)
+
+    /**
+     * 🔴 The one precondition for probing at all, and for warning at all.
+     *
+     * `isRemoteConfigured` is `remoteEnabled && tokens.hasToken`, and it is
+     * exactly what `RemoteTranscriber.transcribe` gates on. So when it is
+     * false the app never attempts a remote transcription in the first place:
+     * there is no server in the picture, nothing to warn about, and a probe
+     * would be a network call made on behalf of a feature the user turned off.
+     *
+     * 🔴 The TOKEN half is load-bearing here even though `/healthz` is
+     * unauthenticated. A probe would succeed against a reachable server with
+     * no token stored — and the recording would still go to the phone, because
+     * the upload path refuses before it opens a socket. Gating on
+     * `remoteEnabled` alone would therefore make the dialog's claim ("recording
+     * now will use the phone's own recognizer") the one thing it never said,
+     * since a *reachable* server never warns.
+     */
+    private fun remoteInUse(): Boolean = sttSettings().isRemoteConfigured
+
+    /**
+     * `PowerManager.isInteractive` — the screen gate.
+     *
+     * 🔴 No wakelock anywhere in this feature, and no probe while the phone is
+     * asleep. The operator measured the mesh tunnel dropping while the phone
+     * sleeps, so a probe then reports a failure that says nothing about
+     * whether the server is up — and recording it would arm the warning for
+     * the first tap after the screen comes back on. The structural half of the
+     * same decision is [SttReachability.forget] on `ACTION_SCREEN_OFF`.
+     *
+     * `isInteractive` and not `isScreenOn`: the latter is deprecated and, on a
+     * device with an always-on display, reports true while the device is
+     * dozing.
+     */
+    private fun screenIsInteractive(): Boolean =
+        getSystemService(PowerManager::class.java)?.isInteractive ?: true
+
+    private fun registerScreenReceiver() {
+        val filter = IntentFilter().apply {
+            addAction(Intent.ACTION_SCREEN_ON)
+            addAction(Intent.ACTION_SCREEN_OFF)
+        }
+        // 🔴 Both are protected broadcasts that CANNOT be declared in a
+        // manifest — the platform only delivers them to a runtime-registered
+        // receiver — which is why this is here and not in AndroidManifest.xml,
+        // and why it has to be torn down by hand.
+        screenReceiverRegistered =
+            runCatching { registerReceiver(screenReceiver, filter) }.isSuccess
+    }
+
+    private fun unregisterScreenReceiver() {
+        if (!screenReceiverRegistered) return
+        screenReceiverRegistered = false
+        runCatching { unregisterReceiver(screenReceiver) }
+    }
+
+    private val screenReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            when (intent?.action) {
+                Intent.ACTION_SCREEN_OFF -> {
+                    // Stop the chain AND drop what is known. Stopping alone
+                    // would leave the last pre-sleep result sitting in the
+                    // cache, ageing toward stale on a clock that keeps running
+                    // while the probes do not.
+                    main.removeCallbacks(probeTick)
+                    reachability.forget()
+                }
+                // Not "resume the chain": probe now. The screen coming back on
+                // is the moment before the user's next tap.
+                Intent.ACTION_SCREEN_ON -> scheduleProbe(0L)
+            }
+        }
+    }
+
+    private val probeTick = Runnable { runProbe() }
+
+    /** Replaces any pending tick, so the chain can never fork. */
+    private fun scheduleProbe(delayMs: Long) {
+        main.removeCallbacks(probeTick)
+        main.postDelayed(probeTick, delayMs)
+    }
+
+    /**
+     * One probe, then reschedules itself.
+     *
+     * 🔴 Every early return reschedules. A branch that returned without
+     * posting the next tick would stop the chain for the rest of the service's
+     * life — and the two conditions that cause an early return (the remote
+     * path off, the screen not interactive) are both things the user changes
+     * back, with no event of their own in the "turned it back on" direction
+     * for the settings one.
+     */
+    private fun runProbe() {
+        // The window is gone: the service is being torn down, or onCreate
+        // refused. Deliberately does NOT reschedule — this is the one
+        // terminal branch.
+        if (root == null) return
+        val settings = sttSettings()
+        if (!settings.isRemoteConfigured) {
+            // Drop any knowledge from before the user turned it off, so it
+            // cannot warn if they turn it back on an hour later.
+            reachability.forget()
+            scheduleProbe(SttReachability.PROBE_INTERVAL_MS)
+            return
+        }
+        if (!screenIsInteractive()) {
+            // A backstop for a screen that went off without the broadcast
+            // reaching us; ACTION_SCREEN_ON is the normal re-arm.
+            scheduleProbe(SttReachability.PROBE_INTERVAL_MS)
+            return
+        }
+        val token = reachability.beginProbe()
+        if (token == null) {
+            // One in flight already — nothing to do but come back later.
+            scheduleProbe(reachability.nextProbeDelayMs())
+            return
+        }
+        val baseUrl = settings.baseUrl
+        val probe = healthProbe ?: { url -> SttHttp(url, token = "").healthz() }
+        val executor = probeExecutor ?: worker
+        val submitted = runCatching {
+            executor.execute {
+                val outcome = runCatching { probe(baseUrl) }
+                main.post {
+                    // 🔴 A THROW records nothing; it does not record a failure.
+                    // `SttHttp.healthz` already maps every transport failure —
+                    // connect refused, read timeout, reset, a malformed URL —
+                    // to `false` and cannot throw, so an exception escaping
+                    // here is a fault in this process and carries no
+                    // observation about the server. Recording `false` for it
+                    // would mint the one input that warns out of a local bug,
+                    // and the previous result (including "nothing known")
+                    // stands instead.
+                    outcome.fold(
+                        onSuccess = { ok -> reachability.onProbeResult(token, ok) },
+                        onFailure = { reachability.abandonProbe() },
+                    )
+                    if (root != null) scheduleProbe(reachability.nextProbeDelayMs())
+                }
+            }
+        }.isSuccess
+        if (!submitted) {
+            // The executor refused — it is shut down, which is `onDestroy`.
+            // 🔴 Abandoned rather than recorded as a failure: nothing about the
+            // server was observed, and recording `false` here would mint a
+            // FRESH DEFINITE FAILURE out of a purely local condition, which is
+            // the one input that warns.
+            reachability.abandonProbe()
+        }
+    }
+
+    // --- the unreachable-server warning --------------------------------------
+
+    /**
+     * @return true when the dialog is now up and [effects] were withheld.
+     *
+     * 🔴 Fails open at every step, including the platform one: if
+     * `addView` refuses, this returns false and the caller records. A gate
+     * whose failure mode is "no recording" would be worse than no gate, since
+     * `TranscriptionCoordinator` already falls back to the on-device
+     * transcript when the server cannot be reached — so the cost of not
+     * warning is an unannounced fallback, and the cost of blocking is the
+     * dictation.
+     */
+    private fun warnBeforeStarting(effects: List<BubbleDictation.Effect>): Boolean {
+        if (!remoteInUse()) return false
+        if (reachability.verdict() != SttReachability.Verdict.WARN) return false
+        return showUnreachableWarning(effects)
+    }
+
+    /**
+     * Builds and adds the dialog window.
+     *
+     * 🔴 **`FLAG_NOT_FOCUSABLE`, like the bubble's window.** A focusable
+     * overlay takes input focus from whatever app is underneath, which closes
+     * its IME and can lose a half-typed message — and this dialog appears over
+     * an arbitrary app by design. Buttons do not need focus: a click is a
+     * touch, and touches are delivered to a non-focusable window inside its
+     * own bounds. What it costs is the hardware/gesture Back key, which the
+     * platform routes to the focused window; the two explicit buttons are the
+     * whole of the dismissal contract and the reason that is acceptable.
+     *
+     * 🔴 **No `FLAG_WATCH_OUTSIDE_TOUCH`, and this is a decision rather than
+     * an omission — an outside tap does nothing.** The three candidate
+     * meanings for a tap outside a two-button decision are "cancel", "record"
+     * and "nothing", and the first two both commit the user to an outcome they
+     * did not pick while their finger was somewhere else entirely. `#17`
+     * armed that flag for the history reveal, where it is right because the
+     * reveal is a *disclosure* with no outcome attached and dismissing it
+     * decides nothing. This window is sized to its own card, so a tap outside
+     * it is not delivered here at all and goes to the app underneath; the
+     * dialog stays until one of its buttons is pressed. Both buttons are
+     * on screen at all times, so there is no state this can strand the user
+     * in.
+     */
+    private fun showUnreachableWarning(effects: List<BubbleDictation.Effect>): Boolean {
+        removeWarning()
+        val view = buildWarningView(
+            onRecord = {
+                removeWarning()
+                carryOut(effects)
+            },
+            onDecline = {
+                removeWarning()
+                // The existing RECORDING → IDLE transition: discard, upload
+                // nothing, open no card. `stopRecording(submit = false)` then
+                // runs with a null session, which is exactly the state a
+                // withheld StartRecording leaves behind.
+                carryOut(machine.on(BubbleDictation.Event.CancelTapped))
+            },
+        )
+        val p = warningLayoutParams()
+        if (!runCatching { wm.addView(view, p) }.isSuccess) return false
+        warning = view
+        warningParams = p
+        return true
+    }
+
+    private fun removeWarning() {
+        val view = warning ?: return
+        warning = null
+        warningParams = null
+        runCatching { wm.removeView(view) }
+    }
+
+    /**
+     * 🔴 The WIDTH is explicit, in pixels, and that is the dimension that
+     * matters: it is what decides where the body text wraps. A `WRAP_CONTENT`
+     * width asks the window manager to size the window from the widest child,
+     * and the widest child here is a paragraph — so the result depends on how
+     * the platform chooses to break it, which is the dimension clipped text has
+     * been reported on for this project's existing overlay window. (Reported,
+     * not measured here: no handset was attached when this was written, and
+     * nothing in this environment can measure text.) Pinning it removes the
+     * dependency rather than betting on it. Capped against the display so a
+     * narrow or landscape screen cannot produce a card wider than the screen
+     * it is centred on.
+     *
+     * ⚠ The HEIGHT is `WRAP_CONTENT`, deliberately. A fixed height is the
+     * thing that clips: the body is a translated, user-locale string whose
+     * rendered line count is a device fact, and this project's Robolectric
+     * cannot measure text at all (`TextPaint.measureText` returns a flat
+     * 1.0 px per character), so any constant chosen here would be a guess that
+     * no test could check. With the width pinned and the window centred, the
+     * wrap is measured against the full display height, which is the one
+     * dimension that is never the constraint.
+     */
+    private fun warningLayoutParams(): WindowManager.LayoutParams {
+        val density = resources.displayMetrics.density
+        val wanted = (WARNING_WIDTH_DP * density).toInt()
+        val available =
+            resources.displayMetrics.widthPixels - 2 * (WARNING_MARGIN_DP * density).toInt()
+        return WindowManager.LayoutParams(
+            minOf(wanted, maxOf(available, 1)),
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+            PixelFormat.TRANSLUCENT,
+        ).apply { gravity = Gravity.CENTER }
+    }
+
+    /**
+     * The card: a title, the body, and the two buttons.
+     *
+     * Built in code rather than inflated from a layout for the same reason the
+     * bubble is — a `Service` has no `LayoutInflater` theme and the one piece
+     * of styling that matters here is the surface ramp, which is two
+     * `getColor` calls.
+     *
+     * 🔴 The primary button RECORDS. It is first in the stack and carries the
+     * accent fill because that is this app's "dictate" affordance; the
+     * secondary is outlined and starts nothing. Nothing here is `GONE` or
+     * conditionally added: both buttons exist for every showing of this
+     * dialog, because a decision surface with one reachable exit is the
+     * focus-steal trap wearing a card.
+     */
+    private fun buildWarningView(onRecord: () -> Unit, onDecline: () -> Unit): View {
+        val density = resources.displayMetrics.density
+        val pad = (20 * density).toInt()
+        val gap = (12 * density).toInt()
+        val buttonHeight = (48 * density).toInt()
+
+        fun button(textRes: Int, backgroundRes: Int, textColorRes: Int, onClick: () -> Unit) =
+            TextView(this).apply {
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    buttonHeight,
+                ).apply { topMargin = gap }
+                text = getString(textRes)
+                // The label says what the button does, so it is also the
+                // accessibility name; a separate contentDescription would be a
+                // second string to keep in step with it.
+                gravity = Gravity.CENTER
+                textSize = 15f
+                setTextColor(getColor(textColorRes))
+                background = getDrawable(backgroundRes)
+                isClickable = true
+                setOnClickListener { onClick() }
+            }
+
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = getDrawable(R.drawable.card_bg)
+            setPadding(pad, pad, pad, pad)
+            addView(
+                TextView(this@BubbleService).apply {
+                    text = getString(R.string.stt_unreachable_title)
+                    textSize = 17f
+                    setTextColor(getColor(R.color.dicta_on_surface))
+                }
+            )
+            addView(
+                TextView(this@BubbleService).apply {
+                    layoutParams = LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.MATCH_PARENT,
+                        LinearLayout.LayoutParams.WRAP_CONTENT,
+                    ).apply { topMargin = gap }
+                    text = getString(R.string.stt_unreachable_body)
+                    textSize = 14f
+                    setTextColor(getColor(R.color.dicta_on_surface_variant))
+                    // 🔴 No maxLines and no ellipsize. The body carries the
+                    // whole trade the user is deciding on, and a truncated
+                    // sentence here would hide the half that says recording
+                    // still works.
+                }
+            )
+            addView(
+                button(
+                    R.string.stt_unreachable_record,
+                    R.drawable.mic_pill_bg,
+                    R.color.dicta_on_accent,
+                    onRecord,
+                )
+            )
+            addView(
+                button(
+                    R.string.stt_unreachable_cancel,
+                    R.drawable.outline_button_bg,
+                    R.color.dicta_on_surface,
+                    onDecline,
+                )
+            )
+        }
+    }
+
     // --- the foreground service ---------------------------------------------
 
     /**
@@ -1624,6 +2150,15 @@ class BubbleService : Service() {
          * reveal is on the device checklist rather than asserted here.
          */
         private const val REVEAL_WIDTH_DP = 220
+
+        /**
+         * The warning card's width, and the margin it keeps from the display
+         * edges when the display is narrower than that. See
+         * [warningLayoutParams] for why the width is explicit and the height
+         * is not.
+         */
+        private const val WARNING_WIDTH_DP = 300
+        private const val WARNING_MARGIN_DP = 24
 
         /** The ring grows to 1.4× at full level. */
         private const val PULSE_SCALE = 0.4f
