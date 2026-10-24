@@ -27,16 +27,24 @@ import org.robolectric.annotation.Config
  *
  * [DictateLaunch.EXTRA_ATTACH_SESSION] suppresses the card's own
  * `startDictation()` only on the intent **the bubble itself sends**.
- * `DictateLaunch.intent()` carries no extra, and both the QS tile
- * ([DictaTileService]) and the persistent notification ([MainActivity]) go
- * through `pendingIntent()`, which wraps that bare intent — so:
+ * `DictateLaunch.intent()` carries no extra, and the persistent notification
+ * ([MainActivity]) goes through `pendingIntent()`, which wraps that bare
+ * intent, while `MainActivity`'s "Try dictation now" builds its own plain
+ * intent — so:
  *
  *  * **Path A.** The bubble is RECORDING and, by design, nothing is on screen.
- *    The user pulls down the shade and taps the Dicta tile (or the
- *    notification's Dictate action, or the launcher icon → "Try dictation
- *    now"). No card exists, `singleTop` creates one, `onCreate` finds no extra,
+ *    The user pulls down the shade and taps the notification's Dictate action
+ *    (or opens the launcher icon → "Try dictation now"). No card exists,
+ *    `singleTop` creates one, `onCreate` finds no extra,
  *    `hasMicPermission()` is true → `startDictation()` → a second
  *    `AudioRecord` while the bubble's is live.
+ *
+ *    🔴 **The QS tile ([DictaTileService]) used to be named first on this path
+ *    and is no longer on it at all** — it is the bubble's on/off switch and
+ *    references `DictateLaunch` nowhere. Path A is **not** narrowed to nothing
+ *    by that: the notification and "Try dictation now" still reach it exactly
+ *    as described, so the behaviour under test and the guard that covers it are
+ *    unchanged. Only the surface names were wrong.
  *  * **Path B.** The attached "transcribing…" card left `micButton` fully
  *    enabled — `attachToBubbleSession` only changed its *text*. Past the 1.5 s
  *    grace the bubble is tappable too, so card-mic plus bubble-tap in either
@@ -305,18 +313,23 @@ class MicrophoneOwnershipTest {
         )
     }
 
-    // --- Path A: the tile / notification / launcher intent -------------------
+    // --- Path A: the notification / launcher intent --------------------------
 
     /**
      * 🔴 Path A end to end, from the card's side.
      *
-     * The intent is [DictateLaunch.intent] — literally what the QS tile and the
-     * notification action wrap (`pendingIntent()`), and what MainActivity's
-     * "Try dictation now" uses. It carries no `EXTRA_ATTACH_SESSION`, so the
+     * The intent is [DictateLaunch.intent] — literally what the notification
+     * action wraps (`pendingIntent()`), and what MainActivity's "Try dictation
+     * now" opens the card with. It carries no `EXTRA_ATTACH_SESSION`, so the
      * attach branch does not fire and `onCreate` goes on to `startDictation()`.
+     *
+     * 🔴 Named `theTileIntent…` until the Quick Settings tile stopped opening
+     * the card. **No coverage changed with the rename** — the intent under test
+     * is the same `DictateLaunch.intent`, and the notification still wraps it;
+     * the old name simply claimed a caller that no longer exists.
      */
     @Test
-    fun theTileIntentCannotStartASecondDictationWhileTheMicIsHeld() {
+    fun theNotificationIntentCannotStartASecondDictationWhileTheMicIsHeld() {
         grantMic()
         val bubbleSession = Any()
         MicrophoneOwner.acquire(bubbleSession)
@@ -327,7 +340,7 @@ class MicrophoneOwnershipTest {
             .get()
 
         assertEquals(
-            "the card opened from the tile/notification ran its own " +
+            "the card opened from the notification ran its own " +
                 "startDictation() while the bubble held the microphone. That " +
                 "is a second AudioRecord against a live one, and Android " +
                 "answers it by feeding one of them exact zeros — no exception, " +
@@ -347,12 +360,11 @@ class MicrophoneOwnershipTest {
 
     /**
      * The same guard must NOT fire when the microphone is free — otherwise the
-     * tile, the notification and the in-app button all open a card that
-     * silently refuses to record, which is a worse bug than the one being
-     * fixed.
+     * notification and the in-app button both open a card that silently
+     * refuses to record, which is a worse bug than the one being fixed.
      */
     @Test
-    fun theTileIntentStillStartsADictationWhenNothingHoldsTheMic() {
+    fun theNotificationIntentStillStartsADictationWhenNothingHoldsTheMic() {
         grantMic()
         val activity = Robolectric
             .buildActivity(DictateActivity::class.java, DictateLaunch.intent(ctx))
@@ -493,9 +505,9 @@ class MicrophoneOwnershipTest {
      *
      * 🔴 The guard the old test exercised is NOT deleted.
      * `startDictation`'s `isHeldByOtherThan` check still covers Path A — the
-     * tile / notification / launcher intent, which auto-start on open — and
-     * [theTileIntentCannotStartASecondDictationWhileTheMicIsHeld] is what
-     * keeps it alive.
+     * notification / launcher intent, which auto-start on open — and
+     * [theNotificationIntentCannotStartASecondDictationWhileTheMicIsHeld] is
+     * what keeps it alive.
      */
     @Test
     fun theAttachedCardOffersNoControlThatCouldStartASecondCapture() {

@@ -3,6 +3,16 @@
 **Verdict: fully possible with stock, public Android APIs. No root, no system
 app, no accessibility service required.**
 
+> 🔴 **This document records the up-front research and the PoC it justified. It
+> is not a description of the shipped app, and two of its claims about the Quick
+> Settings tile have since gone stale** — the tile is no longer a dictation
+> launcher; it is the floating bubble's on/off switch
+> (`DictaTileService`). Specifically: §2's "launched from the tile via
+> `startActivityAndCollapse()`" and §4's "the tile/notification paths work
+> without `SYSTEM_ALERT_WINDOW`" are both corrected in place below. The §1 table
+> row is left as written: it quotes the platform guide accurately, and what
+> changed is Dicta's choice, not the API.
+
 ## 1. Triggering an action from anywhere
 
 | Mechanism | API | Notes |
@@ -19,9 +29,11 @@ The PoC implements the first three.
 
 Two supported approaches; the PoC uses the simpler one:
 
-- **Dialog-themed activity** launched from the tile via `startActivityAndCollapse()`,
-from the bubble via `startActivity(FLAG_ACTIVITY_NEW_TASK)`, or from the
-notification's `PendingIntent`. Feels like a popup, gets full input focus.
+- **Dialog-themed activity** launched from the bubble via
+`startActivity(FLAG_ACTIVITY_NEW_TASK)`, or from the notification's
+`PendingIntent`. Feels like a popup, gets full input focus. (🔴 Originally also
+"from the tile via `startActivityAndCollapse()`" — the tile no longer opens the
+overlay at all; see the note at the top.)
 - **Raw overlay view** added to `WindowManager` by a foreground service — more
 code, needed only if the UI must stay up while the user keeps interacting
 with the app underneath.
@@ -55,4 +67,21 @@ Android 10+ clipboard-access restrictions don't apply.
 - No keylogging, no reading other apps' screens or clipboards — the overlay only
 ever handles text the user dictated or typed into it.
 - `SYSTEM_ALERT_WINDOW` is a sensitive permission (overlay-spoofing risk), so
-the bubble is strictly opt-in and the tile/notification paths work without it.
+the bubble is strictly opt-in and the **notification** path works without it.
+🔴 **Corrected, and it had inverted:** this read "the tile/notification paths
+work without it". The tile is the bubble's switch now, so it *requires*
+`SYSTEM_ALERT_WINDOW` — `DictaTileService.render()` goes
+`Tile.STATE_UNAVAILABLE` and the tile turns nothing on while `canDrawOverlays`
+is false.
+
+🔴 **Second correction, same paragraph:** the line above then read "the
+notification is the only trigger left that works with the permission ungranted",
+and that is false too — it counted the surfaces that reach Dicta *from outside
+the app* and forgot the one inside it. `MainActivity`'s "Try dictation now"
+button starts `DictateActivity` directly and needs no `SYSTEM_ALERT_WINDOW`
+either, which is why `DictateLaunchTest` lists `MainActivity` as an allowed
+direct constructor of that intent. So **two** surfaces still work with the
+permission ungranted — the notification's *Dictate* action and "Try dictation
+now" — which is the same count `MicrophoneOwner`'s kdoc arrives at for the same
+two surfaces. The durable claim is unchanged: the bubble is opt-in, and nothing
+that needs the overlay permission works without it.

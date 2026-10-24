@@ -78,15 +78,16 @@ class DictateAttachSessionTest {
 
     @Test
     fun theCardOpenedAnyOtherWayStillStartsRecordingByItself() {
-        // 🔴 Positive control AND the real invariant: the tile, the
-        // notification, MainActivity and the mic-permission fallback all still
-        // rely on onCreate starting the dictation. A conditional that refused
+        // 🔴 Positive control AND the real invariant: the notification,
+        // MainActivity and the mic-permission fallback all still rely on
+        // onCreate starting the dictation. (The QS tile was named first here
+        // and no longer opens the card at all.) A conditional that refused
         // in every case would pass the test above and break every entry point
         // that is not the bubble.
         assertNotEquals(
             "the card no longer starts a dictation when opened WITHOUT the " +
-                "attach flag, so the tile, the notification and the in-app " +
-                "button all open a card that does nothing",
+                "attach flag, so the notification and the in-app button both " +
+                "open a card that does nothing",
             transcribing,
             statusOf(null),
         )

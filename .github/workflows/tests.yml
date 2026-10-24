@@ -36,17 +36,53 @@ jobs:
       # measured nothing is worse than no gate — so the count is asserted, not
       # inferred from the task's exit status.
       #
-      # The floor is 500 against a suite of 575 tests / 49 classes (2026-10-17).
+      # BASELINE: 554 against a suite of 638 tests / 58 classes, measured from
+      # the JUnit XML of a full run of the tree THIS COMMIT creates on
+      # feat/bubble-state-tile-boot (2026-10-23) — the audit-fix commit that
+      # stopped a refused boot restore clearing bubble_enabled. The previous
+      # entry said "550 against 633 / 57" and was measured at ce38e39 on the
+      # same branch and the same day, which is exactly why the date alone does
+      # not identify the tree. 🔴 NAME THE TREE YOU COUNTED ON, not just the
+      # date — the correction note below is entirely about why.
+      #
       # It was --min 3, which could only ever catch a collapse to almost
       # literally nothing: against this suite 3 IS the "handful" the old comment
       # claimed to catch, so the gate read as coverage while providing nearly
       # none. The ~13% headroom is deliberate — it tolerates deleting a class
-      # during a refactor without tolerating a partial collapse. Raise it when
-      # the suite grows; if you LOWER it, say why in the commit, because
-      # lowering it is how this gate goes quietly back to being decorative.
+      # during a refactor without tolerating a partial collapse.
+      #
+      # 🔴 THE HEADROOM IS THE CONSTANT, NOT THE FLOOR — re-derive it, do not
+      # pick a round number:
+      #     floor = floor(current_total * 500 / 575)      # 0.86957, 13.04% slack
+      # 638 * 500 / 575 = 554.78 -> 554, which is 13.17% slack.
+      # (Previous entry: 633 * 500 / 575 = 550.43 -> 550, 13.11% slack.)
+      #
+      # 🔴 CORRECTION (2026-10-23). This block used to say the previous entry
+      # "was left alone while the suite grew to 623, drifting the slack to 20%".
+      # Both numbers were TRUE WHEN WRITTEN and both were stale by the time they
+      # shipped: the suite really was 623 at commits 0544fa2 / 32b089c of this
+      # branch, where 500 against 623 is 19.7% slack — and then 723c21d deleted
+      # the bubble's refusal apparatus, four tests went with it, and this
+      # comment was never touched. The "500 against 575 (2026-10-17)" entry it
+      # describes was CORRECT: 575 is the count at 51faf83, the commit that
+      # raised the floor. So the drift it complains about was real and the
+      # instruction below is right. What was wrong is subtler and worth more: a
+      # count measured on one commit of a moving branch was quoted on another.
+      # THEREFORE, when the suite grows: recompute BOTH numbers, restate the
+      # baseline on the first line above, and say WHICH TREE you counted on —
+      # a date does not identify a tree while a branch is moving. If you LOWER
+      # it, say why in the commit, because lowering it is how this gate goes
+      # quietly back to being decorative.
+      #
+      # The baseline is no longer only a comment: TestCountFloorTest asserts
+      # that this floor is not above the suite and that the slack has not
+      # drifted past 20%, so the next drift fails a test instead of sitting
+      # here unread. It also pins that android.nix does NOT restate the count —
+      # that second copy is the one that went stale, and one number belongs in
+      # one place.
       - name: Assert tests actually ran
         if: always()
-        run: python3 scripts/assert-tests-ran.py --min 500
+        run: python3 scripts/assert-tests-ran.py --min 554
 
       - name: Upload test reports
         if: always()

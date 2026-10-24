@@ -24,8 +24,9 @@ import java.io.File
  * therefore not "is the count small" but "is the SET what we decided":
  *
  *  * `BubbleService.kt` — owns the session for the bubble flow.
- *  * `DictateActivity.kt` — still owns one for the tile / notification /
- *    in-app entry points, which open the card *before* any capture exists.
+ *  * `DictateActivity.kt` — still owns one for the notification / in-app
+ *    entry points, which open the card *before* any capture exists. (The QS
+ *    tile was listed among them; it opens no card now.)
  *
  * It fails when that set **grows or shrinks**, so a new recording surface
  * forces a deliberate decision here rather than inheriting a silent zero-fill.

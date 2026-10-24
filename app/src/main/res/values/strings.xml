@@ -2,7 +2,16 @@
 <resources>
     <string name="app_name">Dicta</string>
     <string name="tile_label">Dicta</string>
-    <string name="tile_description">Open voice dictation</string>
+    <!-- The tile is the floating bubble's on/off switch, not a launcher: the
+         old tile_description ("Open voice dictation") described a tile that
+         opened the overlay, and the overlay is no longer where a recording
+         starts. A TileService has no screen to toast on, so these three
+         strings are the only place it can say what state it is in and why it
+         is unavailable — they land in its subtitle (API 29+) and its content
+         description. -->
+    <string name="tile_bubble_on">Bubble on</string>
+    <string name="tile_bubble_off">Bubble off</string>
+    <string name="tile_needs_overlay">Needs “Display over other apps”</string>
 
     <string name="intro">Trigger voice dictation from anywhere on your device, then copy the text to your clipboard or send it somewhere.</string>
 
@@ -13,8 +22,31 @@
     <string name="status_granted">Granted ✓</string>
     <string name="status_not_granted">Not granted</string>
 
-    <string name="section_triggers">Triggers (pick any)</string>
-    <string name="tile_row">Quick Settings tile — swipe down from any app and tap Dicta.</string>
+    <!-- 🔴 This read "Triggers (pick any)" and the heading itself was the
+         remaining half of the defect below. Three rows sit under it — the
+         Quick Settings tile, the floating bubble and the notification — and
+         only the last two start a dictation. The tile is the bubble's on/off
+         switch, so a heading calling everything beneath it a trigger promised
+         the third way in that @string/tile_row had just been corrected to deny:
+         the copy said "not a trigger" directly under a heading that said it
+         was. "From anywhere" is true of all three rows and claims nothing about
+         what any of them does; each row's own copy says that.
+
+         The resource NAME is deliberately left as section_triggers. It is an
+         identifier, not user-facing, its group's membership has not changed,
+         and renaming it would touch activity_main.xml for no user-visible
+         effect. It is now narrower than the group it labels; that is a known
+         imprecision in an identifier, not in anything a user reads. -->
+    <string name="section_triggers">From anywhere</string>
+    <!-- 🔴 User-facing, and it used to read "swipe down from any app and tap
+         Dicta", which under the old "Triggers" heading promised a third way to
+         START a dictation. The tile switches the floating bubble on and off;
+         it opens nothing. The copy says so — and the heading above no longer
+         contradicts it. (The previous version of this comment claimed the copy
+         fixed the contradiction "rather than leaving the heading to imply
+         otherwise". The heading was in fact left; that claim was false until
+         the edit above.) -->
+    <string name="tile_row">Quick Settings tile — swipe down from any app to switch the bubble on or off.</string>
     <string name="add_tile">Add tile</string>
     <string name="tile_added">Tile added — find it in your Quick Settings panel.</string>
     <string name="tile_add_declined">Tile not added.</string>
@@ -163,9 +195,11 @@
     <string name="bubble_foreground_denied">Could not start recording — Android refused Dicta\'s recording notification. Check that notifications are allowed for Dicta, then try again.</string>
 
     <!-- Refusal shown when a SECOND dictation is attempted while one already
-         holds the microphone (the QS tile or the notification tapped while the
-         bubble is recording — or, the other direction, the bubble tapped while
-         the card's own recogniser is listening). Loud on purpose: the
+         holds the microphone (the notification, or "Try dictation now", tapped
+         while the bubble is recording — or, the other direction, the bubble
+         tapped while the card's own recogniser is listening). This named the QS
+         tile as the first trigger: the tile is the bubble's toggle now and
+         cannot attempt a dictation at all. Loud on purpose: the
          alternative is Android feeding one of the two captures bit-exact
          zeros, which surfaces as an empty or invented transcript and gets
          blamed on the server. Shown on BOTH surfaces: the card's status line
@@ -175,6 +209,16 @@
     <string name="bubble_channel">Dicta bubble</string>
     <string name="bubble_active">Floating mic bubble is active</string>
     <string name="hide_bubble">Hide bubble</string>
+    <!-- 🔴 @string/bubble_start_refused and the three @string/boot_restore_*
+         strings stood here and were DELETED, not renamed. They were the copy
+         for a platform-refused foreground start: a toast from MainActivity's
+         switch, and a boot-time "could not start after the restart"
+         notification. The refusal cannot occur on either path and the signal
+         could not have carried it either way — BubbleEnabled.startService's
+         kdoc sets out both reasons. There is no replacement copy and none is
+         needed; if a string is wanted here again, that kdoc is the thing to
+         read first. The only decline the user can actually be told about is a
+         missing overlay permission, which is @string/need_overlay_first. -->
     <string name="trigger_channel">Dicta quick trigger</string>
     <string name="notif_text">Tap Dictate to capture a voice note from anywhere.</string>
 

@@ -16,6 +16,7 @@ import android.os.Bundle
 import android.app.StatusBarManager
 import android.provider.Settings
 import android.widget.Button
+import android.widget.CompoundButton
 import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
@@ -63,10 +64,7 @@ class MainActivity : Activity() {
             startActivity(Intent(this, DictateActivity::class.java))
         }
 
-        bubbleSwitch.setOnCheckedChangeListener { _, checked ->
-            prefs.edit().putBoolean(PREF_BUBBLE, checked).apply()
-            if (checked) startBubble() else stopBubble()
-        }
+        bubbleSwitch.setOnCheckedChangeListener(bubbleToggle)
         notifSwitch.setOnCheckedChangeListener { _, checked ->
             prefs.edit().putBoolean(PREF_NOTIF, checked).apply()
             if (checked) showTriggerNotification() else cancelTriggerNotification()
@@ -91,12 +89,13 @@ class MainActivity : Activity() {
         )
 
         bubbleSwitch.setOnCheckedChangeListener(null)
-        bubbleSwitch.isChecked = prefs.getBoolean(PREF_BUBBLE, false) && overlayGranted
+        // One predicate, shared with the Quick Settings tile's rendered state
+        // and its click direction — see BubbleEnabled.isUp. This read used to
+        // open-code `isOn && overlayGranted`, which is where the tile's click
+        // drifted away from it.
+        bubbleSwitch.isChecked = BubbleEnabled.isUp(this)
         bubbleSwitch.isEnabled = overlayGranted
-        bubbleSwitch.setOnCheckedChangeListener { _, checked ->
-            prefs.edit().putBoolean(PREF_BUBBLE, checked).apply()
-            if (checked) startBubble() else stopBubble()
-        }
+        bubbleSwitch.setOnCheckedChangeListener(bubbleToggle)
 
         notifSwitch.setOnCheckedChangeListener(null)
         notifSwitch.isChecked = prefs.getBoolean(PREF_NOTIF, false)
@@ -106,17 +105,45 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun startBubble() {
-        if (!Settings.canDrawOverlays(this)) {
-            Toast.makeText(this, getString(R.string.need_overlay_first), Toast.LENGTH_SHORT)
-                .show()
-            return
+    /**
+     * The switch's only behaviour, held in one field because
+     * [refreshStatus] has to detach it before syncing `isChecked` from the
+     * persisted flag and re-attach it afterwards. Two inline lambdas is how
+     * the two copies drifted apart in the first place.
+     *
+     * 🔴 When the overlay permission is missing the switch is put back to
+     * `false` — with the listener detached, or the assignment would re-enter
+     * this lambda and attempt a `turnOff` for a bubble that never started. A
+     * switch left ON with nothing running is the same lie as the one issue #14
+     * reported.
+     *
+     * That is the only arm that reverts, because it is the only way
+     * [BubbleEnabled.turnOn] can decline. A third arm once handled a
+     * platform-refused foreground start; it was deleted as unreachable and has
+     * no replacement rationale — [BubbleEnabled.startService] says why.
+     */
+    private val bubbleToggle = CompoundButton.OnCheckedChangeListener { _, checked ->
+        if (!checked) {
+            BubbleEnabled.turnOff(this)
+            return@OnCheckedChangeListener
         }
-        startForegroundService(Intent(this, BubbleService::class.java))
+        when (BubbleEnabled.turnOn(this)) {
+            BubbleEnabled.Start.STARTED -> Unit
+            BubbleEnabled.Start.NO_OVERLAY_PERMISSION -> {
+                toast(R.string.need_overlay_first)
+                revertBubbleSwitch()
+            }
+        }
     }
 
-    private fun stopBubble() {
-        stopService(Intent(this, BubbleService::class.java))
+    private fun revertBubbleSwitch() {
+        bubbleSwitch.setOnCheckedChangeListener(null)
+        bubbleSwitch.isChecked = false
+        bubbleSwitch.setOnCheckedChangeListener(bubbleToggle)
+    }
+
+    private fun toast(textRes: Int) {
+        Toast.makeText(this, getString(textRes), Toast.LENGTH_SHORT).show()
     }
 
     private fun promptAddTile() {
@@ -146,8 +173,10 @@ class MainActivity : Activity() {
                 NotificationManager.IMPORTANCE_LOW
             )
         )
-        // Via DictateLaunch so the notification cannot drift from the bubble
-        // and the tile — all three shared the issue #11 defect.
+        // Via DictateLaunch so the notification cannot drift from the bubble —
+        // both shared the issue #11 defect. (The Quick Settings tile was the
+        // third; it builds no overlay intent now, so there is nothing left for
+        // it to drift from.) This is the ONLY pendingIntent caller in the app.
         val pi = DictateLaunch.pendingIntent(this)
         val notif = Notification.Builder(this, TRIGGER_CHANNEL)
             .setSmallIcon(R.drawable.ic_tile_mic)
@@ -174,7 +203,6 @@ class MainActivity : Activity() {
 
     companion object {
         private const val REQ_MIC = 2001
-        private const val PREF_BUBBLE = "bubble_enabled"
         private const val PREF_NOTIF = "notif_enabled"
         private const val TRIGGER_NOTIF_ID = 3001
         private const val TRIGGER_CHANNEL = "dicta_trigger"

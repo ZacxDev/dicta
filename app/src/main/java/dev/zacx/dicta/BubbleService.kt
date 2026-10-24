@@ -299,10 +299,39 @@ class BubbleService : Service() {
     override fun onCreate() {
         super.onCreate()
         if (!Settings.canDrawOverlays(this)) {
+            // 🔴 Deliberately does NOT clear the flag, and the asymmetry with
+            // the branch below is the whole point. A revoked overlay
+            // permission is not the user changing their mind, so their stored
+            // intent survives it and the bubble returns once the permission is
+            // re-granted — the same policy BubbleBootReceiver argues at its own
+            // site. Nothing lies in the meantime because the permission is
+            // part of BubbleEnabled.isUp, which is what every surface the user
+            // sees reads: with canDrawOverlays false they all render off
+            // regardless of the flag.
             stopSelf()
             return
         }
         if (!promoteForeground(recording = false)) {
+            // 🔴 Whether the flag changes here depends on WHO asked for this
+            // start, and the owner decides — this site does not branch.
+            //
+            // For a start the USER just made it must be cleared. Unlike the
+            // branch above there is no mask: canDrawOverlays is true, so
+            // BubbleEnabled.isUp would report the bubble as up while this
+            // service stops itself without ever having shown a window. That is
+            // issue #14's defect exactly — MainActivity's switch renders ON
+            // with nothing running, and a Switch fires its listener only on a
+            // CHANGE, so one tap does nothing and the user has to toggle OFF
+            // then ON.
+            //
+            // 🔴 For a BOOT restore it must NOT be cleared, and this used to
+            // clear it unconditionally. The flag is stored intent that survives
+            // a reboot by design, so clearing it on a refusal reached through
+            // BubbleBootReceiver means the bubble does not come back on this
+            // boot OR ANY LATER ONE and the user has to rediscover the switch —
+            // which is the thing the receiver, BubbleEnabled.isOn and the
+            // README all say a reboot must not be able to do.
+            BubbleEnabled.foregroundPromotionRefused(this)
             stopSelf()
             return
         }
@@ -516,6 +545,14 @@ class BubbleService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) {
+            // 🔴 Clearing the flag is the whole of issue #14's "no way to get
+            // the bubble back". The notification's Hide action used to only
+            // stopSelf(), so MainActivity's switch — which derives from this
+            // flag — went on reading ON with nothing running, and a Switch
+            // fires its listener only on a CHANGE: tapping it did nothing and
+            // the operator had to toggle OFF then ON. stopSelf, not
+            // BubbleEnabled.turnOff: this service is already stopping itself.
+            BubbleEnabled.set(this, false)
             stopSelf()
             return START_NOT_STICKY
         }

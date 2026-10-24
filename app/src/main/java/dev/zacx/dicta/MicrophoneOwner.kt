@@ -18,13 +18,32 @@ import java.util.concurrent.atomic.AtomicReference
  * `AudioRecord` exists under Robolectric.
  *
  * [DictateLaunch.EXTRA_ATTACH_SESSION] suppresses the second session only on
- * the intent **the bubble itself sends**. The QS tile
- * ([DictaTileService]), the notification action and `MainActivity`'s "Try
- * dictation now" all go through [DictateLaunch.intent], which carries no extra
- * — so while the bubble is recording with nothing on screen, any of them opens
- * a card whose `onCreate` would start a second capture. Per-call-site flags are
- * the shape of defect that regenerates at every new surface; a holder that
- * `start()` must acquire fails for surfaces that do not exist yet too.
+ * the intent **the bubble itself sends**. Neither of the other two surfaces
+ * carries it, and they reach `DictateActivity` by different routes: the
+ * notification action goes through [DictateLaunch.intent], while
+ * `MainActivity`'s "Try dictation now" constructs its own intent — which is why
+ * `DictateLaunchTest` lists `MainActivity` as an allowed direct constructor. So
+ * while the bubble is recording with nothing on screen, either of them opens a
+ * card whose `onCreate` would start a second capture.
+ *
+ * ⚠ This used to say both surfaces "go through [DictateLaunch.intent]". The
+ * conclusion was right and the mechanism was not — and the mechanism is the
+ * part a reader acts on: anyone trying to close this hole by putting the extra
+ * inside `DictateLaunch.intent` would leave "Try dictation now" untouched.
+ *
+ * Per-call-site flags are the shape of defect that regenerates at
+ * every new surface; a holder that `start()` must acquire fails for surfaces
+ * that do not exist yet too.
+ *
+ * 🔴 **This paragraph used to name the Quick Settings tile ([DictaTileService])
+ * as a third such surface. That is no longer true** — the tile is the floating
+ * bubble's on/off switch and references [DictateLaunch] nowhere. The correction
+ * matters at this site in particular, because this paragraph is the rationale
+ * for a process-wide holder: anyone judging whether the holder is still needed
+ * has to count the surfaces correctly, and it is **two**, not three. It is
+ * still needed, and the last clause is the durable half of the argument — it
+ * covers surfaces that do not exist yet, which is why losing one did not make
+ * it redundant.
  *
  * ## Shape
  *

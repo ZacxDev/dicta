@@ -9,11 +9,20 @@ import android.content.Intent
  *
  * ## Why this exists rather than three `Intent(...)` calls
  *
- * The bubble, the Quick Settings tile and the persistent notification are the
- * three "trigger from anywhere" entry points, and all three were open-coding
- * the same two-line construction. All three were wrong in the same direction
- * (issue #11), which is the characteristic failure of a predicate spelled at N
- * sites: it gets fixed at one and silently kept at the others.
+ * **History, and it is written in the past tense on purpose.** The bubble, the
+ * Quick Settings tile and the persistent notification were three "trigger from
+ * anywhere" entry points, all open-coding the same two-line construction and
+ * all wrong in the same direction (issue #11) — the characteristic failure of a
+ * predicate spelled at N sites: it gets fixed at one and silently kept at the
+ * others.
+ *
+ * 🔴 **The present-tense set is TWO: the bubble and the notification.** The
+ * Quick Settings tile is no longer an overlay launcher — it is the floating
+ * bubble's on/off switch and does not reference this file at all. So "every
+ * trigger goes through [DictateLaunch]" is the wrong summary to carry around;
+ * the true one is **every surface that OPENS THE OVERLAY from outside the app**
+ * goes through here, which is also exactly how `DictateLaunchTest`'s ledger is
+ * scoped.
  *
  * ## 🔴 The flag is only half the mechanism — the other half is in the manifest
  *
@@ -116,10 +125,18 @@ object DictateLaunch {
         intent(context).putExtra(EXTRA_HISTORY_ID, historyId)
 
     /**
-     * [intent] wrapped for the callers that cannot start an activity directly:
-     * the Quick Settings tile (the `Intent` overload of
-     * `startActivityAndCollapse` is deprecated as of API 34) and the
-     * notification action.
+     * [intent] wrapped for a caller that cannot start an activity directly —
+     * today that is **only** `MainActivity`'s persistent trigger
+     * notification.
+     *
+     * 🔴 This used to name the Quick Settings tile as the other caller, and
+     * carried the `startActivityAndCollapse`-is-deprecated-as-of-API-34
+     * rationale with it. Both are gone: the tile toggles the floating bubble
+     * and starts no activity, so it has no use for a `PendingIntent`. Keeping
+     * one `PendingIntent` builder for one caller is still the right shape —
+     * `intent` has several, and the flags below are the part that is easy to
+     * get wrong — but do not read this kdoc as evidence that a second caller
+     * exists.
      *
      * `FLAG_IMMUTABLE` because nothing may rewrite the target, and
      * `FLAG_UPDATE_CURRENT` so re-registering replaces the existing one rather

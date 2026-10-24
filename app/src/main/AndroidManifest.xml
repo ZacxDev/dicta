@@ -17,6 +17,11 @@
          of startForeground the first time the user taps the bubble. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- 🔴 Without this the BOOT_COMPLETED receiver below is simply never
+         invoked: the broadcast is not delivered, no exception is raised and no
+         build warning appears, so the only symptom is a bubble that quietly
+         fails to come back after a reboot. -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
     <!-- icon/roundIcon point at the adaptive icon in mipmap-anydpi-v26, NOT at a
          bare drawable: a 24dp vector used directly as a launcher icon is drawn
@@ -74,8 +79,8 @@
         <!--
           Floating dictation overlay: dialog-themed, excluded from recents.
 
-          🔴 taskAffinity is LOAD-BEARING, not tidiness. The three "from
-          anywhere" entry points (bubble, tile, notification) start this
+          🔴 taskAffinity is LOAD-BEARING, not tidiness. The "from anywhere"
+          entry points (the bubble and the notification) start this
           activity with FLAG_ACTIVITY_NEW_TASK, and that flag does NOT mean
           "make a new task" — it means "use the task matching this activity's
           taskAffinity, creating one only if none exists". With no affinity
@@ -109,7 +114,31 @@
             android:exported="false"
             android:label="@string/settings_title" />
 
-        <!-- Quick Settings tile: the "trigger from anywhere" entry point. -->
+        <!--
+          Quick Settings tile: the floating bubble's on/off switch. It opens
+          nothing and starts no dictation — DictaTileService's kdoc says why.
+
+          🔴 ACTIVE_TILE IS DELIBERATELY ABSENT, and re-adding it without a
+          refresh call site is a correctness bug, not a tuning choice. An
+          ACTIVE_TILE is bound only for onTileAdded/onTileRemoved, for a tap,
+          and otherwise ONLY when the app calls
+          TileService.requestListeningState() — so onStartListening is NOT
+          called when the panel opens. This tile's state is derived
+          (BubbleEnabled.isUp = the stored flag AND the overlay permission),
+          and the permission half can change with NO app code running at all:
+          the user revoking "Display over other apps" in system Settings.
+          Nothing is then in a position to call requestListeningState, so an
+          active tile would paint a reading taken at some arbitrary earlier
+          moment — and because onClick takes its direction from the same
+          predicate, the tap after a stale render does the opposite of the
+          affordance the user just looked at.
+          Standard (non-active) mode binds the service while the panel is
+          visible, so onStartListening re-renders from live state every time
+          the user can see the tile, with zero call sites to keep in sync.
+          TileManifestTest.anActiveTileMustHaveSomethingThatRefreshesIt pins
+          the relationship rather than the absence: declare ACTIVE_TILE again
+          only together with a requestListeningState caller.
+        -->
         <service
             android:name=".DictaTileService"
             android:exported="true"
@@ -119,8 +148,14 @@
             <intent-filter>
                 <action android:name="android.service.quicksettings.action.QS_TILE" />
             </intent-filter>
+            <!--
+              This tile is a two-state switch, so it says so. The platform uses
+              this to pick the on/off affordance and the accessibility role it
+              announces, instead of treating the tile as a launcher button.
+              Ignored by releases that predate it, so it is safe at minSdk 26.
+            -->
             <meta-data
-                android:name="android.service.quicksettings.ACTIVE_TILE"
+                android:name="android.service.quicksettings.TOGGLEABLE_TILE"
                 android:value="true" />
         </service>
 
@@ -161,6 +196,48 @@
             android:name=".ProjectionService"
             android:exported="false"
             android:foregroundServiceType="mediaProjection" />
+
+        <!--
+          Restores the bubble after a reboot when the user had it on.
+
+          exported="true" is deliberate and is the documented requirement for a
+          manifest receiver that listens for a system broadcast on Android 12+;
+          BOOT_COMPLETED is a protected action, so only the system can send it.
+          The receiver additionally checks the action itself, because a receiver
+          is reachable by an explicit intent whatever its filter says.
+
+          🔴 The service it starts is specialUse AT REST — BubbleService only
+          promotes to microphone while recording. That distinction is what makes
+          this start legal: a microphone-typed FGS launched from a
+          BOOT_COMPLETED receiver is refused from Android 14 on, and the wider
+          Android 15 list of disallowed types (dataSync, camera, mediaPlayback,
+          phoneCall, mediaProjection, microphone) still does not include
+          specialUse. See BubbleBootReceiver's kdoc for the full argument from
+          the documented rules — it is an argument, NOT a measurement: nothing
+          here or in the unit suite has observed a real device's answer, and the
+          receiver has no fallback if one ever refuses (that kdoc says why a
+          fallback here could not have worked anyway).
+        -->
+        <receiver
+            android:name=".BubbleBootReceiver"
+            android:exported="true"
+            android:directBootAware="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <!--
+                  🔴 NOT a second restore path — the receiver CLEARS the flag on
+                  this one and starts nothing. An app update stops the service
+                  and Android does not restart one across a package
+                  replacement, so the flag would otherwise outlive the bubble
+                  and MainActivity's switch would need two taps to recover
+                  (issue #14's shape, no reboot involved). Re-raising the
+                  overlay as a side effect of an install is deliberately NOT
+                  done; see BubbleBootReceiver.onReceive. No data filter: this
+                  action is delivered only to the replaced package itself.
+                -->
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
 
         <!--
           Serves the captured PNG to the share target. Hand-rolled rather than
