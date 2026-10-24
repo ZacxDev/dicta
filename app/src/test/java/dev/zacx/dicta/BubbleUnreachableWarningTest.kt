@@ -686,6 +686,23 @@ class BubbleUnreachableWarningTest {
         )
     }
 
+    /*
+     * ⚠ A LABEL ON THE TEST ABOVE, not a defect in it.
+     *
+     * `theProbeStopsOnDestroy` asserts an OUTCOME and attributes it to
+     * nothing. Two independent mechanisms produce that outcome —
+     * `onDestroy`'s `main.removeCallbacksAndMessages(null)` drops the pending
+     * tick, and `runProbe`'s `root == null` branch returns early if one
+     * survives — and deleting either ONE of them leaves this whole suite
+     * green (measured, twice). Only removing both would turn this test red.
+     *
+     * That is stated rather than fixed. Attributing it would mean a seam whose
+     * only purpose is to disable one mechanism so the other can be observed,
+     * which tests the seam. The outcome is the thing that matters and it is
+     * genuinely pinned; what must not be claimed is that this test proves
+     * either line works. Both source sites carry the same sentence.
+     */
+
     @Test
     fun aPendingProbeCannotTouchADestroyedServicesViews() {
         val service = start()

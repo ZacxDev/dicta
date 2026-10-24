@@ -687,21 +687,22 @@ class BubbleService : Service() {
         // Pre-existing, and it clears `maxDurationGuard` and the long-press
         // runnable as well as any pending `probeTick`.
         //
-        // ⚠ **It is NOT what stops the periodic probe, and no test here pins
-        // it.** Deleting this whole line leaves the full 691-test suite green,
-        // measured. What actually terminates the probe chain is the
-        // `root == null` branch at the top of [runProbe] — `onDestroy` nulls
-        // `root` below, so a tick that survives this line returns without
-        // probing and without rescheduling. That branch is where
-        // `BubbleUnreachableWarningTest.theProbeStopsOnDestroy` really lands,
-        // and it is labelled as such at its own site.
+        // ⚠ **No test pins this line on its own.** Deleting it leaves the full
+        // 691-test suite green, measured — because the `root == null` branch at
+        // the top of [runProbe] independently stops a surviving tick, and
+        // deleting THAT alone leaves the suite green too. See that branch for
+        // the full statement: `theProbeStopsOnDestroy` asserts the outcome and
+        // attributes it to neither.
         //
-        // ⚠ An explicit `main.removeCallbacks(probeTick)` stood immediately
-        // above this line and was deleted: it was redundant twice over, and
-        // deleting either it or this line alone left the suite green. This
-        // paragraph replaced a claim that THIS line "is what stops the
-        // periodic probe" — written one commit earlier and measured false by
-        // the very next mutant. Do not restore that sentence.
+        // 🔴 Two retractions here in two commits, both about this line, both
+        // caught by the next mutant. It was first claimed to be insured by a
+        // separate `main.removeCallbacks(probeTick)` above it (that line was
+        // redundant three ways and is deleted); then claimed to be "what stops
+        // the periodic probe" (false); then the `root == null` branch was
+        // claimed to be what stops it (also false). Do not write a third
+        // mechanism sentence here — the measured fact is that NEITHER
+        // mechanism is individually observable, and that is what both sites now
+        // say.
         main.removeCallbacksAndMessages(null)
         // Discard rather than submit: the service going away is not the user
         // asking for a transcript, and an upload whose card can never open
@@ -1636,14 +1637,26 @@ class BubbleService : Service() {
      * for the settings one.
      */
     private fun runProbe() {
-        // 🔴 The window is gone: the service is being torn down, or onCreate
-        // refused. Deliberately does NOT reschedule — this is the one terminal
-        // branch, and it is what actually stops the chain after `onDestroy`.
-        // `onDestroy` nulls `root`, so a tick already on the queue returns
-        // here without probing. Not the handler clear in `onDestroy`:
-        // deleting that line leaves the suite green, while deleting this one
-        // fails `theProbeStopsOnDestroy` — so this is the guard that test
-        // pins, measured both ways.
+        // The window is gone: the service is being torn down, or `onCreate`
+        // refused before building one. Deliberately does NOT reschedule — this
+        // is the one terminal branch.
+        //
+        // ⚠ **No test pins this branch on its own, and the reason is worth
+        // stating.** It and `onDestroy`'s `main.removeCallbacksAndMessages(null)`
+        // are two INDEPENDENT mechanisms for one outcome: the handler clear
+        // drops the pending tick, and this returns early if a tick survives.
+        // Measured — deleting either one ALONE leaves the full 691-test suite
+        // green. So `theProbeStopsOnDestroy` asserts the OUTCOME ("no probe
+        // runs after onDestroy", which is the thing that matters, and it is
+        // true) and attributes it to neither mechanism; only removing both
+        // would fail it.
+        //
+        // Both are kept, because each covers a case the other does not: the
+        // handler clear also drops `maxDurationGuard` and the long-press
+        // runnable, and this branch also covers the `onCreate` refusal path,
+        // where no tick was ever posted to clear. A THIRD redundant
+        // `main.removeCallbacks(probeTick)` stood in `onDestroy` and was
+        // deleted — it had no such independent reason.
         if (root == null) return
         val settings = sttSettings()
         if (!settings.isRemoteConfigured) {
