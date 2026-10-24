@@ -36,21 +36,30 @@ jobs:
       # measured nothing is worse than no gate — so the count is asserted, not
       # inferred from the task's exit status.
       #
-      # BASELINE: 566 against a suite of 651 tests / 60 classes, measured from
-      # the JUnit XML of a full run of the tree THIS COMMIT creates on
-      # feat/ui-surface-cleanup (2026-10-23) — i.e. feat/ui-surface-cleanup
-      # REBASED onto ae1b464, the tip of feat/bubble-state-tile-boot. That is
-      # the tree this number is about and no other: the two branches each add
-      # test classes the other does not have, so neither branch's own count
-      # applies to the merge. For the record, the counts that reconcile to it:
-      # 599/51 at 475118f (main), 623/55 at 32b089c (the merge base), 638/58 at
-      # ae1b464 (#24's tip, +15/+3 over the base), 636/57 at 89addcd (#25
-      # pre-rebase, +13/+2 over the same base), and 623 + 15 + 13 = 651 with
-      # 55 + 3 + 2 = 60 here.
+      # BASELINE: 600 against a suite of 691 tests / 63 classes, measured from
+      # the JUnit XML of a full run on feat/stt-reachability-precheck
+      # (2026-10-23) — the reachability pre-check stacked on 433fbc8, the tip
+      # of feat/ui-surface-cleanup, which is itself stacked on ae1b464
+      # (feat/bubble-state-tile-boot). That is the tree this number is about
+      # and no other: this is a three-deep stack and each branch adds test
+      # classes the ones below it do not have, so no lower branch's count
+      # applies here. It reconciles as 651/60 at 433fbc8 plus this branch's
+      # +40 tests / +3 classes (SttReachabilityTest,
+      # SttReachabilityLedgerTest, BubbleUnreachableWarningTest).
       #
-      # The previous entries said "554 against 638 / 58" at ae1b464 and, before
-      # that, "550 against 633 / 57" at ce38e39 — same branch, same day, which
-      # is exactly why the date alone does not identify the tree.
+      # 🔴 COMMITS COUNTED ON, since a branch is not a tree: 691/63 was read
+      # from the XML at 11f2a9c (the commit that adds the feature) and read
+      # again, unchanged, at 65e6f7b (the last of the four follow-ups that
+      # close the mutation-sweep findings and retract two prose claims). Those
+      # follow-ups delete one production line, add no test and remove none, so
+      # the count is constant across this branch — stated because "measured on
+      # the branch" is exactly the imprecision the correction note below is
+      # about.
+      #
+      # The previous entries said "566 against 651 / 60" at the rebased tip of
+      # feat/ui-surface-cleanup, "554 against 638 / 58" at ae1b464 and, before
+      # that, "550 against 633 / 57" at ce38e39 — several of them on the same
+      # day, which is exactly why the date alone does not identify the tree.
       # 🔴 NAME THE TREE YOU COUNTED ON, not just the date — the correction
       # note below is entirely about why.
       #
@@ -63,8 +72,9 @@ jobs:
       # 🔴 THE HEADROOM IS THE CONSTANT, NOT THE FLOOR — re-derive it, do not
       # pick a round number:
       #     floor = floor(current_total * 500 / 575)      # 0.86957, 13.04% slack
-      # 651 * 500 / 575 = 566.09 -> 566, which is 13.06% slack.
-      # (Previous entries: 638 * 500 / 575 = 554.78 -> 554, 13.17% slack;
+      # 691 * 500 / 575 = 600.87 -> 600, which is 13.17% slack.
+      # (Previous entries: 651 * 500 / 575 = 566.09 -> 566, 13.06% slack;
+      #  638 * 500 / 575 = 554.78 -> 554, 13.17% slack;
       #  633 * 500 / 575 = 550.43 -> 550, 13.11% slack.)
       #
       # 🔴 CORRECTION (2026-10-23). This block used to say the previous entry
@@ -92,7 +102,7 @@ jobs:
       # one place.
       - name: Assert tests actually ran
         if: always()
-        run: python3 scripts/assert-tests-ran.py --min 566
+        run: python3 scripts/assert-tests-ran.py --min 600
 
       - name: Upload test reports
         if: always()

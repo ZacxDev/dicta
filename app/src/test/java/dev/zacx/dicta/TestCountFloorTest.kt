@@ -89,19 +89,34 @@ class TestCountFloorTest {
      * The counter is a proxy — `@Test` annotations in the sources, not executed
      * tests — so it is pinned against a known value here, and it was validated
      * against the JUnit XML per class: a full run's `TEST-*.xml` reported the
-     * same number for every one of the **60** test classes that this counter
+     * same number for every one of the **63** test classes that this counter
      * returns for the corresponding source file, with no mismatch. First done
-     * at 57 classes, re-run at 58 by the commit that added one, and re-run
-     * again at 60 on the tree that rebased `feat/ui-surface-cleanup` onto
-     * `feat/bubble-state-tile-boot` — which added two classes, so the
-     * comparison was redone rather than the previous result reused. 🔴 That
-     * per-class comparison is what found the string-literal defect [countTests]
-     * documents; a whole-suite total would have hidden it behind a 4-test
-     * discrepancy that made the floor look safer rather than failing. It is
-     * also why the re-run is per class every time: the discrepancy it catches
-     * is invisible in a total, and at 60 classes a naive `grep -c '@Test'`
-     * still reports 653 against the XML's 651 — the two phantoms being this
-     * file's own fixture strings.
+     * at 57 classes, re-run at 58 by the commit that added one, re-run at 60 on
+     * the tree that rebased `feat/ui-surface-cleanup` onto
+     * `feat/bubble-state-tile-boot`, and re-run at 63 on
+     * `feat/stt-reachability-precheck` — each time redone rather than the
+     * previous result reused. 🔴 That per-class comparison is what found the
+     * string-literal defect [countTests] documents; a whole-suite total would
+     * have hidden it behind a 4-test discrepancy that made the floor look safer
+     * rather than failing. It is also why the re-run is per class every time:
+     * the discrepancy it catches is invisible in a total, and at 63 classes an
+     * unstripped `@Test` count over the test sources still reports **706**
+     * against the XML's 691.
+     *
+     * 🔴 **CORRECTION (2026-10-23).** This paragraph used to say that count was
+     * *"653 against the XML's 651 — the two phantoms being this file's own
+     * fixture strings"*. Both halves are **wrong**, and remeasuring the tree it
+     * was written about is what shows it: at `433fbc8`, where the suite really
+     * was 651, `find … | xargs grep -c '@Test'` over the test sources returns
+     * **666**, and so does an occurrence count — 15 phantoms, not 2. All 15 are
+     * in this file, but they are **not all fixture strings**: stripping only
+     * comments leaves 11 of this file's 18, stripping only literals leaves 8,
+     * and stripping both leaves its 3 real tests. So the phantoms are split
+     * between its prose and its fixtures, with two sitting in both at once.
+     * That is why [countTests] strips comments *as well as* literals — the
+     * sentence this replaced credited the literal-stripping with the whole
+     * effect, which would read to a maintainer as licence to drop the comment
+     * pass.
      */
     @Test
     fun bothInstrumentsAreValidated() {

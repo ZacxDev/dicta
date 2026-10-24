@@ -38,6 +38,13 @@ import java.io.File
  *    `DictateActivity.onCreate` auto-starts a capture for any launch that
  *    carries neither `EXTRA_ATTACH_SESSION` nor `EXTRA_HISTORY_ID`.
  *
+ * 🔴 Two further single-site claims are pinned alongside the set, in
+ * [bubbleCaptureSites]: exactly one site CARRIES OUT `Effect.StartRecording`,
+ * and exactly one site may WITHHOLD it. The second was added with the
+ * reachability pre-check, and it watches the opposite failure — a gate that
+ * refuses a recording the fallback ladder would have transcribed. The set
+ * above cannot see either, because neither changes which surfaces exist.
+ *
  * Renaming or rewording a button cannot walk any of it. Reintroducing
  * `try_now_button`, a tile `onClick` that opens the overlay, or a notification
  * *Dictate* action all have to add a plain overlay launch, which the second
@@ -122,8 +129,24 @@ class StartSurfaceLedgerTest {
             "Effect.StartRecording is carried out from $consumers. Exactly one " +
                 "site may open the microphone, or the ledger above is counting " +
                 "decisions while a second handler quietly makes its own.",
-            listOf("BubbleService.kt#applyEffects"),
+            listOf("BubbleService.kt#carryOut"),
             consumers,
+        )
+
+        // 🔴 And exactly one site may WITHHOLD it. The reachability pre-check
+        // inspects the effect list before any of it is applied, so it is a
+        // place that can stop a recording the user asked for — the opposite
+        // failure from the one the set above watches for, and invisible to it.
+        // TranscriptionCoordinator already falls back to the on-device
+        // transcript when the server cannot be reached, so a second gate would
+        // be a second chance to trade that working degraded path for nothing.
+        val gates = sitesOf(GATES_START_RECORDING, skip = setOf("BubbleDictation.kt"))
+        assertEquals(
+            "Effect.StartRecording is gated from $gates. Exactly one site may " +
+                "withhold a start, and it must be the one that hands the " +
+                "decision to the user rather than making it itself.",
+            listOf("BubbleService.kt#applyEffects"),
+            gates,
         )
 
         return emitters + raisers
@@ -279,6 +302,10 @@ class StartSurfaceLedgerTest {
                 fun c() {
                     BubbleDictation.Effect.StartRecording -> startRecording()
                 }
+                // if (effects.contains(Effect.StartRecording)) warn()  <- a comment
+                fun i() = effects.contains(
+                    BubbleDictation.Effect.StartRecording
+                )
                 fun d() = startActivity(DictateLaunch.intent(this))
                 fun e() = DictateLaunch.pendingIntent(
                     context
@@ -307,6 +334,14 @@ class StartSurfaceLedgerTest {
                 "the effect out",
             1,
             CONSUMES_START_RECORDING.findAll(sample).count(),
+        )
+        assertEquals(
+            "GATES_START_RECORDING must match the pre-flight inspection — " +
+                "including the formatter-wrapped spelling — and not the " +
+                "commented one. Without this control, \"exactly one gate\" is " +
+                "a claim about a regex that may match nothing.",
+            1,
+            GATES_START_RECORDING.findAll(sample).count(),
         )
         assertEquals(
             "PLAIN_OVERLAY_LAUNCH must match intent(), pendingIntent() — " +
@@ -451,6 +486,13 @@ class StartSurfaceLedgerTest {
         /** The machine's decision being CARRIED OUT. */
         val CONSUMES_START_RECORDING =
             Regex("""Effect\.StartRecording\s*->""")
+
+        /**
+         * The machine's decision being INSPECTED rather than carried out —
+         * i.e. a pre-flight gate that can withhold a start.
+         */
+        val GATES_START_RECORDING =
+            Regex("""contains\(\s*(?:BubbleDictation\.)?Effect\.StartRecording\s*\)""")
 
         /** Anything raising the one event that can reach the decision. */
         val RAISES_BUBBLE_TAPPED =

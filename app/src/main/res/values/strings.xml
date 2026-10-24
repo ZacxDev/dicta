@@ -144,6 +144,27 @@
          from "nothing happened" is indistinguishable from a broken gesture. -->
     <string name="bubble_history_empty">No saved dictations yet</string>
 
+    <!-- The pre-recording reachability warning (SttReachability / BubbleService).
+
+         🔴 Deliberately names NO host, address or port. The dialog is an
+         always-on-top overlay that can appear over any app on the device, and
+         the server's address is a property of the user's own network that they
+         do not need in order to answer the question being asked.
+
+         The body has to carry the whole trade, because the primary button
+         RECORDS: the server could not be reached, the phone's own recognizer
+         will be used instead, and that is less accurate. Saying only "server
+         unreachable" would leave the user to guess whether recording still
+         works at all — it does, and the fallback ladder in
+         TranscriptionCoordinator is what makes it work. -->
+    <string name="stt_unreachable_title">Transcription server unreachable</string>
+    <string name="stt_unreachable_body">Dicta could not reach the transcription server. Recording now will use the phone\'s own speech recognizer, which is less accurate.</string>
+    <!-- The primary action. It records; it is not a retry and must not read
+         like one. -->
+    <string name="stt_unreachable_record">Record anyway</string>
+    <!-- The secondary action. Starts nothing. -->
+    <string name="stt_unreachable_cancel">Don\'t record</string>
+
     <!-- The card opened on a STORED dictation (DictateLaunch.EXTRA_HISTORY_ID).
 
          🔴 These four are referenced from DictateActivity.kt, which puts them
