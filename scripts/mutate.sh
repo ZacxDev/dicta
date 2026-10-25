@@ -80,7 +80,16 @@
 #   MUTATE_MIN_TESTS  floor for the per-mutant test count (default 1).
 set -uo pipefail
 
-REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# 🔴 `CDPATH=` and `-P --` are LOAD-BEARING, not hygiene. The operand here is
+# `<dir>/..` — e.g. `scripts/..` when invoked as `scripts/mutate.sh` — which does
+# NOT begin with `/`, `./` or `../`, so `cd` SEARCHES $CDPATH for it. On a hit,
+# `cd` ECHOES the resolved directory to stdout, so the command substitution
+# captures TWO lines and $REPO becomes "<path>\n<path>". Every downstream git
+# call then dies with `fatal: cannot change to '<path>\n<path>'` and the harness
+# is unusable — measured on a host with CDPATH=.:/home/zach/workspace (2 lines
+# captured with it set, 1 with `CDPATH=`). Note `cd ..` alone would be SAFE,
+# because `..` does begin with `../`; it is the `<dir>/..` form that is exposed.
+REPO="$(CDPATH= cd -P -- "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ASSERT="$REPO/scripts/assert-tests-ran.py"
 RESULTS="$REPO/app/build/test-results/testDebugUnitTest"
 MIN_TESTS="${MUTATE_MIN_TESTS:-1}"
