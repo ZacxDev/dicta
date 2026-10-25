@@ -296,6 +296,10 @@ PY
     if [ -n "$compile_err" ]; then
       echo "    cause: the mutant DOES NOT COMPILE — not a behavioural result."
       command grep -E '^e: |: error: ' "$log" | head -3 | sed 's/^/        /'
+    elif command grep -q 'No tests found for given includes' "$log"; then
+      echo "    cause: the TEST FILTER matched nothing — this is the exact"
+      echo "           false-green shape the XML check exists for."
+      command grep 'No tests found for given includes' "$log" | head -2 | sed 's/^/        /'
     else
       echo "    cause: unknown. Check the test filter and $log"
       tail -8 "$log" | sed 's/^/        /'
