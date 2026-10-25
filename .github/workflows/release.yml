@@ -29,7 +29,16 @@ jobs:
       # uninstall, which destroys the on-device dictation history. This is a
       # public SHA-256 fingerprint of a self-signed debug cert, not a secret.
       EXPECTED_SIGNER_SHA256: c6440bef6b6e30d485b919e20022bb7235fef0321fc0aca14b28afcd98d3b19b
-      KEYSTORE_PATH: ${{ runner.temp }}/dicta-debug.keystore
+
+      # 🔴 $RUNNER_TEMP, not the `runner.temp` expression context. The `runner`
+      # context does NOT
+      # exist when job-level `env` is evaluated, and using it there is not a
+      # soft failure: GitHub rejects the whole workflow FILE with a
+      # startup_failure and zero jobs. Measured on this branch — the run
+      # appeared, lasted 0s and said only "likely failed because of a workflow
+      # file issue". The environment VARIABLE is set on the runner itself, so it
+      # resolves inside `run:` where it is actually used.
+      KEYSTORE_NAME: dicta-debug.keystore
 
     steps:
       - uses: actions/checkout@v4
@@ -97,7 +106,7 @@ jobs:
             app/build/test-results/testDebugUnitTest/
           if-no-files-found: warn
 
-      # 🔴 Decoded OUTSIDE the repo (runner.temp), so no workflow step and no
+      # 🔴 Decoded OUTSIDE the repo ($RUNNER_TEMP), so no workflow step and no
       # stray `git add` can ever see it as a repo file. Never echoed: the
       # base64 goes straight from the secret into the decoder.
       - name: Decode the debug keystore
@@ -113,9 +122,9 @@ jobs:
                  "INSTALL_FAILED_UPDATE_INCOMPATIBLE." >&2
             exit 2
           fi
-          printf '%s' "${DEBUG_KEYSTORE_B64}" | base64 -d > "${KEYSTORE_PATH}"
+          printf '%s' "${DEBUG_KEYSTORE_B64}" | base64 -d > "${RUNNER_TEMP}/${KEYSTORE_NAME}"
           # Size only — never the bytes, never a fingerprint-bearing dump.
-          echo "decoded keystore: $(stat -c%s "${KEYSTORE_PATH}") bytes"
+          echo "decoded keystore: $(stat -c%s "${RUNNER_TEMP}/${KEYSTORE_NAME}") bytes"
 
       # The DEBUG build type on purpose. Every device-verification recipe this
       # project relies on uses `adb run-as`, which only works against a
@@ -124,7 +133,7 @@ jobs:
       - name: Assemble debug APK
         run: |
           ./gradlew :app:assembleDebug --no-daemon \
-            -Pdicta.debugKeystore="${KEYSTORE_PATH}"
+            -Pdicta.debugKeystore="${RUNNER_TEMP}/${KEYSTORE_NAME}"
 
       # ---------------------------------------------------------------- GATE 2
       # 🔴 NOTHING IS PUBLISHED UNTIL THIS PASSES. This is the only mechanism
@@ -159,4 +168,4 @@ jobs:
       # keystore out of any cache or artifact a later step might add.
       - name: Remove the keystore
         if: always()
-        run: rm -f "${KEYSTORE_PATH}"
+        run: rm -f "${RUNNER_TEMP}/${KEYSTORE_NAME}"
