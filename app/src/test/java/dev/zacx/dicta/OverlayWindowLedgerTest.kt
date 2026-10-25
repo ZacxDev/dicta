@@ -40,6 +40,18 @@ import java.io.File
  *    from one boolean, so the two windows cannot disagree about whether Dicta
  *    is on screen.
  *
+ * 🔴 **THAT LAST SENTENCE IS A FACT ABOUT THE SOURCE, NOT SOMETHING THIS FILE
+ * CHECKS** — and until 2026-10-25 nothing checked the dialog half of it.
+ * Measured at `03e2d02`: deleting the sink's entire `val dialog = warning …
+ * updateViewLayout(dialog, dialogParams)` block left this ledger green and the
+ * other 698 tests green too, because a count of `addView` sites is satisfied by
+ * a window that is never hidden. The behavioural guards are
+ * [BubbleHiddenWhileTheCardIsUpTest] for the bubble and
+ * `BubbleUnreachableWarningTest.theWarningDialogLeavesTheScreenForACaptureAndComesBack`
+ * for the dialog; each drives `OverlayVisibility` and asserts its own window's
+ * `alpha`/`FLAG_NOT_TOUCHABLE`. A new overlay window needs one too — bumping
+ * the number below is half the job.
+ *
  * 🔴 **Receiver-spelling insensitivity is load-bearing, and was learned the
  * hard way.** [DictationSessionLedgerTest]'s kdoc records the sibling ledger's
  * first version matching a literal receiver (`Intent(this, …`) and therefore
@@ -81,10 +93,20 @@ class OverlayWindowLedgerTest {
                 "from the SAME OverlayVisibility sink as the existing ones, so " +
                 "it is hidden for the duration of a capture, or put the view " +
                 "inside an existing window instead of opening another. Then " +
-                "change the count here deliberately. 🔴 A COUNT and not a set " +
-                "of file names: a set passes unchanged when an existing owner " +
-                "opens a second window, which is exactly how this feature's " +
-                "warning dialog arrived.",
+                "change the count here deliberately — AND add a behavioural " +
+                "test that drives OverlayVisibility and asserts your window's " +
+                "own params go alpha=0 + FLAG_NOT_TOUCHABLE and back, next to " +
+                "BubbleHiddenWhileTheCardIsUpTest (the bubble) and " +
+                "BubbleUnreachableWarningTest." +
+                "theWarningDialogLeavesTheScreenForACaptureAndComesBack (the " +
+                "warning dialog). 🔴 THIS ASSERTION CANNOT CHECK THAT, and " +
+                "bumping the number is not the whole job: it compares COUNTS, " +
+                "so it is satisfied by an addView whose window is never hidden " +
+                "at all. Measured at 03e2d02 — with the dialog's entire half of " +
+                "the sink deleted, this test still PASSED and so did the other " +
+                "698. 🔴 A COUNT and not a set of file names: a set passes " +
+                "unchanged when an existing owner opens a second window, which " +
+                "is exactly how this feature's warning dialog arrived.",
             mapOf("BubbleService.kt" to 2),
             adders,
         )
