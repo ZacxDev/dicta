@@ -114,8 +114,42 @@ jobs:
             app/build/test-results/testDebugUnitTest/
           if-no-files-found: warn
 
+      # 🔴 A THROWAWAY KEY, FOR A BUILD THAT IS NEVER PUBLISHED.
+      #
+      # app/build.gradle.kts declares the debug signing config EXPLICITLY, so
+      # AGP no longer auto-generates ~/.android/debug.keystore when it is
+      # missing — `validateSigningDebug` FAILS instead. That fail-closed
+      # behaviour is the point of declaring it (an auto-generated key is how a
+      # release gets signed with a certificate the handset will refuse), but it
+      # means this workflow, which has no keystore and deliberately no access to
+      # the release secret, must supply one of its own.
+      #
+      # Measured, not predicted: without this step the "Assemble debug APK"
+      # step below failed with
+      #   Keystore file '/home/runner/.android/debug.keystore' not found
+      #           for signing config 'debug'
+      # on a runner, while the same build was green locally — the local host has
+      # that file. One measurement was not a general claim.
+      #
+      # The identity is irrelevant HERE and must stay irrelevant: this APK is a
+      # packaging check, never an artifact anyone installs. Releases are built
+      # by release.yml from the real keystore, and the signer fingerprint is
+      # gated there. Generating the key rather than reusing the real one is
+      # deliberate — it keeps the operator's keystore out of a workflow that
+      # runs on every push and on pull requests from anywhere.
+      - name: Mint a throwaway debug keystore
+        run: |
+          set -euo pipefail
+          keytool -genkeypair -noprompt \
+            -keystore "${RUNNER_TEMP}/throwaway-debug.keystore" \
+            -storepass android -keypass android \
+            -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 1 \
+            -dname 'C=US, O=Android, CN=Android Debug throwaway CI key'
+
       - name: Assemble debug APK
-        run: ./gradlew :app:assembleDebug --no-daemon
+        run: |
+          ./gradlew :app:assembleDebug --no-daemon \
+            -Pdicta.debugKeystore="${RUNNER_TEMP}/throwaway-debug.keystore"
 
       # 🔴 COMPILES androidTest, which neither task above does. Without this
       # step the instrumentation source set is structurally invisible to the
@@ -128,4 +162,6 @@ jobs:
       # service and need a token at /data/local/tmp plus mesh reachability,
       # neither of which a GitHub runner has.
       - name: Compile instrumentation tests
-        run: ./gradlew :app:assembleDebugAndroidTest --no-daemon
+        run: |
+          ./gradlew :app:assembleDebugAndroidTest --no-daemon \
+            -Pdicta.debugKeystore="${RUNNER_TEMP}/throwaway-debug.keystore"

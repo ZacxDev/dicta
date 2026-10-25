@@ -1,0 +1,171 @@
+name: release
+
+# Tag-driven, and ONLY tag-driven. An ordinary push to main must never publish:
+# the version lives in app/build.gradle.kts, so pushing a bump would otherwise
+# republish the same version under a different build, and Obtainium would offer
+# the operator an "update" that is not one.
+on:
+  push:
+    tags:
+      - 'v*'
+
+# A re-pushed tag supersedes the in-flight run for that tag. Deliberately NOT
+# keyed on the branch: two different tags are two different releases and must
+# not cancel each other.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write  # required by `gh release create`
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      # 🔴 The certificate the handset already trusts. An APK signed by anything
+      # else cannot be installed over the installed build — Android fails it
+      # with INSTALL_FAILED_UPDATE_INCOMPATIBLE and the only way through is an
+      # uninstall, which destroys the on-device dictation history. This is a
+      # public SHA-256 fingerprint of a self-signed debug cert, not a secret.
+      EXPECTED_SIGNER_SHA256: c6440bef6b6e30d485b919e20022bb7235fef0321fc0aca14b28afcd98d3b19b
+
+      # 🔴 $RUNNER_TEMP, not the `runner.temp` expression context. The `runner`
+      # context does NOT
+      # exist when job-level `env` is evaluated, and using it there is not a
+      # soft failure: GitHub rejects the whole workflow FILE with a
+      # startup_failure and zero jobs. Measured on this branch — the run
+      # appeared, lasted 0s and said only "likely failed because of a workflow
+      # file issue". The environment VARIABLE is set on the runner itself, so it
+      # resolves inside `run:` where it is actually used.
+      KEYSTORE_NAME: dicta-debug.keystore
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # JDK 17 is not optional: compileOptions / kotlinOptions pin 17, and the
+      # test task's --add-opens flags are JDK 9+ module-system syntax.
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v3
+
+      # ---------------------------------------------------------------- GATE 1
+      # The tag must agree with the version committed in the tree. Runs FIRST
+      # because it is the cheapest of the two gates and the one most likely to
+      # be wrong: it costs seconds and catches a mistyped tag before a six
+      # minute build.
+      - name: Gate — the tag matches the version in the tree
+        run: python3 scripts/assert-version-matches-tag.py "${GITHUB_REF_NAME}"
+
+      - name: Unit tests
+        run: ./gradlew :app:testDebugUnitTest --no-daemon --stacktrace
+
+      # The JUnit XML is the authority on what ran — a Gradle task can report
+      # success having executed zero tests.
+      #
+      # 🔴 THE FLOOR IS READ OUT OF tests.yml, NOT RESTATED HERE. One number,
+      # one place: this repo has already been bitten twice by a second copy of
+      # the suite-size baseline going stale (android.nix did exactly this, and
+      # TestCountFloorTest now fails if it reappears there). tests.yml is the
+      # file that owns the number and carries the formula for re-deriving it, so
+      # a release inherits whatever floor the test gate currently asserts rather
+      # than drifting away from it.
+      #
+      # Comments are stripped before matching because that comment block quotes
+      # historical --min values in prose. The empty check is the positive
+      # control: if the grep matches nothing the step FAILS rather than running
+      # the assertion with no floor at all, which would pass vacuously.
+      - name: Assert tests actually ran
+        run: |
+          set -euo pipefail
+          min=$(grep -vE '^[[:space:]]*#' .github/workflows/tests.yml \
+            | grep -oE 'assert-tests-ran\.py --min [0-9]+' \
+            | grep -oE '[0-9]+$' | head -1)
+          if [[ -z "${min}" ]]; then
+            echo "error: could not read the --min floor out of" \
+                 ".github/workflows/tests.yml. Not falling back to a default:" \
+                 "a release must not publish behind a gate that measured" \
+                 "nothing." >&2
+            exit 2
+          fi
+          echo "test-count floor inherited from tests.yml: --min ${min}"
+          python3 scripts/assert-tests-ran.py --min "${min}"
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-test-results
+          path: |
+            app/build/reports/tests/testDebugUnitTest/
+            app/build/test-results/testDebugUnitTest/
+          if-no-files-found: warn
+
+      # 🔴 Decoded OUTSIDE the repo ($RUNNER_TEMP), so no workflow step and no
+      # stray `git add` can ever see it as a repo file. Never echoed: the
+      # base64 goes straight from the secret into the decoder.
+      - name: Decode the debug keystore
+        env:
+          DEBUG_KEYSTORE_B64: ${{ secrets.DEBUG_KEYSTORE_B64 }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${DEBUG_KEYSTORE_B64}" ]]; then
+            echo "error: DEBUG_KEYSTORE_B64 is empty or unset. Refusing to" \
+                 "build: without it AGP would AUTO-GENERATE a fresh debug" \
+                 "keystore, the release would publish green, and the failure" \
+                 "would only appear on the handset as" \
+                 "INSTALL_FAILED_UPDATE_INCOMPATIBLE." >&2
+            exit 2
+          fi
+          printf '%s' "${DEBUG_KEYSTORE_B64}" | base64 -d > "${RUNNER_TEMP}/${KEYSTORE_NAME}"
+          # Size only — never the bytes, never a fingerprint-bearing dump.
+          echo "decoded keystore: $(stat -c%s "${RUNNER_TEMP}/${KEYSTORE_NAME}") bytes"
+
+      # The DEBUG build type on purpose. Every device-verification recipe this
+      # project relies on uses `adb run-as`, which only works against a
+      # debuggable build, so the published artifact stays debuggable by
+      # decision. See README "Install and updates".
+      - name: Assemble debug APK
+        run: |
+          ./gradlew :app:assembleDebug --no-daemon \
+            -Pdicta.debugKeystore="${RUNNER_TEMP}/${KEYSTORE_NAME}"
+
+      # ---------------------------------------------------------------- GATE 2
+      # 🔴 NOTHING IS PUBLISHED UNTIL THIS PASSES. This is the only mechanism
+      # that can catch AGP having signed with a key other than the operator's,
+      # and it is positioned between the build and `gh release create` for
+      # exactly that reason — a mismatch here must abort the job, not produce a
+      # release that has to be deleted afterwards.
+      - name: Gate — the APK's signer is the expected certificate
+        run: |
+          scripts/assert-apk-signer.sh \
+            app/build/outputs/apk/debug/app-debug.apk \
+            "${EXPECTED_SIGNER_SHA256}"
+
+      - name: Name the artifact after the tag
+        run: |
+          set -euo pipefail
+          cp app/build/outputs/apk/debug/app-debug.apk \
+             "${RUNNER_TEMP}/dicta-${GITHUB_REF_NAME}.apk"
+
+      # Obtainium reads this repo's GitHub Releases and offers the newest one.
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh release create "${GITHUB_REF_NAME}" \
+            "${RUNNER_TEMP}/dicta-${GITHUB_REF_NAME}.apk" \
+            --title "${GITHUB_REF_NAME}" \
+            --generate-notes
+
+      # Best-effort: the runner is ephemeral, but an explicit shred keeps the
+      # keystore out of any cache or artifact a later step might add.
+      - name: Remove the keystore
+        if: always()
+        run: rm -f "${RUNNER_TEMP}/${KEYSTORE_NAME}"

@@ -11,8 +11,23 @@ android {
         applicationId = "dev.zacx.dicta"
         minSdk = 26
         targetSdk = 34
-        versionCode = 1
-        versionName = "0.1.0"
+        // 🔴 THE TREE IS THE SOURCE OF TRUTH FOR THE VERSION, NOT THE TAG.
+        //
+        // versionCode is derived from versionName by the convention
+        //   major*10000 + minor*100 + patch   (0.2.0 -> 200)
+        // and `scripts/assert-version-matches-tag.py` refuses a release tag
+        // that disagrees with BOTH values here.
+        //
+        // The rejected alternative was injecting the version from the git tag
+        // at build time. That leaves every LOCAL build at the gradle file's
+        // unbumped value — versionCode 1 — and Android refuses to install a
+        // lower versionCode over a higher one, so the first OTA would brick
+        // the dev loop: `adb install` of a local debug build onto an OTA'd
+        // handset fails with INSTALL_FAILED_VERSION_DOWNGRADE until you
+        // uninstall, which destroys the dictation history. Bumping here and
+        // making the tag match keeps local and published builds identical.
+        versionCode = 200
+        versionName = "0.2.0"
         // Instrumented tests only (androidTest/). They never run in CI —
         // there is no device there — and they are packaged into a SEPARATE
         // test APK, so this adds nothing to app-debug.apk. See the
@@ -20,7 +35,52 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    // 🔴 THE DEBUG SIGNING KEY IS EXPLICIT ON PURPOSE — do not delete this
+    // block and let AGP fall back to its default.
+    //
+    // AGP AUTO-GENERATES ~/.android/debug.keystore when none exists. That is
+    // convenient locally and a silent disaster in CI: a fresh GitHub runner has
+    // no keystore, so AGP would mint a brand-new one, the release would build,
+    // sign, upload and publish entirely green, and the ONLY place the problem
+    // would ever surface is the operator's handset at install time, as
+    // INSTALL_FAILED_UPDATE_INCOMPATIBLE. The remedy at that point is an
+    // uninstall, which destroys the on-device dictation history.
+    //
+    // So the keystore is a parameter, the release workflow supplies the real
+    // one from a secret, and `scripts/assert-apk-signer.sh` verifies the BUILT
+    // APK's signer fingerprint before anything is published. Two independent
+    // mechanisms, because the failure is invisible until it is expensive.
+    //
+    // The defaults are the standard AGP debug values, so a plain local
+    // `./gradlew :app:assembleDebug` behaves exactly as it did before this
+    // block existed.
+    //
+    // Override with:
+    //   -Pdicta.debugKeystore=/path/to/debug.keystore
+    //   -Pdicta.debugKeystorePassword=... -Pdicta.debugKeyAlias=...
+    //   -Pdicta.debugKeyPassword=...
+    signingConfigs {
+        getByName("debug") {
+            storeFile = file(
+                (project.findProperty("dicta.debugKeystore") as String?)
+                    ?: "${System.getProperty("user.home")}/.android/debug.keystore"
+            )
+            storePassword =
+                (project.findProperty("dicta.debugKeystorePassword") as String?) ?: "android"
+            keyAlias =
+                (project.findProperty("dicta.debugKeyAlias") as String?) ?: "androiddebugkey"
+            keyPassword =
+                (project.findProperty("dicta.debugKeyPassword") as String?) ?: "android"
+        }
+    }
+
     buildTypes {
+        debug {
+            // Explicit, though AGP would also wire this by name. Stated so that
+            // deleting the signingConfigs block above is a compile error here
+            // rather than a silent fallback to a generated key.
+            signingConfig = signingConfigs.getByName("debug")
+        }
         release {
             isMinifyEnabled = false
         }
@@ -73,9 +133,12 @@ dependencies {
     //     full-screen once from exactly that mechanism — see themes.xml and
     //     DictateOverlayThemeTest.
     //  2. Nothing in the design needed it. The palette is a surface ramp in
-    //     colors.xml, the shapes are <shape>/<selector> drawables, the overflow
-    //     is a platform ImageButton, and ripples/tooltips/compound-drawable
-    //     tinting are all platform features at minSdk 26.
+    //     colors.xml, the shapes are <shape>/<selector> drawables, the four
+    //     actions are platform ImageButtons, and ripples/tooltips/
+    //     compound-drawable tinting are all platform features at minSdk 26.
+    //     (This used to say "the overflow is a platform ImageButton". The
+    //     overflow was deleted — see activity_dictate.xml's header — so the
+    //     example was naming a control that no longer exists.)
     //
     // 🔴 The claim is unchanged, so it was re-MEASURED rather than left
     // standing on its own authority. Package prefixes actually present in the

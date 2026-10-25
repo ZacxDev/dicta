@@ -73,19 +73,18 @@ asked, and `foregroundPromotionRefused` is the only thing that reads it.
 > set of places a recording can begin, and it fails if that set grows.
 
 The overlay is a floating dialog-style activity, and it is deliberately
-**minimal at rest**: the transcript, one mic pill, and a small overflow
-control. Nothing else. The four actions below live in a row that is hidden
-until there is something to act on.
+**minimal at rest**: the transcript, one mic pill, and the four actions.
+Nothing else.
 
-Three independent routes reach them, so none of them is the single point of
-failure:
-
-1. the **⋯ overflow** next to the mic, always visible, with a
-   `contentDescription` and a long-press `tooltipText` that both flip between
-   "More actions" and "Hide actions";
-2. the row **reveals itself** the moment the transcript stops being blank — so
-   after the first utterance the actions are simply on screen;
-3. the status line names the route in words while the row is hidden.
+> **Removed:** the **⋯ overflow** toggle, and with it both routes that existed
+> only to make a hidden action row findable — the auto-reveal once the
+> transcript went non-empty, and the status line naming the "⋯" route in words.
+> The actions are **unconditional** now: `@id/action_row` carries no visibility
+> attribute and nothing in `DictateActivity` sets one. The states where an
+> action cannot do anything ("Nothing to copy yet…") are handled *by the
+> action*, not by hiding it. `OverlayMinimalLayoutTest` pins the row visible in
+> every transcript state, and `thereIsNoOverflowToggleLeftOnTheCard` fails if an
+> `@id/more_button` is ever declared again.
 
 - One-tap dictation via `SpeechRecognizer` (live partial results as you speak)
 - Editable text field (fix anything the recognizer got wrong) — the hero of the
@@ -118,6 +117,93 @@ failure:
 
 No root, no system app, no accessibility service needed.
 
+## Install and updates
+
+There is no Play Store listing. Updates arrive over the air through
+[**Obtainium**](https://github.com/ImranR98/Obtainium), which watches a repo's
+GitHub Releases and installs new APKs as they appear.
+
+**Set it up once:** in Obtainium, *Add App* →
+
+```
+https://github.com/ZacxDev/dicta
+```
+
+Obtainium reads this repo's Releases, offers the newest `dicta-v<semver>.apk`,
+and from then on notifies on each new release.
+
+### Updates install in place, and that is a deliberate property
+
+An update **replaces the installed app without uninstalling it**, so everything
+in Dicta's private storage — the dictation history, the saved transcription
+token, the bubble's enabled flag — survives. That works only because every
+release is signed with the **same certificate** as the build already on the
+handset. Android will not let a differently-signed APK replace an installed one:
+it refuses with `INSTALL_FAILED_UPDATE_INCOMPATIBLE`, and the only way through
+is an uninstall, which wipes the history.
+
+Cert parity is therefore the whole point of the release pipeline, and it is
+checked rather than hoped for. Two independent mechanisms:
+
+1. `app/build.gradle.kts` configures the **debug signing config explicitly**,
+   from the `dicta.debugKeystore` Gradle property (default:
+   `$HOME/.android/debug.keystore`, the standard debug passwords). Without this
+   AGP would **auto-generate** a keystore whenever none is present — which on a
+   fresh CI runner means a brand-new key every time.
+2. `scripts/assert-apk-signer.sh` verifies the **built APK's** signer
+   fingerprint before `.github/workflows/release.yml` publishes anything. A
+   mismatch aborts the job. This is the mechanism that matters: an auto-
+   generated key produces a release that builds, signs, uploads and publishes
+   entirely green, and the failure surfaces nowhere but the handset, at install
+   time.
+
+### The published APK is debuggable, on purpose
+
+Releases publish the **debug** build type, not release. Every device-level
+verification recipe this project relies on uses `adb run-as
+dev.zacx.dicta …` to read the app's private files — the dictation history store,
+the encrypted token — and `run-as` only works against a build whose manifest is
+`debuggable`. A release-type APK would make the handset unobservable, so the
+debuggable artifact is a deliberate trade, taken knowingly: the app holds a
+transcription token, so a user other than the operator should weigh that
+differently.
+
+### Cutting a release
+
+The **tree is the source of truth for the version**; the tag only has to match
+it. The gate exists because the alternative — injecting the version from the tag
+— would leave `app/build.gradle.kts` at its unbumped `versionCode` forever, and
+Android refuses to install a lower `versionCode` over a higher one. After the
+first OTA, every local `adb install` would fail as a downgrade until you
+uninstalled, taking the history with it.
+
+1. Bump both values in `app/build.gradle.kts`. `versionCode` follows
+   `major*10000 + minor*100 + patch`, so `0.3.0` → `300`:
+
+   ```kotlin
+   versionCode = 300
+   versionName = "0.3.0"
+   ```
+
+2. Commit it, and push to `main`. Pushing the bump publishes nothing — only a
+   tag does.
+3. Tag it to match, and push the tag:
+
+   ```sh
+   git tag v0.3.0 && git push origin v0.3.0
+   ```
+
+`.github/workflows/release.yml` then runs, in this order: the version gate
+(`scripts/assert-version-matches-tag.py`), the full unit suite plus the
+test-count floor it inherits from `tests.yml`, the signed build, the signer gate
+(`scripts/assert-apk-signer.sh`), and only then `gh release create`. **Nothing
+is published until both gates pass.** If a gate fails the job aborts and no
+release exists — fix the tree, delete and re-push the tag.
+
+The keystore reaches CI as the `DEBUG_KEYSTORE_B64` repository secret, decoded
+to a path outside the checkout for the build and deleted afterwards. It is never
+printed and never committed.
+
 ## Build
 
 Requires JDK 17 and the Android SDK (compileSdk 34). The Gradle wrapper is
@@ -132,6 +218,43 @@ Gradle install is needed:
 > Until recently this section documented `./gradlew` while no `gradlew` and no
 > `gradle-wrapper.jar` were tracked, so the documented command could not work.
 > The wrapper is now in the repo.
+
+### A debug keystore is now required, and its absence fails loudly
+
+`app/build.gradle.kts` declares the `debug` signing config **explicitly**, so
+AGP no longer **auto-generates** `~/.android/debug.keystore` when it is missing.
+A build without one stops at:
+
+```
+> Task :app:validateSigningDebug FAILED
+  Keystore file '…/.android/debug.keystore' not found for signing config 'debug'
+```
+
+That is deliberate and fail-closed — see [Install and
+updates](#install-and-updates). An auto-generated key is exactly how a release
+gets signed with a certificate the handset will refuse, and failing at build
+time is strictly better than discovering it at install time.
+
+If you have ever built an Android app on the machine you already have the file.
+Otherwise either mint one:
+
+```sh
+keytool -genkeypair -noprompt -keystore ~/.android/debug.keystore \
+  -storepass android -keypass android -alias androiddebugkey \
+  -keyalg RSA -keysize 2048 -validity 10000 \
+  -dname 'C=US, O=Android, CN=Android Debug'
+```
+
+…or point the build at one somewhere else:
+
+```sh
+./gradlew :app:assembleDebug -Pdicta.debugKeystore=/path/to/debug.keystore
+```
+
+A locally generated key is fine for local work, but an APK signed with it
+**cannot be installed over** a build from a GitHub Release. `.github/workflows/tests.yml`
+mints a throwaway key for exactly this reason: its APK is a packaging check, never
+something anyone installs.
 
 ## Tests
 
