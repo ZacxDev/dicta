@@ -219,6 +219,43 @@ Gradle install is needed:
 > `gradle-wrapper.jar` were tracked, so the documented command could not work.
 > The wrapper is now in the repo.
 
+### A debug keystore is now required, and its absence fails loudly
+
+`app/build.gradle.kts` declares the `debug` signing config **explicitly**, so
+AGP no longer **auto-generates** `~/.android/debug.keystore` when it is missing.
+A build without one stops at:
+
+```
+> Task :app:validateSigningDebug FAILED
+  Keystore file '…/.android/debug.keystore' not found for signing config 'debug'
+```
+
+That is deliberate and fail-closed — see [Install and
+updates](#install-and-updates). An auto-generated key is exactly how a release
+gets signed with a certificate the handset will refuse, and failing at build
+time is strictly better than discovering it at install time.
+
+If you have ever built an Android app on the machine you already have the file.
+Otherwise either mint one:
+
+```sh
+keytool -genkeypair -noprompt -keystore ~/.android/debug.keystore \
+  -storepass android -keypass android -alias androiddebugkey \
+  -keyalg RSA -keysize 2048 -validity 10000 \
+  -dname 'C=US, O=Android, CN=Android Debug'
+```
+
+…or point the build at one somewhere else:
+
+```sh
+./gradlew :app:assembleDebug -Pdicta.debugKeystore=/path/to/debug.keystore
+```
+
+A locally generated key is fine for local work, but an APK signed with it
+**cannot be installed over** a build from a GitHub Release. `.github/workflows/tests.yml`
+mints a throwaway key for exactly this reason: its APK is a packaging check, never
+something anyone installs.
+
 ## Tests
 
 ```sh
