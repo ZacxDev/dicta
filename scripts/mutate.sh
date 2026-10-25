@@ -217,9 +217,15 @@ PY
 
   local gradle_args=(:app:testDebugUnitTest)
   [ -n "$filter" ] && gradle_args+=(--tests "$filter")
+  # 🔴 `< /dev/null` is load-bearing, not tidiness. Gradle reads stdin, and
+  # when this ran inside a `while read` loop over the batch file it CONSUMED
+  # THE REMAINING MUTANTS: a 3-mutant batch silently ran 1 and reported a
+  # clean summary for it. The batch loop no longer streams stdin either (it
+  # reads the file into an array first) and asserts the planned count — but a
+  # command that eats stdin must not be left able to do that at all.
   ( cd "$REPO" && nix-shell ./android.nix --run \
       "./gradlew --offline ${gradle_args[*]@Q} -Pandroid.aapt2FromMavenOverride=\$ANDROID_HOME/build-tools/34.0.0/aapt2" \
-  ) > "$log" 2>&1
+  ) > "$log" 2>&1 < /dev/null
   local gradle_rc=$?
 
   # The XML is the authority. Branch on assert-tests-ran.py's exit code:
@@ -274,8 +280,11 @@ PY
       command grep -E '^e: |: error: ' "$log" | head -3 | sed 's/^/        /'
     fi
     if [ "$assert_rc" -eq 1 ]; then
+      # The per-class summary lines also start '  dev.' — exclude them, or a
+      # class row gets reported as the test that did the killing.
       printf '%s\n' "$assert_out" | command grep -A20 'failing tests:' \
-        | command grep -E '^  dev\.' | head -6 | sed 's/^/    killed-by: /'
+        | command grep -E '^  dev\.' | command grep -v ': tests=' \
+        | head -6 | sed 's/^/    killed-by: /'
     fi
   fi
   echo "    log: $log"
@@ -331,15 +340,37 @@ cmd_batch() {
   echo "positive control KILLED — mutants in this batch do reach the compiler."
   echo
 
+  # Read the whole batch into an array BEFORE running anything. Streaming the
+  # file into the loop's stdin let gradle eat the un-read mutants.
+  local lines=() line
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in ''|'#'*) continue ;; esac
+    lines+=("$line")
+  done < "$tsv"
+  local planned="${#lines[@]}"
+  if [ "$planned" -eq 0 ]; then
+    echo "FATAL: $tsv defines no mutants (only comments/blanks)." >&2
+    verify_tree_pristine; exit 64
+  fi
+  echo "batch: $planned mutant(s) planned from $tsv"
+  echo
+
   local names=() rcs=() n=0
-  while IFS=$'\t' read -r name file from to filter || [ -n "${name:-}" ]; do
-    case "${name:-}" in ''|'#'*) continue ;; esac
+  for line in "${lines[@]}"; do
+    IFS=$'\t' read -r name file from to filter <<< "$line"
     run_mutant "$name" "$file" "$from" "$to" "${filter:-}"
     rcs+=("$?"); names+=("$name"); n=$((n+1))
     echo
-  done < "$tsv"
+  done
 
-  echo "=== batch summary ($n mutants, control KILLED) ==="
+  # 🔴 A batch that ran fewer mutants than it planned is a HARNESS failure
+  # reported as a clean result. This is the guard for the stdin-eating bug.
+  if [ "$n" -ne "$planned" ]; then
+    echo "!!!!!! HARNESS FAILURE: planned $planned mutants, ran $n. Verdicts incomplete. !!!!!!"
+    verify_tree_pristine; exit 7
+  fi
+
+  echo "=== batch summary ($n/$planned mutants ran, control KILLED) ==="
   local i surv=0
   for i in "${!names[@]}"; do
     printf '    %-10s %s\n' "$(verdict_word "${rcs[$i]}")" "${names[$i]}"
