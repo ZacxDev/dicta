@@ -1539,8 +1539,16 @@ class BubbleService : Service() {
      * Constructed per call rather than cached: `SttSettings` reads through to
      * `SharedPreferences` on every access, so the live value is what comes
      * back when the user changes the setting in `SettingsActivity` while the
-     * bubble is up. `create` is `getSharedPreferences` plus two constructors —
-     * see [realSession] for why that reaches no keystore.
+     * bubble is up.
+     *
+     * 🔴 **CONSTRUCTING one reaches no keystore; USING one usually does.** The
+     * `create` call on the next line is `getSharedPreferences` plus two
+     * constructors — see [realSession]. That is all this sentence ever
+     * licensed, and it read as a general "no keystore here" at call sites whose
+     * very next step reaches one: `isRemoteConfigured` (both [remoteInUse] and
+     * [runProbe]) evaluates `tokens.hasToken`, which decrypts through
+     * `SecretCipher` and so loads an AndroidKeyStore key. Cheap to build, not
+     * cheap to interrogate — budget for the latter at the call site.
      */
     private fun sttSettings(): SttSettings =
         settingsProvider?.invoke() ?: SttSettings.create(this)
@@ -1659,6 +1667,23 @@ class BubbleService : Service() {
         // deleted — it had no such independent reason.
         if (root == null) return
         val settings = sttSettings()
+        // ⚠ KNOWN AND NOT FIXED HERE: when the remote path IS configured, this
+        // line does a keystore unwrap plus a GCM decrypt on the MAIN THREAD,
+        // once per tick (60 s, or 5 min backed off). `isRemoteConfigured` is
+        // `remoteEnabled && tokens.hasToken` and Kotlin's `&&` already
+        // short-circuits, so the user who turned the feature OFF pays nothing —
+        // but that is the user who would not have cared. No restructure
+        // available inside this function preserves behaviour exactly: hoisting
+        // the predicate onto `probeExecutor` adds two thread hops before any
+        // branch, lets state change between evaluation and decision, and makes
+        // a shut-down executor swallow the `forget()` + `scheduleProbe` that
+        // currently still run. Splitting the conjunction so `hasToken` is tested
+        // after `screenIsInteractive()` changes observable state too: with
+        // `remoteEnabled` true, no token, and the screen off, the `forget()`
+        // below stops happening. Memoising the decrypt, or the `SecretKey`
+        // inside `SecretCipher`, is the real fix and is a change to the crypto
+        // layer — its own PR, not a line here. Magnitude is UNMEASURED: nothing
+        // in this repo can time Keymaster IPC.
         if (!settings.isRemoteConfigured) {
             // Drop any knowledge from before the user turned it off, so it
             // cannot warn if they turn it back on an hour later.
@@ -1726,8 +1751,27 @@ class BubbleService : Service() {
      * dictation.
      */
     private fun warnBeforeStarting(effects: List<BubbleDictation.Effect>): Boolean {
-        if (!remoteInUse()) return false
+        // 🔴 `verdict()` FIRST, and the order is load-bearing rather than
+        // stylistic. Both terms are pure reads and the conjunction is the same
+        // either way, so the returned decision is identical — but they cost
+        // very different amounts. `verdict()` reads four in-memory fields under
+        // this object's own monitor. `remoteInUse()` is
+        // `SttSettings.isRemoteConfigured`, whose `tokens.hasToken` term calls
+        // `token()`, which decrypts the stored blob — and that unwraps an
+        // AndroidKeyStore key (`SecretCipher.key()` does
+        // `KeyStore.getInstance(...).load(null)` on every call) plus an AES-GCM
+        // `doFinal`, with nothing memoising either. This function runs
+        // synchronously on the main thread from the tap that starts a
+        // recording, so checking the cheap term first keeps the keystore unwrap
+        // out of tap-to-mic latency for every tap except one already about to
+        // open a dialog.
+        //
+        // ⚠ What that unwrap COSTS is not measured anywhere in this repo: no
+        // handset was attached and nothing here can time Keymaster IPC. The
+        // claim made by this ordering is only that the work is now SKIPPED on
+        // the common path — not that it was slow.
         if (reachability.verdict() != SttReachability.Verdict.WARN) return false
+        if (!remoteInUse()) return false
         return showUnreachableWarning(effects)
     }
 

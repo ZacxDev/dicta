@@ -7,6 +7,7 @@ import android.os.Looper
 import android.os.PowerManager
 import android.view.View
 import android.view.ViewGroup
+import android.view.WindowManager
 import android.widget.TextView
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -722,6 +723,160 @@ class BubbleUnreachableWarningTest {
             dialog(service),
         )
         idleFor(SttReachability.PROBE_INTERVAL_MS * 2)
+    }
+
+    // --- the dialog is a SECOND overlay window, and must hide for a capture --
+
+    /**
+     * 🔴 REGRESSION: **the warning dialog stayed composited into every
+     * captured frame.**
+     *
+     * The dialog is a second `TYPE_APPLICATION_OVERLAY` window, so
+     * MediaProjection composites it into the user's screenshot exactly as it
+     * did the bubble — PR #4's bug, in a window that arrived long after it.
+     * `BubbleService.visibilitySink` drives both windows, and this is the only
+     * thing that *observes* the dialog half.
+     *
+     * 🔴 Why this exists even though [OverlayWindowLedgerTest] already names
+     * the hazard: that file counts `addView` call sites per source file and
+     * asserts `BubbleService.kt to 2`. The count is satisfied by a second
+     * `addView` whether or not the window it opens is ever hidden, so its
+     * error text — "drive it from the SAME OverlayVisibility sink" — claimed
+     * coverage its implementation did not provide. **Measured:** deleting the
+     * whole `val dialog = warning … updateViewLayout(dialog, dialogParams)`
+     * block (692 bytes) SURVIVED the full green suite at `03e2d02`, while
+     * deleting the bubble half's two lines was killed five times over by
+     * [BubbleHiddenWhileTheCardIsUpTest]. Only the bubble was guarded.
+     *
+     * Driven through `OverlayVisibility.Holder.CAPTURE` — the holder
+     * `DictaWindows.hideForCapture()` sets, which is the real capture seam —
+     * rather than by calling the sink directly, so this cannot pass by
+     * asserting that a private lambda behaves as written.
+     *
+     * What it asserts is the **window state Dicta asks for**: the dialog's
+     * `params.alpha`, its `FLAG_NOT_TOUCHABLE` bit and its root visibility.
+     * Nothing here composites, so "the dialog is genuinely absent from the
+     * captured frame" remains a device claim — the same boundary this file's
+     * header and [BubbleHiddenWhileTheCardIsUpTest] both draw.
+     */
+    @Test
+    fun theWarningDialogLeavesTheScreenForACaptureAndComesBack() {
+        val service = start()
+        idle()
+        record(false)
+        bubble(service).performClick()
+        val view = requireNotNull(dialog(service)) { "precondition: no dialog is up" }
+
+        // Precondition, asserted: the dialog starts ON screen. Without this the
+        // test would pass on a dialog that was never visible in the first
+        // place — the vacuous direction.
+        assertDialogIsOnScreen(service, view, "precondition — before any capture")
+
+        OverlayVisibility.setHidden(OverlayVisibility.Holder.CAPTURE, true)
+        idle()
+
+        assertDialogIsOffScreen(
+            service, view,
+            "a MediaProjection capture is in flight and the warning dialog is " +
+                "STILL being composited into every frame of the user's " +
+                "screenshot. It is a second overlay window; the bubble's own " +
+                "hide does not cover it",
+        )
+
+        OverlayVisibility.setHidden(OverlayVisibility.Holder.CAPTURE, false)
+        idle()
+
+        // The other half, and not optional: a dialog left hidden is a decision
+        // surface the user can neither see nor dismiss, with the recording
+        // withheld behind it.
+        assertDialogIsOnScreen(
+            service, view,
+            "the capture finished and the warning dialog never came back. The " +
+                "recording is withheld until one of its buttons is pressed, so " +
+                "an invisible dialog strands the user with no way to proceed",
+        )
+    }
+
+    /**
+     * The same wiring, driven the other way round: the dialog is raised *while*
+     * a capture is already in flight.
+     *
+     * A separate case because it exercises a different ordering, and the sink
+     * only ever fires on a *transition*: `setHidden` broadcasts when the hider
+     * set changes emptiness, so a dialog added after the broadcast was never
+     * told. This pins which side of that race the dialog lands on.
+     */
+    @Test
+    fun aDialogRaisedDuringACaptureIsNotLeftCompositedWhenItEnds() {
+        val service = start()
+        idle()
+        record(false)
+
+        OverlayVisibility.setHidden(OverlayVisibility.Holder.CAPTURE, true)
+        idle()
+        bubble(service).performClick()
+        idle()
+        val view = requireNotNull(dialog(service)) {
+            "the gate must still raise the dialog while a capture is in " +
+                "flight — the tap is the user's and the capture is not theirs"
+        }
+
+        OverlayVisibility.setHidden(OverlayVisibility.Holder.CAPTURE, false)
+        idle()
+
+        assertDialogIsOnScreen(
+            service, view,
+            "a dialog raised during a capture must be on screen once the " +
+                "capture ends, or the user is left with a withheld recording " +
+                "behind a window they cannot see",
+        )
+    }
+
+    private fun warningParams(service: BubbleService): WindowManager.LayoutParams =
+        requireNotNull(
+            field(service, "warningParams") as WindowManager.LayoutParams?
+        ) { "the warning dialog has no layout params" }
+
+    private fun dialogTakesTouches(service: BubbleService): Boolean =
+        warningParams(service).flags and
+            WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE == 0
+
+    /** Every observable that says "the dialog is off the screen", in one place. */
+    private fun assertDialogIsOffScreen(service: BubbleService, view: View, why: String) {
+        assertEquals(
+            "$why: the dialog's window alpha is " +
+                "${warningParams(service).alpha}, so the window manager is " +
+                "still compositing it",
+            0f, warningParams(service).alpha, 0.0001f,
+        )
+        assertTrue(
+            "$why: the dialog's root view is still VISIBLE",
+            view.visibility != View.VISIBLE,
+        )
+        assertTrue(
+            "$why: the dialog's window still takes touches. An overlay window " +
+                "consumes every touch inside its bounds whether or not a view " +
+                "there handles it, so an invisible-but-touchable card eats taps " +
+                "meant for whatever is underneath — and its buttons are still " +
+                "live, so a blind tap can start a recording.",
+            !dialogTakesTouches(service),
+        )
+    }
+
+    private fun assertDialogIsOnScreen(service: BubbleService, view: View, why: String) {
+        assertEquals(
+            "$why: the dialog's window alpha",
+            1f, warningParams(service).alpha, 0.0001f,
+        )
+        assertEquals(
+            "$why: the dialog's root visibility",
+            View.VISIBLE, view.visibility,
+        )
+        assertTrue(
+            "$why: the dialog is drawn but cannot be tapped, so neither button " +
+                "can be pressed and the withheld recording can never proceed",
+            dialogTakesTouches(service),
+        )
     }
 
     /**

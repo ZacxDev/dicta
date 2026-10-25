@@ -165,13 +165,25 @@
          do not need in order to answer the question being asked.
 
          The body has to carry the whole trade, because the primary button
-         RECORDS: the server could not be reached, the phone's own recognizer
-         will be used instead, and that is less accurate. Saying only "server
-         unreachable" would leave the user to guess whether recording still
-         works at all — it does, and the fallback ladder in
-         TranscriptionCoordinator is what makes it work. -->
+         RECORDS. Saying only "server unreachable" would leave the user to
+         guess whether recording still works at all — it does, and the fallback
+         ladder in TranscriptionCoordinator is what makes it work.
+
+         🔴 CONDITIONAL, NOT A PREDICTION — the correction of 2026-10-25. This
+         body used to end "Recording now will use the phone's own speech
+         recognizer, which is less accurate", asserting as fact the one outcome
+         the rest of the app exists to avoid. The warning fires on a /healthz
+         result that can be up to ~2 min stale (SttReachability's freshness
+         window is the interval in effect plus one further PROBE_INTERVAL_MS),
+         and TranscriptionCoordinator then still attempts the real upload,
+         retries it, and may SUCCEED — in which case the server's transcript is
+         what the user gets and the old sentence was simply false. Its recovery
+         poll can replace the on-device text afterwards too. The copy now says
+         what happens IF the upload also fails and leaves the outcome open.
+
+         Still names no host, address or port, for the reason above. -->
     <string name="stt_unreachable_title">Transcription server unreachable</string>
-    <string name="stt_unreachable_body">Dicta could not reach the transcription server. Recording now will use the phone\'s own speech recognizer, which is less accurate.</string>
+    <string name="stt_unreachable_body">Dicta could not reach the transcription server. Recording still works — the upload is retried, and the phone\'s own speech recognizer, which is less accurate, is used only if that also fails.</string>
     <!-- The primary action. It records; it is not a retry and must not read
          like one. -->
     <string name="stt_unreachable_record">Record anyway</string>
