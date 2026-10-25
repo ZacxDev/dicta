@@ -40,8 +40,21 @@
          and started a recording. -->
     <string name="tile_row">Quick Settings tile — switch the bubble on or off from the shade of any app.</string>
     <string name="add_tile">Add tile</string>
+    <!-- One string per TileAddOutcome arm, and all four say something
+         DIFFERENT. requestAddTileService reports nine result codes; until
+         2026-10 the callback was discarded and this first string was shown for
+         every one of them, so a user who DECLINED the system prompt was told
+         the tile had been added (issue #14). tile_add_declined existed for that
+         case all along and was referenced from nowhere. -->
     <string name="tile_added">Tile added — find it in your Quick Settings panel.</string>
+    <string name="tile_add_already">Tile is already in your Quick Settings panel.</string>
     <string name="tile_add_declined">Tile not added.</string>
+    <!-- The six TILE_ADD_REQUEST_ERROR_* codes. Says what to DO rather than
+         which code came back: the prompt never appeared, and the remedy is the
+         same for all six. Deliberately not tile_add_manual, which opens with
+         "On this Android version" and would be a false explanation here — the
+         Android version is fine, the request failed. -->
+    <string name="tile_add_error">Couldn’t show the add-tile prompt. Add it manually: swipe down twice, tap edit, drag Dicta in.</string>
     <string name="tile_add_manual">On this Android version, add the tile manually: swipe down twice, tap edit, drag Dicta in.</string>
     <!-- Names the tap, because the tap is the whole trigger. The old wording
          stopped at "an always-on-top mic button, draggable anywhere" and left
