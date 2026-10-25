@@ -149,7 +149,7 @@ preflight_cmp_negative_control() {
 }
 
 # --- restore, idempotent, safe to call from a trap -------------------------
-MUT_PATH=""; MUT_BAK=""; MUT_FILE=""
+MUT_PATH=""; MUT_BAK=""; MUT_FILE=""; GRADLE_PID=""
 restore_tree() {
   local rc=$?
   if [ -n "$MUT_PATH" ] && [ -f "$MUT_BAK" ]; then
@@ -163,6 +163,25 @@ restore_tree() {
   fi
   MUT_PATH=""; MUT_BAK=""; MUT_FILE=""
   return $rc
+}
+
+# 🔴 A signalled run must ABORT, not merely restore and carry on.
+# Measured while demonstrating the trap: with a bare `trap restore_tree TERM`
+# the handler restored the file and then the script CONTINUED to compute and
+# print a verdict — a verdict spanning its own restore, which is exactly the
+# kind of result that must never be believed. So the signal handler restores
+# AND exits. The gradle child is killed by its resolved PID (never a `pkill -f`
+# pattern, which would match sibling processes and this script's own cmdline).
+on_signal() {
+  local sig="$1"
+  echo
+  echo "!!! received SIG$sig — aborting this run and restoring the tree"
+  if [ -n "$GRADLE_PID" ] && kill -0 "$GRADLE_PID" 2>/dev/null; then
+    kill -TERM "$GRADLE_PID" 2>/dev/null
+  fi
+  restore_tree
+  echo "!!! ABORTED on SIG$sig — no verdict is reported for this mutant"
+  exit $((128 + $(kill -l "$sig" 2>/dev/null || echo 15)))
 }
 
 # --- run one mutant --------------------------------------------------------
@@ -187,7 +206,8 @@ run_mutant() {
 
   cp -a "$path" "$bak"
   MUT_PATH="$path"; MUT_BAK="$bak"; MUT_FILE="$file"
-  trap 'restore_tree' EXIT INT TERM HUP
+  trap 'restore_tree' EXIT
+  trap 'on_signal INT' INT; trap 'on_signal TERM' TERM; trap 'on_signal HUP' HUP
 
   if ! python3 - "$path" "$from" "$to" <<'PY'
 import sys
@@ -223,10 +243,17 @@ PY
   # clean summary for it. The batch loop no longer streams stdin either (it
   # reads the file into an array first) and asserts the planned count — but a
   # command that eats stdin must not be left able to do that at all.
+  # Backgrounded and `wait`ed rather than run in the foreground: bash defers a
+  # trap until the current FOREGROUND command returns, so a foreground gradle
+  # meant a SIGTERM sat unhandled for the whole build. `wait` is interruptible,
+  # so the abort is prompt.
   ( cd "$REPO" && nix-shell ./android.nix --run \
       "./gradlew --offline ${gradle_args[*]@Q} -Pandroid.aapt2FromMavenOverride=\$ANDROID_HOME/build-tools/34.0.0/aapt2" \
-  ) > "$log" 2>&1 < /dev/null
+  ) > "$log" 2>&1 < /dev/null &
+  GRADLE_PID=$!
+  wait "$GRADLE_PID"
   local gradle_rc=$?
+  GRADLE_PID=""
 
   # The XML is the authority. Branch on assert-tests-ran.py's exit code:
   #   0 = tests ran, all green -> the mutant SURVIVED

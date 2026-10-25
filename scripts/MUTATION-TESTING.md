@@ -91,6 +91,14 @@ Each of these is a measured failure mode, not a hypothetical.
    `BubbleService.kt` dirty **with a guard deleted**. Committing that tree
    would have shipped a removed guard.
 
+   A signalled run also **aborts and reports no verdict**. That is a separate
+   requirement from restoring, and it was found by demonstrating the trap: a
+   bare `trap restore_tree TERM` restored the file and then let the script
+   *carry on and print a verdict spanning its own restore*. The gradle child is
+   backgrounded and `wait`ed (bash defers a trap until the current foreground
+   command returns, so a foreground gradle left a `SIGTERM` unhandled for the
+   whole build) and is killed by **resolved PID**, never a `pkill -f` pattern.
+
 3. **Trust `cmp`.** The restore is verified against a `cp -a` pristine copy —
    but only after a **negative control** proves `cmp` can report a difference
    (and does report identity for a file against itself). Without that, an
