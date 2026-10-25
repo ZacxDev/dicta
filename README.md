@@ -417,6 +417,42 @@ from, including the recovery path, so adding a path cannot quietly raise it.
 > recovery path unreachable in the exact situation it exists for. The user also
 > gets the local transcript at ~8 s instead of ~23 s. See `SttRetryPolicy`.
 
+### The background reachability probe, and the warning before recording
+
+Two user-visible surfaces sit in front of the ladder above. Both are owned by
+`SttReachability`; `BubbleService` drives them.
+
+**The probe.** While the bubble is on screen *and* the screen is on, Dicta
+issues `GET /healthz` continuously in the background — every 60 s, dropping to
+every ~5 min after 3 consecutive failures. It is the same unauthenticated
+`/healthz` the recovery path uses, so it needs no token and carries no audio.
+It runs on the service's existing worker executor, not a new thread pool or
+dependency. Both gates are real: nothing is probed once the bubble is hidden,
+and nothing is probed while the phone is asleep — there is **no wakelock**, and
+`ACTION_SCREEN_OFF` both stops the chain and discards what was known, so a
+result landing after the phone sleeps cannot repopulate the cache. The chain is
+cancelled and the receiver unregistered in `onDestroy`.
+
+**The warning.** A tap that would start a recording against a server *known* to
+be unreachable raises an overlay dialog first, titled "Transcription server
+unreachable", with two buttons: **Record anyway** starts the recording, **Don't
+record** starts nothing. There is no third outcome and a tap outside the card
+does nothing.
+
+🔴 **It fails open at every uncertain input, and that is the design rather than
+a gap.** Only a *fresh, definite* failure warns. Never probed, a probe still in
+flight, a result older than the freshness window (the interval in effect plus
+one further 60 s, so up to ~2 min), a probe that threw, the remote path not
+configured, and a platform refusal to add the dialog window **all proceed with
+no dialog**. The reason is that the ladder above already produces a transcript
+with the server down, so the cost of not warning is an unannounced fallback,
+while the cost of wrongly blocking would be the dictation itself.
+
+Because the verdict can be up to ~2 min stale, the dialog does **not** predict
+which recognizer you will end up with: the upload is still attempted and may
+succeed. It names no host, address or port — the dialog can appear over any app
+on the device.
+
 ### `language` must be a bare ISO code
 
 🔴 The service passes `language` **unvalidated** to a processor that raises

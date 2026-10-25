@@ -100,8 +100,14 @@ class TestCountFloorTest {
      * have hidden it behind a 4-test discrepancy that made the floor look safer
      * rather than failing. It is also why the re-run is per class every time:
      * the discrepancy it catches is invisible in a total, and at 63 classes an
-     * unstripped `@Test` count over the test sources still reports **706**
-     * against the XML's 691.
+     * unstripped `@Test` count over the test sources still reports **707**
+     * against the XML's 691 — 16 phantoms. Counted on `3823a89`, the head of
+     * `feat/stt-reachability-precheck`, which is the 63-class tree this
+     * sentence is about; identical under an occurrence count and a line count.
+     * (Was **706** here until 2026-10-25, off by one against that tree. Naming
+     * the commit is the half that was missing: the number is only checkable
+     * against the tree it was counted on, which is this paragraph's own
+     * subject.)
      *
      * 🔴 **CORRECTION (2026-10-23).** This paragraph used to say that count was
      * *"653 against the XML's 651 — the two phantoms being this file's own
@@ -117,6 +123,19 @@ class TestCountFloorTest {
      * sentence this replaced credited the literal-stripping with the whole
      * effect, which would read to a maintainer as licence to drop the comment
      * pass.
+     *
+     * 🔴 **EVERY NUMBER IN THE PARAGRAPH ABOVE IS SCOPED TO `433fbc8` — do not
+     * check it against HEAD.** Re-verified on 2026-10-25 at that commit, all
+     * five still exact: 666 unstripped / 651 stripped / 15 phantoms, and for
+     * this file alone 18 unstripped → 11 comments-only → 8 literals-only → 3
+     * real. An audit round reported two of them wrong (claiming 19 and 9) by
+     * measuring this file at `origin/main` instead, where it genuinely does
+     * read 19 and 9 because a test has been added since. That is this
+     * paragraph's own subject committed against the paragraph — a number
+     * measured on one commit and quoted against another — so the trap survives
+     * the correction and the commit name is the only defence. The numbers are
+     * prose that nothing asserts on; if they rot again, delete them rather
+     * than re-deriving them against whatever tree is checked out.
      */
     @Test
     fun bothInstrumentsAreValidated() {

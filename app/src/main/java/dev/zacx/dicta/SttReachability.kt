@@ -109,7 +109,10 @@ class SttReachability(
      */
     private var generation: Long = 0L
 
-    /** For the tests and for [BubbleService]'s scheduling. */
+    /**
+     * For the tests. No `app/src/main` caller — `BubbleService` schedules from
+     * [beginProbe]'s null return, not from this.
+     */
     @Synchronized
     fun isProbeInFlight(): Boolean = inFlight
 
@@ -192,10 +195,36 @@ class SttReachability(
     /**
      * The decision for a tap that would start a recording.
      *
-     * 🔴 Read this **before** starting the tap's own probe, never after. Every
-     * tap also kicks a probe off (that is the operator's "again on each tap"),
-     * and a probe in flight is a PROCEED — so asking afterwards would make
-     * [Verdict.WARN] unreachable from a tap and the whole gate inert.
+     * A probe in flight is a PROCEED — see the first line of the body. That
+     * much is true of this function as written.
+     *
+     * 🔴 **RETRACTION (2026-10-25), and nothing has replaced it.** This kdoc
+     * used to open with an ordering instruction — *"Read this **before**
+     * starting the tap's own probe, never after"* — justified by two claims
+     * that are both false:
+     *
+     *  * *"Every tap also kicks a probe off."* No tap starts a probe.
+     *    [beginProbe] has exactly one call site in `app/src/main`, inside
+     *    `BubbleService.runProbe`, which is reached only from the posted
+     *    `probeTick` chain. There is no "tap's own probe" for this to be read
+     *    before or after.
+     *  * *"(that is the operator's 'again on each tap')."* The operator
+     *    confirmed on 2026-10-24 that he never asked for a per-tap probe. The
+     *    settled requirement is continuous background checking, which is what
+     *    the `probeTick` chain already does.
+     *
+     * So the ordering constraint **has no remaining reason**, and that is the
+     * finding rather than a gap waiting for a better rationale: with no
+     * per-tap probe the sequencing it demanded cannot be got wrong. What is
+     * left is an invariant guard against a hazard that **cannot currently
+     * occur** — if a future change ever does start a probe from the tap path,
+     * `inFlight` would make [Verdict.WARN] unreachable from that tap.
+     *
+     * 🔴 This comment is the FIRST writing after that retraction. Five
+     * successive rationales for one guard in this project have each been
+     * retracted by the next audit round, so do not supply a sixth: "the
+     * constraint has no current purpose" is the measured answer. If you find
+     * one, it must come with the call site that creates it.
      */
     @Synchronized
     fun verdict(): Verdict {
