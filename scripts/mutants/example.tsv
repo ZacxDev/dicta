@@ -1,0 +1,26 @@
+# Example mutant batch for scripts/mutate.sh.
+#
+#   scripts/mutate.sh batch scripts/mutants/example.tsv
+#
+# Tab-separated: NAME <TAB> FILE <TAB> FROM <TAB> TO [<TAB> TEST_FILTER]
+# FROM must occur EXACTLY ONCE in FILE or the mutant is refused.
+#
+# 🔴 This file holds MUTANT DEFINITIONS, never results. Results go in a PR
+# body or a session log, stamped with the commit they describe, because a
+# verdict is void the moment the tree moves.
+#
+# 🔴 TEST_FILTER is an optimisation, not a default: the full suite is ~12 min
+# and these pure-JVM classes are seconds. A filter is safe here only because
+# the harness refuses a run that executed zero tests — without that guard a
+# typo'd filter reads as SURVIVED. Omit the column to run everything.
+#
+# Every mutant below changes ONE expression and leaves the branch structure
+# intact, so a kill is attributable to that expression and nothing else.
+#
+# m1 is deliberately a SAME-LENGTH edit (20_000.0 -> 21_000.0, 8 bytes each)
+# applied immediately after the previous run. That is the shape that defeats
+# an mtime+size cache — the stale-.pyc trap. It is in the batch so the harness
+# keeps measuring whether Gradle's input hashing really is content-based here.
+m1-readtimeout-floor-samelength	app/src/main/java/dev/zacx/dicta/SttRetryPolicy.kt	20_000.0	21_000.0	dev.zacx.dicta.SttRetryPolicyTest
+m2-budget-floor-off-by-one	app/src/main/java/dev/zacx/dicta/SttRetryPolicy.kt	remaining > floor	remaining >= floor	dev.zacx.dicta.SttRetryPolicyTest
+m3-permanent-503-marker	app/src/main/java/dev/zacx/dicta/SttRetryPolicy.kt	"STT_API_TOKEN"	"STT_API_TOKEN_UNMATCHABLE"	dev.zacx.dicta.SttRetryPolicyTest
