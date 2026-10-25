@@ -156,10 +156,18 @@ class MainActivity : Activity() {
                 getString(R.string.tile_label),
                 Icon.createWithResource(this, R.drawable.ic_tile_mic),
                 mainExecutor
-            ) { _ ->
-                // The system shows its own add-tile prompt; just confirm the request.
-                Toast.makeText(this, getString(R.string.tile_added), Toast.LENGTH_SHORT)
-                    .show()
+            ) { result ->
+                // 🔴 The result is the whole point. This callback used to
+                // discard it and toast tile_added unconditionally, so
+                // declining the system prompt was reported as a success — the
+                // same shape of lie as the switch left ON with nothing
+                // running. TileAddPrompt owns the nine-code mapping; see its
+                // kdoc for why the decision is not inline here.
+                Toast.makeText(
+                    this,
+                    getString(TileAddPrompt.messageForResult(result)),
+                    Toast.LENGTH_SHORT,
+                ).show()
             }
         } else {
             Toast.makeText(this, getString(R.string.tile_add_manual), Toast.LENGTH_LONG)
