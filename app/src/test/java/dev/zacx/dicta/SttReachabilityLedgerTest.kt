@@ -6,7 +6,7 @@ import org.junit.Test
 import java.io.File
 
 /**
- * 🔴 A ledger of **who reads and who writes the reachability owner**.
+ * 🔴 **One** place decides whether to warn, and **one** place probes.
  *
  * ## The failure this exists to make loud
  *
@@ -19,22 +19,34 @@ import java.io.File
  * warning that appears when the server is up, or does not appear when it is
  * down, intermittently.
  *
- * So the ledger fails when the set **grows or shrinks**: a new consumer of
- * [SttReachability] forces a deliberate decision here, and a consumer that
- * stops reading the owner (because it started deciding for itself) shows up as
- * a missing name.
+ * So [exactlyOneSiteInTheWholeTreeReadsTheVerdict] counts verdict call sites
+ * across the whole of `app/src/main` and fails at anything but one, and
+ * [onlyTheDeclaredFilesPerformAHealthProbe] does the same for the probe
+ * itself. `SttReachability.kt` is the owner — it holds the last definite
+ * result, its timestamp and the in-flight claim, all `private`, and
+ * [SttReachability.verdict] is the single decision. `BubbleService.kt` is the
+ * only consumer: it probes, records, forgets on screen-off, and reads the
+ * verdict once, at the one place `BubbleDictation.Effect.StartRecording` is
+ * dispatched.
  *
- *  * `SttReachability.kt` — the owner. Holds the last definite result, its
- *    timestamp, the in-flight claim and the failure streak; [SttReachability.verdict]
- *    is the single decision.
- *  * `BubbleService.kt` — the only consumer. Probes, records, forgets on
- *    screen-off, and reads the verdict once, at the one place
- *    `BubbleDictation.Effect.StartRecording` is dispatched.
+ * 🔴 **DELETED on 2026-10-25, by operator disposition (audit #26, D4):** two
+ * further tests here enumerated the *files* that name [SttReachability] and
+ * the *set of its methods* each file calls. Both were a ledger over a class
+ * whose entire mutable state is already `private`, in a single-module app with
+ * one consumer, and neither could fail on anything that can actually regress
+ * without [exactlyOneSiteInTheWholeTreeReadsTheVerdict] or the compiler
+ * failing first. What they did do is go red on every deliberate API change —
+ * including the one that deleted them. **What is no longer guarded:** adding a
+ * *second file* that imports the owner and calls its cache-mutating methods
+ * (`beginProbe`/`onProbeResult`/`forget`) without reading the verdict is now a
+ * silent change, and so is an owner method falling out of use. Both are
+ * compiler-visible, and neither is the intermittent-warning failure above,
+ * which is a *verdict* defect.
  *
- * 🔴 **What it cannot see**, stated so a clean result is not over-read: a call
- * reached through a wrapper, a lambda, a factory or a second type is invisible
- * to it, as is an owner handed from one file to another. It is a ledger of
- * textual call sites, not of behaviour — which is why
+ * 🔴 **What the remaining checks cannot see**, stated so a clean result is not
+ * over-read: a call reached through a wrapper, a lambda, a factory or a second
+ * type is invisible to them, as is an owner handed from one file to another.
+ * They are ledgers of textual call sites, not of behaviour — which is why
  * [theOwnerIsWhatActuallyDecides] is here too: a structural check type-checks
  * straight past a wrong argument.
  *
@@ -47,62 +59,14 @@ import java.io.File
 class SttReachabilityLedgerTest {
 
     @Test
-    fun onlyTheDeclaredFilesTouchTheReachabilityOwner() {
-        val mentions = sourceFiles()
-            .filter { f -> normalise(f.readText()).contains("SttReachability") }
-            .map { it.name }
-            .sorted()
-
-        assertEquals(
-            "the set of files naming SttReachability changed. It is a CACHED " +
-                "fact with a timestamp, so a second consumer is a second " +
-                "answer to \"is this still true\" — the shape BubbleEnabled was " +
-                "consolidated to remove after three hand-copied readings " +
-                "disagreed. If you added a consumer, have it read " +
-                "SttReachability.verdict() rather than the cache, and add it " +
-                "here deliberately.",
-            listOf("BubbleService.kt", "SttReachability.kt"),
-            mentions,
-        )
-    }
-
-    @Test
-    fun theWritersAndReadersAreTheDeclaredOnes() {
-        val used = sourceFiles()
-            .map { f -> apiUsedIn(f) }
-            .filter { (_, names) -> names.isNotEmpty() }
-            .sortedBy { (name, _) -> name }
-            .toMap()
-
-        assertEquals(
-            "the per-file set of SttReachability methods called from main " +
-                "sources changed. Grown: something new is writing the cache or " +
-                "deciding from it. Shrunk: a consumer stopped asking the owner, " +
-                "which is how a second copy of the staleness rule gets written. " +
-                "Either way, decide it here.",
-            mapOf(
-                "BubbleService.kt" to listOf(
-                    "abandonProbe",
-                    "beginProbe",
-                    "forget",
-                    "nextProbeDelayMs",
-                    "onProbeResult",
-                    "verdict",
-                )
-            ),
-            used,
-        )
-    }
-
-    @Test
     fun exactlyOneSiteInTheWholeTreeReadsTheVerdict() {
         val sites = sourceFiles().sumOf { f -> count(normalise(f.readText()), "verdict") }
 
         assertEquals(
             "🔴 the verdict must be read in exactly ONE place. This is the " +
-                "\"one owner\" claim with teeth: the method-name ledger above " +
-                "passes with a second verdict() call added to an existing " +
-                "consumer, and two sites that decide whether to warn are two " +
+                "\"one owner\" claim with teeth, and the only structural " +
+                "check here a second reading cannot slip past: two sites " +
+                "that decide whether to warn are two " +
                 "places for the fail-open contract to be wrong — one of them " +
                 "blocking a recording the fallback ladder would have " +
                 "transcribed.",
@@ -142,8 +106,8 @@ class SttReachabilityLedgerTest {
     }
 
     /**
-     * 🔴 The behavioural half. The three structural checks above would all pass
-     * with [SttReachability.verdict] returning a constant.
+     * 🔴 The behavioural half. Both structural checks above would pass with
+     * [SttReachability.verdict] returning a constant.
      */
     @Test
     fun theOwnerIsWhatActuallyDecides() {
@@ -165,7 +129,7 @@ class SttReachabilityLedgerTest {
             SttReachability.Verdict.WARN,
             owner.verdict(),
         )
-        clock += owner.freshnessWindowMs() + 1_201L
+        clock += SttReachability.FRESHNESS_WINDOW_MS + 1_201L
         assertEquals(
             "the same result, stale: PROCEED",
             SttReachability.Verdict.PROCEED,
@@ -182,7 +146,7 @@ class SttReachabilityLedgerTest {
     /**
      * Controls for every pattern this file reads a verdict from.
      *
-     * 🔴 Until this passes, the three ledgers above are facts about regexes.
+     * 🔴 Until this passes, the two ledgers above are facts about regexes.
      * The negative halves matter as much as the positive ones: the tree
      * discusses these method names in prose constantly, so a pattern that saw
      * a comment would list files that call nothing.
@@ -262,11 +226,6 @@ class SttReachabilityLedgerTest {
 
     // --- reading the tree ----------------------------------------------------
 
-    private fun apiUsedIn(file: File): Pair<String, List<String>> {
-        val src = normalise(file.readText())
-        return file.name to API.filter { count(src, it) > 0 }.sorted()
-    }
-
     private fun sourceFiles(): List<File> =
         sourceDir().listFiles { f -> f.name.endsWith(".kt") }.orEmpty().toList()
 
@@ -291,21 +250,6 @@ class SttReachabilityLedgerTest {
     }
 
     private companion object {
-
-        /** Every public method of the owner, so an unused one is also visible. */
-        val API = listOf(
-            "abandonProbe",
-            "beginProbe",
-            "currentIntervalMs",
-            "failureStreak",
-            "forget",
-            "freshnessWindowMs",
-            "hasKnowledge",
-            "isProbeInFlight",
-            "nextProbeDelayMs",
-            "onProbeResult",
-            "verdict",
-        )
 
         /** A zero-argument `.healthz()` — a request, not URL construction. */
         val HEALTHZ_CALL = Regex("""\.\s*healthz\s*\(\s*\)""")

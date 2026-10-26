@@ -15,7 +15,8 @@ package dev.zacx.dicta
  * reading has the same shape and a worse failure: it is a *cached* fact with a
  * timestamp, so a second copy of the staleness rule is a second answer to "is
  * this still true". So the cache, its age, the probe schedule and the verdict
- * are all here, and [SttReachabilityLedgerTest] pins who may touch them.
+ * are all here, and [SttReachabilityLedgerTest] pins that exactly one site in
+ * the tree reads the verdict.
  *
  * ## 🔴 The verdict FAILS OPEN, and that is the whole contract
  *
@@ -32,7 +33,7 @@ package dev.zacx.dicta
  *
  *  * never probed, or the cache was cleared ([forget]);
  *  * a probe in flight, so current knowledge is being revised;
- *  * the last definite result is older than [freshnessWindowMs];
+ *  * the last definite result is older than [FRESHNESS_WINDOW_MS];
  *  * the last result was a success.
  *
  * A probe that **threw** records nothing at all: [BubbleService] routes it to
@@ -45,15 +46,23 @@ package dev.zacx.dicta
  * the verdict on PROCEED and stop the schedule; [abandonProbe] and
  * [onProbeResult] both clear it unconditionally.
  *
- * ## Freshness is tied to the schedule that produces the results
+ * ## Freshness is one grace interval on top of the cadence
  *
- * [freshnessWindowMs] is [currentIntervalMs] plus one [PROBE_INTERVAL_MS] of
- * grace: a result is current until the schedule that produced it has had a
- * chance to produce a successor and failed to. A fixed window would be wrong
- * in one direction or the other, because [currentIntervalMs] backs off after
- * [BACKOFF_AFTER_FAILURES] consecutive failures — pin it at 60 s and a backed
- * off cache goes stale between every pair of probes, so the warning becomes
- * unreachable during exactly the sustained outage it is for.
+ * [FRESHNESS_WINDOW_MS] is two [PROBE_INTERVAL_MS]: a result is current until
+ * the schedule that produced it has had a chance to produce a successor and
+ * failed to.
+ *
+ * 🔴 It is a **constant**, and that is the whole of it. This used to be a
+ * computed property, `currentIntervalMs() + PROBE_INTERVAL_MS`, because the
+ * cadence it read was itself dynamic — a failure streak backed the probe off
+ * to ~5 min, and a window pinned at 60 s would then have gone stale between
+ * every pair of backed-off probes, making the warning unreachable during
+ * exactly the sustained outage it is for. That backoff was **deleted on
+ * 2026-10-25** by operator disposition: the settled requirement is continuous
+ * background checking, stretching the cadence to ~5 min is a deviation from
+ * it, and the screen-on / bubble-up gating in [BubbleService] is where the
+ * battery saving comes from. With one cadence there is one window, so the
+ * computation had nothing left to compute.
  *
  * 🔴 Time is the backstop here, not the main mechanism. The case the operator
  * named — the mesh tunnel dropping while the phone sleeps, so a probe then
@@ -89,15 +98,6 @@ class SttReachability(
     private var inFlight: Boolean = false
 
     /**
-     * Consecutive failing probes, which is what [currentIntervalMs] backs off
-     * on. A success resets it; [forget] does **not**, because the streak is a
-     * claim about the *server* and clearing the cache is a claim about our own
-     * knowledge. Resetting it on every screen-off would put the probe back on
-     * the 60 s cadence against a host that has refused a hundred times.
-     */
-    private var consecutiveFailures: Int = 0
-
-    /**
      * Bumped by [forget], and carried by each probe so a result that belongs
      * to a discarded generation can be dropped.
      *
@@ -115,9 +115,6 @@ class SttReachability(
      */
     @Synchronized
     fun isProbeInFlight(): Boolean = inFlight
-
-    @Synchronized
-    fun failureStreak(): Int = consecutiveFailures
 
     /** True once a definite result has been recorded and not cleared. */
     @Synchronized
@@ -150,7 +147,6 @@ class SttReachability(
         if (token != generation) return
         lastReachable = reachable
         lastResultAtMs = now()
-        consecutiveFailures = if (reachable) 0 else consecutiveFailures + 1
     }
 
     /**
@@ -180,7 +176,7 @@ class SttReachability(
      * new generation reports.
      *
      * Called when the screen goes off and when the remote path is not
-     * configured. Leaves [consecutiveFailures] alone — see that field.
+     * configured.
      */
     @Synchronized
     fun forget() {
@@ -231,56 +227,32 @@ class SttReachability(
         if (inFlight) return Verdict.PROCEED
         val last = lastReachable ?: return Verdict.PROCEED
         if (last) return Verdict.PROCEED
-        if (now() - lastResultAtMs >= freshnessWindowMsLocked()) return Verdict.PROCEED
+        if (now() - lastResultAtMs >= FRESHNESS_WINDOW_MS) return Verdict.PROCEED
         return Verdict.WARN
     }
 
-    /**
-     * How long until the next probe is due, from the moment this is called.
-     *
-     * Not a function of when the last probe ran: [BubbleService] schedules the
-     * next tick as each result lands, so "from now" is what the caller needs.
-     */
-    @Synchronized
-    fun nextProbeDelayMs(): Long = currentIntervalMsLocked()
-
-    /** The cadence in effect: [PROBE_INTERVAL_MS], or the backed-off one. */
-    @Synchronized
-    fun currentIntervalMs(): Long = currentIntervalMsLocked()
-
-    /** How long a definite result counts as current. See the class kdoc. */
-    @Synchronized
-    fun freshnessWindowMs(): Long = freshnessWindowMsLocked()
-
-    private fun currentIntervalMsLocked(): Long =
-        if (consecutiveFailures >= BACKOFF_AFTER_FAILURES) {
-            BACKOFF_INTERVAL_MS
-        } else {
-            PROBE_INTERVAL_MS
-        }
-
-    private fun freshnessWindowMsLocked(): Long =
-        currentIntervalMsLocked() + PROBE_INTERVAL_MS
-
     companion object {
         /**
-         * The ordinary cadence while the overlay exists and the screen is
-         * interactive — the operator's "every ~60 s".
+         * The cadence while the overlay exists and the screen is interactive —
+         * the operator's "every ~60 s", and the only cadence there is.
+         *
+         * 🔴 There is deliberately **no backoff**. A failure-streak backoff to
+         * ~5 min stood here until 2026-10-25 and was deleted by operator
+         * disposition: the settled requirement is continuous background
+         * checking, so stretching the cadence on repeated failure is a
+         * deviation from the requirement rather than an optimisation of it, and
+         * it had never detected anything — by construction, since the only
+         * thing it changed was how long the probe waited. The battery argument
+         * it was carrying is already answered structurally, by [BubbleService]
+         * probing only while the overlay exists and the screen is interactive.
+         * Do not reintroduce one without a call site and a measurement.
          */
         const val PROBE_INTERVAL_MS: Long = 60_000L
 
-        /** The cadence after [BACKOFF_AFTER_FAILURES] failures: ~5 min. */
-        const val BACKOFF_INTERVAL_MS: Long = 300_000L
-
         /**
-         * How many consecutive failures back the cadence off.
-         *
-         * Three rather than one: a single failure is what a roaming phone
-         * produces crossing between Wi-Fi and cellular, and backing off to
-         * five minutes on it would mean the cache is stale — and the warning
-         * therefore unavailable — for the whole of the next five minutes after
-         * one blip.
+         * How long a definite result counts as current: one cadence, plus one
+         * cadence of grace. See the class kdoc for why it is a constant.
          */
-        const val BACKOFF_AFTER_FAILURES: Int = 3
+        const val FRESHNESS_WINDOW_MS: Long = 2 * PROBE_INTERVAL_MS
     }
 }

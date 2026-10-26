@@ -73,7 +73,7 @@ class SttReachabilityTest {
     fun aDefiniteFailureOlderThanTheFreshnessWindowProceeds() {
         val r = owner()
         r.record(false)
-        val window = r.freshnessWindowMs()
+        val window = SttReachability.FRESHNESS_WINDOW_MS
 
         // Just inside: still current. Deliberately not a round fraction of the
         // window, so a mutant that scales or halves it is not landed on by
@@ -109,7 +109,7 @@ class SttReachabilityTest {
         val r = owner()
         r.record(true)
         assertEquals(SttReachability.Verdict.PROCEED, r.verdict())
-        clock += r.freshnessWindowMs() * 3 + 7L
+        clock += SttReachability.FRESHNESS_WINDOW_MS * 3 + 7L
         assertEquals(
             "a stale SUCCESS is still a PROCEED. There is no path on which " +
                 "reachability expiring is a reason to warn — only a fresh " +
@@ -182,11 +182,6 @@ class SttReachabilityTest {
             before,
             r.verdict(),
         )
-        assertEquals(
-            "and it must not count as a failure for the backoff either",
-            0,
-            r.failureStreak(),
-        )
     }
 
     // --- one at a time --------------------------------------------------------
@@ -208,132 +203,70 @@ class SttReachabilityTest {
     // --- the schedule ---------------------------------------------------------
 
     @Test
-    fun theCadenceBacksOffOnlyAfterTheDeclaredRunOfFailures() {
+    fun theCadenceIsOneConstantInterval() {
         val r = owner()
         assertEquals(
-            "an owner with no failures runs at the ordinary cadence",
+            "🔴 the cadence is the ordinary interval and stays there. A " +
+                "failure-streak backoff to ~5 min stood here until 2026-10-25 " +
+                "and was deleted by operator disposition: the settled " +
+                "requirement is CONTINUOUS background checking, so a run of " +
+                "failures must not stretch the gap between probes. The battery " +
+                "argument is answered by BubbleService probing only while the " +
+                "overlay exists and the screen is interactive — see " +
+                "BubbleUnreachableWarningTest.noProbeRunsWhileTheScreenIsOff.",
+            60_000L,
             SttReachability.PROBE_INTERVAL_MS,
-            r.currentIntervalMs(),
-        )
-        for (i in 1 until SttReachability.BACKOFF_AFTER_FAILURES) {
-            r.record(false)
-            assertEquals(
-                "failure $i of ${SttReachability.BACKOFF_AFTER_FAILURES} must " +
-                    "NOT back the cadence off. One or two failures is what a " +
-                    "phone crossing between Wi-Fi and cellular produces, and " +
-                    "backing off on it would leave the cache stale — and the " +
-                    "warning therefore unavailable — for the whole of the next " +
-                    "backoff interval.",
-                SttReachability.PROBE_INTERVAL_MS,
-                r.currentIntervalMs(),
-            )
-        }
-        r.record(false)
-        assertEquals(
-            "${SttReachability.BACKOFF_AFTER_FAILURES} consecutive failures " +
-                "must back the cadence off",
-            SttReachability.BACKOFF_INTERVAL_MS,
-            r.currentIntervalMs(),
-        )
-        assertEquals(
-            "nextProbeDelayMs must be the cadence in effect",
-            SttReachability.BACKOFF_INTERVAL_MS,
-            r.nextProbeDelayMs(),
-        )
-    }
-
-    @Test
-    fun aSuccessResetsTheStreakAndTheCadence() {
-        val r = owner()
-        repeat(SttReachability.BACKOFF_AFTER_FAILURES + 2) { r.record(false) }
-        assertEquals(
-            SttReachability.BACKOFF_INTERVAL_MS,
-            r.currentIntervalMs(),
         )
 
-        r.record(true)
-
-        assertEquals("a success resets the streak", 0, r.failureStreak())
+        // Behavioural half: a long run of failures must not move the window
+        // the verdict reads, which is the only thing a cadence change here
+        // could still be observed through from inside this class.
+        repeat(7) { r.record(false) }
+        clock += SttReachability.PROBE_INTERVAL_MS
         assertEquals(
-            "and therefore the cadence — a server that has come back must be " +
-                "probed at the ordinary rate again",
-            SttReachability.PROBE_INTERVAL_MS,
-            r.currentIntervalMs(),
-        )
-    }
-
-    @Test
-    fun forgetLeavesTheFailureStreakAlone() {
-        val r = owner()
-        repeat(SttReachability.BACKOFF_AFTER_FAILURES) { r.record(false) }
-
-        r.forget()
-
-        assertEquals(
-            "the streak is a claim about the SERVER; forget() is a claim about " +
-                "our own knowledge. Resetting it on every screen-off would put " +
-                "the probe back on the ordinary cadence against a host that " +
-                "has already refused ${SttReachability.BACKOFF_AFTER_FAILURES} " +
-                "times in a row.",
-            SttReachability.BACKOFF_AFTER_FAILURES,
-            r.failureStreak(),
-        )
-        assertEquals(
-            SttReachability.BACKOFF_INTERVAL_MS,
-            r.currentIntervalMs(),
-        )
-    }
-
-    @Test
-    fun theFreshnessWindowTracksTheCadenceInEffect() {
-        val r = owner()
-        assertEquals(
-            "at the ordinary cadence a result is current for one interval plus " +
-                "one interval of grace: it stays current until the schedule " +
-                "that produced it has had a chance to produce a successor and " +
-                "failed to",
-            SttReachability.PROBE_INTERVAL_MS + SttReachability.PROBE_INTERVAL_MS,
-            r.freshnessWindowMs(),
-        )
-
-        repeat(SttReachability.BACKOFF_AFTER_FAILURES) { r.record(false) }
-
-        assertEquals(
-            "once backed off, the window has to widen with the cadence. Pinned " +
-                "at the ordinary interval it would expire between every pair " +
-                "of backed-off probes, which makes WARN unreachable during " +
-                "exactly the sustained outage the warning is for.",
-            SttReachability.BACKOFF_INTERVAL_MS + SttReachability.PROBE_INTERVAL_MS,
-            r.freshnessWindowMs(),
-        )
-    }
-
-    @Test
-    fun aBackedOffFailureIsStillCurrentAnIntervalLater() {
-        val r = owner()
-        repeat(SttReachability.BACKOFF_AFTER_FAILURES) { r.record(false) }
-
-        // One backed-off interval on, which is where the next probe is due.
-        clock += SttReachability.BACKOFF_INTERVAL_MS
-        assertEquals(
-            "a backed-off cache must still WARN one backoff interval after its " +
-                "last result. This is the behavioural half of the window " +
-                "widening: with the window pinned at the ordinary interval " +
-                "this reads PROCEED and the feature is inert during an outage.",
+            "seven consecutive failures and one ordinary interval later, the " +
+                "cached failure is still current and must WARN — the freshness " +
+                "window does not widen with a failure streak any more, because " +
+                "the cadence it is derived from no longer narrows or widens",
             SttReachability.Verdict.WARN,
             r.verdict(),
         )
     }
 
     @Test
-    fun theDeclaredConstantsAreTheOnesTheScheduleUses() {
-        // 🔴 Literals, not expressions over the constants: the point is that
-        // the cadence the operator asked for ("every ~60 s, backing off to
-        // ~5 min") is what ships. An assertion written as
-        // `SttReachability.PROBE_INTERVAL_MS` against itself is true for every
-        // value and pins nothing.
-        assertEquals(60_000L, SttReachability.PROBE_INTERVAL_MS)
-        assertEquals(300_000L, SttReachability.BACKOFF_INTERVAL_MS)
-        assertEquals(3, SttReachability.BACKOFF_AFTER_FAILURES)
+    fun theFreshnessWindowIsTwoProbeIntervals() {
+        assertEquals(
+            "a result is current for one interval plus one interval of grace: " +
+                "it stays current until the schedule that produced it has had a " +
+                "chance to produce a successor and failed to. 🔴 Literals on " +
+                "both sides — written as an expression over the constants this " +
+                "would be true for every value and would pin nothing.",
+            120_000L,
+            SttReachability.FRESHNESS_WINDOW_MS,
+        )
+        assertEquals(
+            "and it must be exactly twice the cadence, so bumping the cadence " +
+                "carries the window with it",
+            2 * SttReachability.PROBE_INTERVAL_MS,
+            SttReachability.FRESHNESS_WINDOW_MS,
+        )
+    }
+
+    @Test
+    fun aFailureIsStillCurrentOneCadenceLater() {
+        val r = owner()
+        r.record(false)
+
+        // One ordinary interval on, which is where the next probe is due.
+        clock += SttReachability.PROBE_INTERVAL_MS
+        assertEquals(
+            "a failure must still WARN one full cadence after it was recorded. " +
+                "This is the behavioural half of the one interval of grace: " +
+                "with the window pinned at a single interval this reads PROCEED " +
+                "and the feature is inert for half of every outage, because the " +
+                "cache would expire at the exact moment its successor is due.",
+            SttReachability.Verdict.WARN,
+            r.verdict(),
+        )
     }
 }

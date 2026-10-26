@@ -417,7 +417,7 @@ class BubbleUnreachableWarningTest {
         val service = start()
         idle()
         record(false)
-        clock += reachability.freshnessWindowMs() + 3_333L
+        clock += SttReachability.FRESHNESS_WINDOW_MS + 3_333L
 
         bubble(service).performClick()
 
@@ -553,37 +553,26 @@ class BubbleUnreachableWarningTest {
     }
 
     @Test
-    fun theCadenceBacksOffAfterConsecutiveFailures() {
+    fun theCadenceStaysOrdinaryThroughALongRunOfFailures() {
         start(probe = { false })
         idle()
-        repeat(SttReachability.BACKOFF_AFTER_FAILURES - 1) {
-            idleFor(SttReachability.PROBE_INTERVAL_MS)
-        }
-        assertEquals(
-            "precondition: the ordinary cadence up to the backoff threshold",
-            SttReachability.BACKOFF_AFTER_FAILURES,
-            probed.size,
-        )
+        assertEquals("precondition: the immediate probe at start", 1, probed.size)
 
-        val before = probed.size
-        // Several ordinary intervals, well short of the backed-off one.
-        idleFor(SttReachability.PROBE_INTERVAL_MS * 3 + 777L)
+        // 🔴 Six more ordinary intervals against a server that refuses every
+        // time. A failure-streak backoff to ~5 min stood here until 2026-10-25
+        // and was deleted by operator disposition — the settled requirement is
+        // CONTINUOUS background checking, and with the old backoff in place
+        // this run produces 3 probes instead of 7, because the 4th tick is
+        // five minutes out. That is what makes this a regression test rather
+        // than an invariant guard: it is red on the code it replaced.
+        repeat(6) { idleFor(SttReachability.PROBE_INTERVAL_MS) }
         assertEquals(
-            "after ${SttReachability.BACKOFF_AFTER_FAILURES} consecutive " +
-                "failures the next probe is a backoff interval away, so three " +
-                "ordinary intervals must produce none. Hammering a host that " +
-                "has refused that many times in a row is a battery cost with " +
-                "no information in it.",
-            before,
-            probed.size,
-        )
-
-        idleFor(SttReachability.BACKOFF_INTERVAL_MS)
-        assertEquals(
-            "and one does arrive a backoff interval on — a backed-off schedule " +
-                "must not be a stopped one, or the server coming back is never " +
-                "noticed",
-            before + 1,
+            "a run of failures must NOT stretch the gap between probes. The " +
+                "battery saving comes from the screen-on gating below, not " +
+                "from checking the server less often once it is down — and a " +
+                "stretched cadence is also the state in which the server " +
+                "coming back is noticed minutes late.",
+            7,
             probed.size,
         )
     }
