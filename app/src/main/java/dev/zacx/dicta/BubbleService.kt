@@ -1669,7 +1669,7 @@ class BubbleService : Service() {
         val settings = sttSettings()
         // ⚠ KNOWN AND NOT FIXED HERE: when the remote path IS configured, this
         // line does a keystore unwrap plus a GCM decrypt on the MAIN THREAD,
-        // once per tick (60 s, or 5 min backed off). `isRemoteConfigured` is
+        // once per tick (60 s). `isRemoteConfigured` is
         // `remoteEnabled && tokens.hasToken` and Kotlin's `&&` already
         // short-circuits, so the user who turned the feature OFF pays nothing —
         // but that is the user who would not have cared. No restructure
@@ -1700,7 +1700,7 @@ class BubbleService : Service() {
         val token = reachability.beginProbe()
         if (token == null) {
             // One in flight already — nothing to do but come back later.
-            scheduleProbe(reachability.nextProbeDelayMs())
+            scheduleProbe(SttReachability.PROBE_INTERVAL_MS)
             return
         }
         val baseUrl = settings.baseUrl
@@ -1723,7 +1723,7 @@ class BubbleService : Service() {
                         onSuccess = { ok -> reachability.onProbeResult(token, ok) },
                         onFailure = { reachability.abandonProbe() },
                     )
-                    if (root != null) scheduleProbe(reachability.nextProbeDelayMs())
+                    if (root != null) scheduleProbe(SttReachability.PROBE_INTERVAL_MS)
                 }
             }
         }.isSuccess
