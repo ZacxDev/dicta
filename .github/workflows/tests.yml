@@ -36,8 +36,25 @@ jobs:
       # measured nothing is worse than no gate — so the count is asserted, not
       # inferred from the task's exit status.
       #
-      # BASELINE: 600 against a suite of 691 tests / 63 classes, measured from
-      # the JUnit XML of a full run on feat/stt-reachability-precheck
+      # BASELINE: 605 against a suite of 696 tests / 65 classes, read from the
+      # JUnit XML of a full run on `main` at ebffaf9 (2026-10-26) — the tip
+      # after #33 deleted the reachability probe's backoff and two ledger
+      # tests. 696/65 was measured directly (65 TEST-*.xml files summing to
+      # tests=696 failures=0 errors=0 skipped=0) and agrees with
+      # scripts/assert-tests-ran.py's own TOTAL line on the same run.
+      #
+      # 🔴 THE FLOOR WAS LAGGING THE SUITE, WHICH IS WHY THIS RAISES IT. The
+      # entry below is CORRECT about the tree it names and was never wrong;
+      # what went stale is this gate's floor, because the rule further down
+      # makes the HEADROOM the constant and the suite has moved since. The
+      # intervening history, so nobody reads this as one jump: the suite
+      # reached 699/65 (#30, the tile-add outcomes), then 701/65 (#32, the
+      # audit-round-1 fixes), then 696/65 (#33, the two deletions). At 701 the
+      # formula prescribed 609; the gate said 600 throughout. Re-derived here
+      # rather than carried forward.
+      #
+      # PREVIOUS ENTRY: 600 against a suite of 691 tests / 63 classes, measured
+      # from the JUnit XML of a full run on feat/stt-reachability-precheck
       # (2026-10-23) — the reachability pre-check stacked on 433fbc8, the tip
       # of feat/ui-surface-cleanup, which is itself stacked on ae1b464
       # (feat/bubble-state-tile-boot). That is the tree this number is about
@@ -72,8 +89,9 @@ jobs:
       # 🔴 THE HEADROOM IS THE CONSTANT, NOT THE FLOOR — re-derive it, do not
       # pick a round number:
       #     floor = floor(current_total * 500 / 575)      # 0.86957, 13.04% slack
-      # 691 * 500 / 575 = 600.87 -> 600, which is 13.17% slack.
-      # (Previous entries: 651 * 500 / 575 = 566.09 -> 566, 13.06% slack;
+      # 696 * 500 / 575 = 605.22 -> 605, which is 13.07% slack.
+      # (Previous entries: 691 * 500 / 575 = 600.87 -> 600, 13.17% slack;
+      #  651 * 500 / 575 = 566.09 -> 566, 13.06% slack;
       #  638 * 500 / 575 = 554.78 -> 554, 13.17% slack;
       #  633 * 500 / 575 = 550.43 -> 550, 13.11% slack.)
       #
@@ -102,7 +120,7 @@ jobs:
       # one place.
       - name: Assert tests actually ran
         if: always()
-        run: python3 scripts/assert-tests-ran.py --min 600
+        run: python3 scripts/assert-tests-ran.py --min 605
 
       - name: Upload test reports
         if: always()
