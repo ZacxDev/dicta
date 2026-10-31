@@ -52,8 +52,9 @@ object RecognizerIntents {
      */
     fun sharedSourceIntent(
         pipeReadEnd: ParcelFileDescriptor,
+        language: String,
         sampleRateHz: Int = AudioCaptureLogic.SAMPLE_RATE_HZ,
-    ): Intent = baseIntent().apply {
+    ): Intent = baseIntent(language).apply {
         putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE, pipeReadEnd)
         putExtra(
             RecognizerIntent.EXTRA_AUDIO_SOURCE_CHANNEL_COUNT,
@@ -71,14 +72,50 @@ object RecognizerIntents {
      * itself — used only when [AudioCaptureLogic.supportsSharedAudioSource]
      * is false *and* we are not holding the microphone.
      */
-    fun ownMicIntent(): Intent = baseIntent()
+    fun ownMicIntent(language: String): Intent = baseIntent(language)
 
-    private fun baseIntent(): Intent =
+    /**
+     * The intent for the permission-free fallback that hands capture to the
+     * system voice UI.
+     *
+     * 🔴 Deliberately **not** [baseIntent]: that one asks for partial results
+     * and three candidates, which this path neither reads nor wants. What it
+     * does share is [RecognizerIntent.EXTRA_LANGUAGE], and sharing *that* is
+     * the whole reason this function exists rather than an `Intent {}` built
+     * by hand at the call site — a hand-built second intent is precisely how
+     * one of the two capture paths kept following the device locale after the
+     * other had been fixed.
+     */
+    fun systemVoiceUiIntent(language: String, prompt: String): Intent =
         Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(
                 RecognizerIntent.EXTRA_LANGUAGE_MODEL,
                 RecognizerIntent.LANGUAGE_MODEL_FREE_FORM,
             )
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE, language)
+            putExtra(RecognizerIntent.EXTRA_PROMPT, prompt)
+        }
+
+    private fun baseIntent(language: String): Intent =
+        Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(
+                RecognizerIntent.EXTRA_LANGUAGE_MODEL,
+                RecognizerIntent.LANGUAGE_MODEL_FREE_FORM,
+            )
+            // 🔴 WITHOUT THIS THE RECOGNISER FOLLOWS THE DEVICE LOCALE, and
+            // that is not a default — it is the setting being ignored. The
+            // remote path has resolved an explicit preference since issue #7
+            // while this intent carried no language at all, so a Spanish
+            // handset returned Spanish for English speech whenever the
+            // on-device engine served the dictation. `EXTRA_LANGUAGE_MODEL`
+            // is a different knob (free-form vs web-search) and never set the
+            // language, which is why its presence made this look handled.
+            //
+            // The value is a bare ISO code from SttLanguage.SUPPORTED, which
+            // is also a well-formed IETF tag — the same string the remote
+            // request sends, by construction, because both come from
+            // SttSettings.dictationLanguage.
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE, language)
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
             putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
         }

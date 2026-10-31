@@ -25,10 +25,17 @@ import android.speech.SpeechRecognizer
  * @param sharedSource the read end of [MicCapture]'s pipe, or null to let the
  *   recogniser open the microphone itself — which is only correct when
  *   nothing else holds it.
+ * @param language the dictation language, from
+ *   [SttSettings.dictationLanguage]. 🔴 Required rather than defaulted: a
+ *   default here would be a second place that decides the language, and the
+ *   bug this parameter exists to close was precisely this class silently
+ *   falling back to the device locale while the remote path used the user's
+ *   choice.
  */
 class SpeechHelper(
     context: Context,
     private val listener: Listener,
+    private val language: String,
     private val sharedSource: ParcelFileDescriptor? = null,
     private val sampleRateHz: Int = AudioCaptureLogic.SAMPLE_RATE_HZ,
 ) {
@@ -81,8 +88,8 @@ class SpeechHelper(
                 }
             })
             val intent = sharedSource
-                ?.let { RecognizerIntents.sharedSourceIntent(it, sampleRateHz) }
-                ?: RecognizerIntents.ownMicIntent()
+                ?.let { RecognizerIntents.sharedSourceIntent(it, language, sampleRateHz) }
+                ?: RecognizerIntents.ownMicIntent(language)
             listening = true
             r.startListening(intent)
         } catch (t: Throwable) {

@@ -2,6 +2,7 @@ package dev.zacx.dicta
 
 import android.content.Context
 import android.content.SharedPreferences
+import java.util.Locale
 
 /**
  * Where the bearer token lives.
@@ -134,6 +135,31 @@ class SttSettings(
 
     val isRemoteConfigured: Boolean
         get() = remoteEnabled && tokens.hasToken
+
+    /**
+     * The dictation language code — for the remote request *and* for the
+     * on-device recogniser. **The only place [SttLanguage.resolve] is
+     * spelled.**
+     *
+     * 🔴 The two transcription paths must agree, and they did not: the remote
+     * request resolved this preference, while the recogniser intent carried no
+     * `EXTRA_LANGUAGE` at all and so silently followed the *device* locale. On
+     * a Spanish handset an operator who had explicitly chosen English still
+     * got Spanish back whenever the on-device engine served the dictation —
+     * which reads as a broken recogniser rather than as a setting one of the
+     * two paths never consulted. Issue #7 fixed that for the remote half only.
+     *
+     * 🔴 So this is deliberately a METHOD on the settings object rather than
+     * the expression repeated at each call site. A predicate open-coded at N
+     * sites is wrong at N−1 of them eventually, and "the language is resolved
+     * here" is exactly the rule that was already missing from one of two
+     * places.
+     *
+     * @param locale the device locale, consulted only when the user has made
+     *   no explicit choice — "follow the device" remains the default.
+     */
+    fun dictationLanguage(locale: Locale): String =
+        SttLanguage.resolve(language, locale)
 
     companion object {
         const val KEY_BASE_URL: String = "stt_base_url"

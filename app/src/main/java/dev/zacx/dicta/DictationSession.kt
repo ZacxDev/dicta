@@ -399,6 +399,10 @@ class DictationSession(
                     // ladder, which has something more useful to say.
                 }
             },
+            // The SAME string the remote request carries — both read
+            // SttSettings.dictationLanguage, so the two engines cannot
+            // disagree about what was spoken.
+            language = settings.dictationLanguage(locale),
             sharedSource = source,
         )
         if (!helper.isAvailable) {
