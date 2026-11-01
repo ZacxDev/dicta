@@ -64,6 +64,7 @@ class DictationSessionHistoryCaptureTest {
         override fun onTier(tier: AudioCaptureLogic.Tier) = Unit
         override fun onClientSilenced(silenced: Boolean) = Unit
         override fun onRecordingStopped() = Unit
+        override fun onHistorySaved(id: String) = Unit
     }
 
     private val ctx: Context get() = RuntimeEnvironment.getApplication()

@@ -35,6 +35,6 @@ object ScreenshotStore {
                 "PNG encode failed"
             }
         }
-        return DictaFileProvider.uriFor(file.name)
+        return DictaFileProvider.uriFor(DictaFileProvider.ROOT_SCREENSHOTS, file.name)
     }
 }

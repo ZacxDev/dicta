@@ -1038,6 +1038,17 @@ class BubbleService : Service() {
                 if (!isCurrent()) return
                 bus.onRecordingStopped()
             }
+
+            /**
+             * Forwarded to the bus like every other card-bound event, and
+             * gated by [isCurrent] for the same reason: a superseded session's
+             * id would arm the card's *Retry* against the PREVIOUS recording's
+             * audio while the current recording's transcript is on screen.
+             */
+            override fun onHistorySaved(id: String) {
+                if (!isCurrent()) return
+                bus.onHistorySaved(id)
+            }
         }
 
     /**

@@ -1,0 +1,15 @@
+<!--
+  Save audio: the download glyph (arrow into a tray). Deliberately the
+  download shape rather than a floppy/disk or a waveform — the control hands
+  the recording OUT of the app via the share sheet, and the arrow is what
+  reads as "get this out of here" at 24dp without a label.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M12,3c0.55,0 1,0.45 1,1v8.17l2.59,-2.58L17,11l-5,5l-5,-5l1.41,-1.41L11,12.17V4c0,-0.55 0.45,-1 1,-1zM5,18h14c0.55,0 1,0.45 1,1s-0.45,1 -1,1H5c-0.55,0 -1,-0.45 -1,-1s0.45,-1 1,-1z" />
+</vector>

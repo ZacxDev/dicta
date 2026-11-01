@@ -59,6 +59,16 @@ object BubbleSessionBus {
             deliver { it.onClientSilenced(silenced) }
 
         override fun onRecordingStopped() = deliver { it.onRecordingStopped() }
+
+        /**
+         * 🔴 Queued via [deliver], not dropped when no card is attached. The
+         * bubble files the recording while the card may not exist yet, and a
+         * card that opens afterwards still needs the id — otherwise *Retry*
+         * and *Save audio* would be armed on exactly the dictations taken
+         * through the card and silently absent on the ones taken through the
+         * bubble, which is most of them.
+         */
+        override fun onHistorySaved(id: String) = deliver { it.onHistorySaved(id) }
     }
 
     private fun deliver(action: (DictationSession.Callbacks) -> Unit) {

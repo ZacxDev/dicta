@@ -58,6 +58,10 @@ class DictateActionViewTypesTest {
         R.id.copy_button,
         R.id.screenshot_button,
         R.id.share_button,
+        // Save audio — hands the stored recording to the share sheet. An
+        // ImageButton like its four neighbours, so the type assertions below
+        // and DictateActivity's own cast both cover it.
+        R.id.save_audio_button,
         R.id.close_button,
     )
 

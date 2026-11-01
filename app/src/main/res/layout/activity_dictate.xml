@@ -474,6 +474,31 @@
                 android:contentDescription="@string/share"
                 android:tooltipText="@string/share" />
 
+            <!--
+              Save audio — hands the stored .ogg to the share sheet.
+
+              🔴 DISABLED at rest rather than GONE, unlike @id/retranscribe_button
+              in the row above. This row is documented as unconditional — "an
+              action the user can see is the point, and the states where an
+              action refuses are handled by the action, not by hiding it" — so a
+              control that appeared only once the recording had been filed would
+              be a reveal in the one row that must not have reveals. It enables
+              when DictationSession reports the history id.
+            -->
+            <ImageButton
+                android:id="@+id/save_audio_button"
+                android:layout_width="0dp"
+                android:layout_height="48dp"
+                android:layout_weight="1"
+                android:layout_marginStart="8dp"
+                android:src="@drawable/ic_save_audio"
+                android:scaleType="center"
+                android:background="@drawable/icon_button_bg"
+                android:tint="@color/dicta_on_surface"
+                android:enabled="false"
+                android:contentDescription="@string/save_audio"
+                android:tooltipText="@string/save_audio" />
+
             <ImageButton
                 android:id="@+id/close_button"
                 android:layout_width="0dp"
