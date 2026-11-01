@@ -26,8 +26,8 @@ android {
         // handset fails with INSTALL_FAILED_VERSION_DOWNGRADE until you
         // uninstall, which destroys the dictation history. Bumping here and
         // making the tag match keeps local and published builds identical.
-        versionCode = 201
-        versionName = "0.2.1"
+        versionCode = 300
+        versionName = "0.3.0"
         // Instrumented tests only (androidTest/). They never run in CI —
         // there is no device there — and they are packaged into a SEPARATE
         // test APK, so this adds nothing to app-debug.apk. See the
