@@ -972,7 +972,7 @@ class DictateActivity : Activity() {
                 hideMicControl()
                 statusText.text = message
             }
-        }, language = dictationLanguage())
+        }, language = dictationLocaleTag())
         if (!helper.isAvailable) {
             // Nothing was opened, so nothing is acquired here: the acquire
             // belongs to the line that actually starts listening, below.
@@ -1233,15 +1233,15 @@ class DictateActivity : Activity() {
      * the recogniser did unconditionally before, now stated out loud at the
      * one place that can still mean it.
      */
-    private fun dictationLanguage(): String {
+    private fun dictationLocaleTag(): String {
         val locale = Locale.getDefault()
-        return settings?.dictationLanguage(locale) ?: SttLanguage.fromLocale(locale)
+        return settings?.dictationLocaleTag(locale) ?: locale.toLanguageTag()
     }
 
     /** Permission-free fallback: delegate capture to the system voice UI. */
     private fun fallbackSystemVoiceInput() {
         val intent = RecognizerIntents.systemVoiceUiIntent(
-            language = dictationLanguage(),
+            language = dictationLocaleTag(),
             prompt = getString(R.string.speak_now),
         )
         try {

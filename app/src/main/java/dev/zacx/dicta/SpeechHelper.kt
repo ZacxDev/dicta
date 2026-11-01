@@ -25,8 +25,9 @@ import android.speech.SpeechRecognizer
  * @param sharedSource the read end of [MicCapture]'s pipe, or null to let the
  *   recogniser open the microphone itself — which is only correct when
  *   nothing else holds it.
- * @param language the dictation language, from
- *   [SttSettings.dictationLanguage]. 🔴 Required rather than defaulted: a
+ * @param language the dictation language as an Android IETF tag, from
+ *   [SttSettings.dictationLocaleTag] — NOT the allowlist-degraded code the
+ *   wire carries. 🔴 Required rather than defaulted: a
  *   default here would be a second place that decides the language, and the
  *   bug this parameter exists to close was precisely this class silently
  *   falling back to the device locale while the remote path used the user's

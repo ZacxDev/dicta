@@ -1,5 +1,6 @@
 package dev.zacx.dicta
 
+import android.content.Context
 import android.os.ParcelFileDescriptor
 import android.speech.RecognizerIntent
 import org.junit.Assert.assertEquals
@@ -8,6 +9,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
 import java.io.File
 import java.util.Locale
@@ -15,6 +17,11 @@ import java.util.Locale
 /**
  * 🔴 The seam between the **two** engines that can transcribe a dictation, and
  * the one thing they must agree about: what language was spoken.
+ *
+ * 🔴 They agree on the LANGUAGE and deliberately NOT on the STRING — the wire
+ * is constrained to the service's allowlist and the recogniser is not. See
+ * [withNoChoiceTheRecogniserGetsTheDeviceTagWhileTheWireGetsTheAllowlistedCode]
+ * for the regression that collapsing them produces.
  *
  * ## The failure this exists to make loud
  *
@@ -45,15 +52,63 @@ import java.util.Locale
 @Config(sdk = [34])
 class DictationLanguageSeamTest {
 
+    // --- the two encodings of ONE decision ---------------------------------
+
+    /**
+     * 🔴 The regression an earlier draft of this change shipped, and the
+     * reason the two engines are NOT handed the same string.
+     *
+     * `SttLanguage.resolve` degrades anything outside the service's 14-code
+     * allowlist to `"en"`, because an unknown code is an unhandled **500** on
+     * the service. `SpeechRecognizer` has no allowlist and transcribes Hindi
+     * perfectly well. Collapsing both engines onto the degraded code looks
+     * like consolidation and makes the on-device transcript **worse than
+     * before the language was plumbed through at all** — Hindi speech
+     * returned as English.
+     */
     @Test
-    fun anExplicitChoiceBeatsTheDeviceLocale() {
+    fun withNoChoiceTheRecogniserGetsTheDeviceTagWhileTheWireGetsTheAllowlistedCode() {
+        val settings = freshSettings()
+        settings.language = null
+
         assertEquals(
-            "the operator's picker must win over the handset's locale — this " +
-                "is the whole of issue #7",
-            CHOSEN,
-            SttLanguage.resolve(CHOSEN, DEVICE),
+            "the WIRE must stay inside the allowlist or the service 500s",
+            "en",
+            settings.dictationLanguage(OUTSIDE_ALLOWLIST),
+        )
+        assertEquals(
+            "the RECOGNISER must get the device's own tag — it has no " +
+                "allowlist, and forcing it to \"en\" transcribes Hindi speech " +
+                "as English",
+            "hi-IN",
+            settings.dictationLocaleTag(OUTSIDE_ALLOWLIST),
         )
     }
+
+    /** An explicit choice is honoured identically by both, which is issue #7. */
+    @Test
+    fun anExplicitChoiceReachesBothEngines() {
+        val settings = freshSettings()
+        settings.language = CHOSEN
+
+        assertEquals(CHOSEN, settings.dictationLanguage(DEVICE))
+        assertEquals(CHOSEN, settings.dictationLocaleTag(DEVICE))
+    }
+
+    /**
+     * The operator's own handset. Same language on both sides; the recogniser
+     * additionally keeps the region, which it can use and the wire cannot.
+     */
+    @Test
+    fun anAllowlistedDeviceLocaleAgreesOnLanguageAndDiffersOnlyInRegion() {
+        val settings = freshSettings()
+        settings.language = null
+
+        assertEquals("es", settings.dictationLanguage(DEVICE))
+        assertEquals("es-CO", settings.dictationLocaleTag(DEVICE))
+    }
+
+    // --- every capture path carries whatever it was given ------------------
 
     @Test
     fun theOwnMicIntentCarriesTheResolvedLanguage() {
@@ -110,11 +165,6 @@ class DictationLanguageSeamTest {
             "free-form vs web-search — this knob never carried a language",
             RecognizerIntent.LANGUAGE_MODEL_FREE_FORM,
             intent.getStringExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL),
-        )
-        assertFalse(
-            "the two extras must not be the same string, or the assertion " +
-                "above would pass for the wrong reason",
-            RecognizerIntent.EXTRA_LANGUAGE == RecognizerIntent.EXTRA_LANGUAGE_MODEL,
         )
     }
 
@@ -249,9 +299,29 @@ class DictationLanguageSeamTest {
         return dir!!
     }
 
+    private var counter = 0
+
+    private fun freshSettings(): SttSettings {
+        val prefs = RuntimeEnvironment.getApplication()
+            .getSharedPreferences("dicta_seam_test_${counter++}", Context.MODE_PRIVATE)
+        return SttSettings(prefs, TokenStore(prefs, ReversibleCipher()))
+    }
+
+    /** Enough of a cipher to construct a [TokenStore]; tokens are not under test. */
+    private class ReversibleCipher : SecretCipher {
+        override fun encrypt(plaintext: String): String = plaintext.reversed()
+        override fun decrypt(blob: String): String? = blob.reversed()
+    }
+
     private companion object {
         /** Spanish handset — the operator's real configuration. */
         val DEVICE: Locale = Locale.forLanguageTag("es-CO")
+
+        /**
+         * A locale the SERVICE cannot accept but Android handles fine. The
+         * whole point of the two encodings.
+         */
+        val OUTSIDE_ALLOWLIST: Locale = Locale.forLanguageTag("hi-IN")
 
         /**
          * Deliberately NOT "en": the expected value must differ from

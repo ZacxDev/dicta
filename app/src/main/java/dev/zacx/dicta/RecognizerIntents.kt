@@ -111,10 +111,14 @@ object RecognizerIntents {
             // is a different knob (free-form vs web-search) and never set the
             // language, which is why its presence made this look handled.
             //
-            // The value is a bare ISO code from SttLanguage.SUPPORTED, which
-            // is also a well-formed IETF tag — the same string the remote
-            // request sends, by construction, because both come from
-            // SttSettings.dictationLanguage.
+            // 🔴 This is an IETF tag for ANDROID, and it is NOT always the
+            // string the remote request sends. Both come from one decision
+            // (SttSettings: the user's choice, else the device), but the wire
+            // encoding is allowlist-degraded to avoid a 500 on the service
+            // and this one is not, because SpeechRecognizer has no allowlist.
+            // On an es-CO handset following the device the wire gets "es" and
+            // this gets "es-CO"; on a hi-IN one the wire gets "en" and this
+            // gets "hi-IN", which is the whole point.
             putExtra(RecognizerIntent.EXTRA_LANGUAGE, language)
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
             putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
