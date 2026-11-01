@@ -399,6 +399,11 @@ class DictationSession(
                     // ladder, which has something more useful to say.
                 }
             },
+            // The same DECISION the remote request uses, encoded for
+            // Android rather than for the wire — see
+            // SttSettings.dictationLocaleTag for why these must not be the
+            // same string.
+            language = settings.dictationLocaleTag(locale),
             sharedSource = source,
         )
         if (!helper.isAvailable) {

@@ -211,7 +211,12 @@ class RemoteTranscriber(
             // English speech as Spanish — which reads as a broken recogniser
             // rather than as a setting nobody was offered. null still means
             // "follow the device", and is still the default.
-            language = SttLanguage.resolve(settings.language, locale),
+            //
+            // 🔴 Resolved by SttSettings.dictationLanguage rather than here,
+            // so the on-device recogniser gets the SAME string: this call site
+            // was fixed for issue #7 while the recogniser intent was not, and
+            // one expression spelled at two sites is how that happened.
+            language = settings.dictationLanguage(locale),
         )
     }
 

@@ -2,6 +2,7 @@ package dev.zacx.dicta
 
 import android.content.Context
 import android.content.SharedPreferences
+import java.util.Locale
 
 /**
  * Where the bearer token lives.
@@ -134,6 +135,62 @@ class SttSettings(
 
     val isRemoteConfigured: Boolean
         get() = remoteEnabled && tokens.hasToken
+
+    /**
+     * The dictation language code **for the wire** — allowlist-constrained,
+     * because the service 500s on anything outside [SttLanguage.SUPPORTED].
+     * The on-device recogniser takes [dictationLocaleTag] instead; the two
+     * share one DECISION and differ only in encoding.
+     *
+     * **The only place [SttLanguage.resolve] is spelled.**
+     *
+     * 🔴 The two transcription paths must agree, and they did not: the remote
+     * request resolved this preference, while the recogniser intent carried no
+     * `EXTRA_LANGUAGE` at all and so silently followed the *device* locale. On
+     * a Spanish handset an operator who had explicitly chosen English still
+     * got Spanish back whenever the on-device engine served the dictation —
+     * which reads as a broken recogniser rather than as a setting one of the
+     * two paths never consulted. Issue #7 fixed that for the remote half only.
+     *
+     * 🔴 So this is deliberately a METHOD on the settings object rather than
+     * the expression repeated at each call site. A predicate open-coded at N
+     * sites is wrong at N−1 of them eventually, and "the language is resolved
+     * here" is exactly the rule that was already missing from one of two
+     * places.
+     *
+     * @param locale the device locale, consulted only when the user has made
+     *   no explicit choice — "follow the device" remains the default.
+     */
+    fun dictationLanguage(locale: Locale): String =
+        SttLanguage.resolve(language, locale)
+
+    /**
+     * The same decision as [dictationLanguage], encoded for **Android's**
+     * recogniser instead of for the wire.
+     *
+     * 🔴 The DECISION is shared — the user's explicit choice, else the device —
+     * and is spelled in exactly these two methods and nowhere else. What
+     * differs is the ENCODING, and it must, because the two consumers have
+     * different constraints:
+     *
+     *  * the service accepts only [SttLanguage.SUPPORTED]; anything else is an
+     *    unhandled **500**, so [dictationLanguage] degrades an unsupported
+     *    locale to [SttLanguage.DEFAULT];
+     *  * `SpeechRecognizer` has **no such allowlist** and happily transcribes
+     *    languages the service cannot. It gets the device's own BCP-47 tag.
+     *
+     * 🔴 Collapsing these two into one string looks like consolidation and is
+     * a REGRESSION: it imports a server-imposed restriction into an engine
+     * that does not have it, so a Hindi handset with no explicit choice would
+     * have its Hindi speech transcribed **as English** on-device — strictly
+     * worse than before the language was plumbed through at all. Operator
+     * decision, 2026-10-31, on an audit finding.
+     *
+     * @return the user's chosen code when there is one, otherwise the device's
+     *   own language tag — region included, and deliberately unfiltered.
+     */
+    fun dictationLocaleTag(locale: Locale): String =
+        language ?: locale.toLanguageTag()
 
     companion object {
         const val KEY_BASE_URL: String = "stt_base_url"

@@ -19,6 +19,7 @@ import android.widget.EditText
 import android.widget.ImageButton
 import android.widget.TextView
 import android.widget.Toast
+import java.util.Locale
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executor
 import java.util.concurrent.Executors
@@ -971,7 +972,7 @@ class DictateActivity : Activity() {
                 hideMicControl()
                 statusText.text = message
             }
-        })
+        }, language = dictationLocaleTag())
         if (!helper.isAvailable) {
             // Nothing was opened, so nothing is acquired here: the acquire
             // belongs to the line that actually starts listening, below.
@@ -1223,15 +1224,26 @@ class DictateActivity : Activity() {
         }
     }
 
+    /**
+     * The dictation language for this Activity's own capture paths.
+     *
+     * 🔴 [settings] is nullable because `SttSettings.create` is allowed to
+     * fail when there is no AndroidKeyStore. When it is null there is no
+     * stored preference to honour, so this follows the device — which is what
+     * the recogniser did unconditionally before, now stated out loud at the
+     * one place that can still mean it.
+     */
+    private fun dictationLocaleTag(): String {
+        val locale = Locale.getDefault()
+        return settings?.dictationLocaleTag(locale) ?: locale.toLanguageTag()
+    }
+
     /** Permission-free fallback: delegate capture to the system voice UI. */
     private fun fallbackSystemVoiceInput() {
-        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-            putExtra(
-                RecognizerIntent.EXTRA_LANGUAGE_MODEL,
-                RecognizerIntent.LANGUAGE_MODEL_FREE_FORM
-            )
-            putExtra(RecognizerIntent.EXTRA_PROMPT, getString(R.string.speak_now))
-        }
+        val intent = RecognizerIntents.systemVoiceUiIntent(
+            language = dictationLocaleTag(),
+            prompt = getString(R.string.speak_now),
+        )
         try {
             @Suppress("DEPRECATION")
             startActivityForResult(intent, REQ_VOICE_FALLBACK)
