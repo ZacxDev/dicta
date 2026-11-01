@@ -131,6 +131,12 @@ class SessionCallbacksGateTest {
         "onTier",
         "onClientSilenced",
         "onRecordingStopped",
+        // The seventh. Carries the history id that arms Retry and Save audio;
+        // ungated, an abandoned session's id would point both controls at the
+        // PREVIOUS recording's audio while the CURRENT transcript is on
+        // screen — so Retry would replace the visible text with a
+        // re-transcription of something the user never asked about.
+        "onHistorySaved",
     )
 
     @Test

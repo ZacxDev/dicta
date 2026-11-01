@@ -399,6 +399,7 @@ class MicOpenerSeamTest {
         override fun onTier(tier: AudioCaptureLogic.Tier) = Unit
         override fun onClientSilenced(silenced: Boolean) = Unit
         override fun onRecordingStopped() = Unit
+        override fun onHistorySaved(id: String) = Unit
     }
 
     /**

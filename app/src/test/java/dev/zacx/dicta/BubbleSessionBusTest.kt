@@ -27,10 +27,39 @@ class BubbleSessionBusTest {
         override fun onTier(tier: AudioCaptureLogic.Tier) { events += "tier:$tier" }
         override fun onClientSilenced(silenced: Boolean) { events += "silenced:$silenced" }
         override fun onRecordingStopped() { events += "stopped" }
+        override fun onHistorySaved(id: String) { events += "history:$id" }
     }
 
     @After
     fun tearDown() = BubbleSessionBus.clearForTest()
+
+    /**
+     * 🔴 The bus is a RELAY, and a relay that silently drops one event type is
+     * the failure mode this test exists for. `onHistorySaved` carries the id
+     * that arms *Retry* and *Save audio*; dropped here, both controls simply
+     * never appear for a bubble dictation — no error, no log line, just two
+     * buttons that stay disabled forever.
+     *
+     * Queued like the rest, because the bubble files the recording while the
+     * card may not be open yet: delivering only to an already-attached card
+     * would arm the controls for dictations taken through the card and leave
+     * them dead for the ones taken through the bubble, which is most of them.
+     */
+    @Test
+    fun theHistoryIdReachesACardThatOpensAfterTheRecordingWasFiled() {
+        BubbleSessionBus.clearForTest()
+        BubbleSessionBus.sink.onHistorySaved("abc123")
+
+        val card = Recorder()
+        BubbleSessionBus.attach(card)
+
+        assertEquals(
+            "the card never learned which recording it is showing, so Retry " +
+                "and Save audio stay dead for every bubble dictation",
+            listOf("history:abc123"),
+            card.events,
+        )
+    }
 
     @Test
     fun eventsSaidBeforeTheCardOpensAreReplayedInOrder() {

@@ -124,6 +124,26 @@ class DictationSession(
 
         /** Recording stopped (so the UI can flip the mic button back). */
         fun onRecordingStopped()
+
+        /**
+         * The recording has been filed into history under [id], so its audio
+         * can be re-read — which is what makes *Retry* and *Save audio*
+         * possible on a live card rather than only on a history one.
+         *
+         * Fires **after** the copy and the index write have both succeeded, so
+         * a receiver may assume the audio is readable. It does **not** fire
+         * when the entry was not written (a cancel, a destroyed session, or a
+         * full disk), and a card must therefore treat "never called" as "no
+         * audio to act on" rather than waiting for it.
+         *
+         * 🔴 **Deliberately has no default implementation.** A no-op default
+         * would compile everywhere and be silently dropped by
+         * [BubbleSessionBus], which is a *relay*: a callback it does not
+         * explicitly forward never reaches the card attached to it, and the
+         * failure is invisible — the control simply never appears. Making it
+         * abstract forces each of the three implementers to decide.
+         */
+        fun onHistorySaved(id: String)
     }
 
     private val appContext = context.applicationContext
@@ -678,6 +698,14 @@ class DictationSession(
                     // `set(null)`, so a task racing a later recording's id
                     // cannot clear the wrong one.
                     pendingHistoryId.compareAndSet(historyId, null)
+                    // 🔴 AFTER the claim, never before it. Up to this line
+                    // `destroy()` may still take the entry back out (see
+                    // `pendingHistoryId`), and announcing an id that is then
+                    // deleted would arm a Retry/Save-audio control against
+                    // audio that no longer exists — a worse failure than the
+                    // control never appearing, because the user would press
+                    // it. Past the claim the ladder owns the entry.
+                    historyId?.let { id -> postToMain { callbacks.onHistorySaved(id) } }
                     transcribeRemotely(file, audioSeconds, historyId)
                 }
             } catch (_: RejectedExecutionException) {

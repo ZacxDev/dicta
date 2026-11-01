@@ -79,6 +79,7 @@ class DictationSessionRemoteHistoryWiringTest {
         override fun onTier(tier: AudioCaptureLogic.Tier) = Unit
         override fun onClientSilenced(silenced: Boolean) = Unit
         override fun onRecordingStopped() = Unit
+        override fun onHistorySaved(id: String) = Unit
     }
 
     /** History rooted in a temp dir, with a fixed clock. */

@@ -675,6 +675,22 @@ class DictationHistoryStore internal constructor(
         /** The directory name under `noBackupFilesDir`. */
         const val DIR = "history"
 
+        /**
+         * The history directory for [context] — the same path the production
+         * constructor roots itself at.
+         *
+         * 🔴 Exists so [DictaFileProvider] does not re-spell
+         * `File(noBackupFilesDir, DIR)`. The provider serves files out of this
+         * directory; a second spelling that drifted would either break every
+         * share or — worse — point the provider at some other directory under
+         * the data dir. Mirrors `ScreenshotStore.directory`.
+         *
+         * Does **not** `mkdirs()`, unlike the screenshots cache: a missing
+         * history directory means there is nothing to serve, and creating one
+         * as a side effect of a share would invent an empty archive.
+         */
+        fun directory(context: Context): File = File(context.noBackupFilesDir, DIR)
+
         /** The index file name, inside [DIR]. */
         const val INDEX = "index.json"
 

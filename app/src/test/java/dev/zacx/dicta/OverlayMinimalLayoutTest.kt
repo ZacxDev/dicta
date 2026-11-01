@@ -90,6 +90,10 @@ class OverlayMinimalLayoutTest {
         R.id.copy_button,
         R.id.screenshot_button,
         R.id.share_button,
+        // Save audio. Icon-only like the rest of the row, so it needs BOTH a
+        // contentDescription and a tooltipText — the glyph is a download
+        // arrow, which says nothing about *what* is being saved on its own.
+        R.id.save_audio_button,
         R.id.close_button,
     )
 

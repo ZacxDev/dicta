@@ -71,6 +71,7 @@ class DictateActivity : Activity() {
      * wearing a different label.
      */
     private lateinit var retranscribeButton: Button
+    private lateinit var saveAudioButton: ImageButton
 
     /**
      * The stored dictation this card is showing, or null when it is showing a
@@ -154,6 +155,7 @@ class DictateActivity : Activity() {
         levelMeter = findViewById(R.id.level_meter)
         engineBadge = findViewById(R.id.engine_badge)
         retranscribeButton = findViewById(R.id.retranscribe_button)
+        saveAudioButton = findViewById(R.id.save_audio_button)
 
         // Robolectric can create the real Activity but cannot provide an
         // AndroidKeyStore, so settings construction is allowed to fail here
@@ -168,6 +170,7 @@ class DictateActivity : Activity() {
 
         micButton.setOnClickListener { toggleDictation() }
         retranscribeButton.setOnClickListener { retranscribe() }
+        saveAudioButton.setOnClickListener { saveAudio() }
         // Copy/Screenshot/Send/Close are ImageButtons (ImageView subclasses, NOT
         // Buttons) — findViewById<Button> on them would throw
         // ClassCastException. Pinned by DictateActionViewTypesTest.
@@ -367,6 +370,10 @@ class DictateActivity : Activity() {
         historyItem = null
         retranscribeButton.visibility = View.GONE
         retranscribeButton.isEnabled = false
+        // Same re-purpose, same reason: this card has no audio of its own yet,
+        // and a Save-audio left enabled would hand out the PREVIOUS
+        // recording. It re-enables from onHistorySaved, via armAudioActions.
+        saveAudioButton.isEnabled = false
         // 🔴 NOT a "Speak" button. The bubble has already recorded and the
         // upload is in flight; there is nothing for the user to start here,
         // and a start control on this card is exactly what the operator asked
@@ -499,6 +506,8 @@ class DictateActivity : Activity() {
             // the row was drawn.
             statusText.text = getString(R.string.history_missing)
             retranscribeButton.isEnabled = false
+            // The entry is gone, so there is no audio to hand out either.
+            saveAudioButton.isEnabled = false
             return
         }
         finalText.setLength(0)
@@ -508,6 +517,9 @@ class DictateActivity : Activity() {
         showEngine(item.fromRemote)
         statusText.text = getString(R.string.history_saved)
         retranscribeButton.isEnabled = true
+        // A history card always has an entry behind it, so Save audio is
+        // available here for the same reason Re-transcribe is.
+        saveAudioButton.isEnabled = true
     }
 
     /**
@@ -532,6 +544,80 @@ class DictateActivity : Activity() {
      * genuinely concurrent uploads), and this is the accepted mitigation: a
      * UI guard, device-verified, rather than an architectural one.
      */
+    /**
+     * Arms *Retry* and *Save audio* against the recording just filed under
+     * [id].
+     *
+     * 🔴 Loads the item and reuses [historyItem] rather than introducing a
+     * second "which audio does this card act on?" field. [retranscribe] already
+     * reads exactly that field, so a live card and a history card reach the
+     * same code by having the same state — rather than by two code paths that
+     * can drift. The live card's [historyItem] is simply populated later.
+     *
+     * 🔴 Generation-checked on BOTH sides of the worker hop. The store read is
+     * file IO, and the card can be re-purposed while it is in flight — which is
+     * the exact shape of the F2 defect recorded above [attachToBubbleSession]:
+     * *Re-transcribe* visible and enabled against the PREVIOUS recording.
+     */
+    private fun armAudioActions(id: String) {
+        val generation = cardGeneration
+        historyWorker.execute {
+            val item = runCatching { historyStore().item(id) }.getOrNull()
+                ?: return@execute
+            runOnUiThread {
+                if (cardGeneration != generation) return@runOnUiThread
+                historyItem = item
+                retranscribeButton.visibility = View.VISIBLE
+                retranscribeButton.isEnabled = true
+                saveAudioButton.isEnabled = true
+            }
+        }
+    }
+
+    /**
+     * Hands the stored recording to the share sheet.
+     *
+     * 🔴 Audio only — no transcript text. The operator chose that explicitly:
+     * the recording is the irreplaceable half, and attaching the transcript
+     * would put the dictation's CONTENT into the share preview of every target
+     * in the chooser, which is a disclosure the button does not advertise.
+     */
+    private fun saveAudio() {
+        val item = historyItem ?: run {
+            statusText.text = getString(R.string.save_audio_unavailable)
+            return
+        }
+        historyWorker.execute {
+            val audio = runCatching { historyStore().audioFor(item.id) }.getOrNull()
+            runOnUiThread {
+                if (audio == null) {
+                    statusText.text = getString(R.string.save_audio_missing)
+                    saveAudioButton.isEnabled = false
+                    return@runOnUiThread
+                }
+                val uri = DictaFileProvider.uriFor(
+                    DictaFileProvider.ROOT_HISTORY,
+                    audio.name,
+                )
+                val send = Intent(Intent.ACTION_SEND).apply {
+                    type = DictaFileProvider.mimeFor(uri)
+                    putExtra(Intent.EXTRA_STREAM, uri)
+                    // 🔴 Without this the receiver gets a SecurityException —
+                    // grantUriPermissions in the manifest only makes the flag
+                    // meaningful, it does not imply it.
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+                runCatching {
+                    startActivity(
+                        Intent.createChooser(send, getString(R.string.save_audio_via))
+                    )
+                }.onFailure {
+                    statusText.text = getString(R.string.save_audio_no_target)
+                }
+            }
+        }
+    }
+
     private fun retranscribe() {
         val item = historyItem ?: return
         val config = settings
@@ -1157,6 +1243,18 @@ class DictateActivity : Activity() {
             if (stale()) return
             hideMicControl()
             levelMeter.progress = 0
+        }
+
+        /**
+         * The seventh gated method. 🔴 The [stale] gate is not optional here:
+         * an abandoned session's id would arm *Retry* and *Save audio* against
+         * the PREVIOUS recording's audio while the current recording's
+         * transcript is on screen — the user would press Retry and watch the
+         * text be replaced by a re-transcription of something else.
+         */
+        override fun onHistorySaved(id: String) {
+            if (stale()) return
+            armAudioActions(id)
         }
     }
 

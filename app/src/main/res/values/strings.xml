@@ -109,6 +109,17 @@
     <string name="share_with_image_via">Send screenshot + text via…</string>
     <string name="share_image_via">Send screenshot via…</string>
 
+    <!--
+      "Save audio", not "Download": this control opens the share sheet, so the
+      recording goes wherever the user sends it. Calling it Download would
+      promise a folder this code does not choose.
+    -->
+    <string name="save_audio">Save audio</string>
+    <string name="save_audio_via">Save recording via…</string>
+    <string name="save_audio_unavailable">This recording has not been filed yet — try again in a moment.</string>
+    <string name="save_audio_missing">The audio for this dictation is gone — nothing to save.</string>
+    <string name="save_audio_no_target">No app on this device can receive the recording.</string>
+
     <string name="screenshot">Screenshot</string>
     <string name="screenshot_requesting">Asking for screen-capture permission…</string>
     <string name="screenshot_consent_declined">Screen capture declined — nothing was captured.</string>

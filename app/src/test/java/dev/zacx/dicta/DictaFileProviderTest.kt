@@ -29,7 +29,14 @@ class DictaFileProviderTest {
 
         assertEquals("content", uri.scheme)
         assertEquals("dev.zacx.dicta.files", uri.authority)
-        assertEquals(listOf("dicta-1234567890.png"), uri.pathSegments)
+        // 🔴 TWO segments now: the provider serves more than one root, and the
+        // root is NAMED in the path rather than implied. A one-segment URI is
+        // refused outright rather than defaulting to screenshots — defaulting
+        // would make the history root reachable by omission.
+        assertEquals(
+            listOf(DictaFileProvider.ROOT_SCREENSHOTS, "dicta-1234567890.png"),
+            uri.pathSegments,
+        )
 
         val cursor = requireNotNull(
             ctx.contentResolver.query(

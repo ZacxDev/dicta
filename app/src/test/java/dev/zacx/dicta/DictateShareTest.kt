@@ -43,7 +43,14 @@ import org.robolectric.annotation.Config
 @Config(sdk = [34])
 class DictateShareTest {
 
-    private val shot: Uri = Uri.parse("content://dev.zacx.dicta.files/dicta-42.png")
+    /**
+     * 🔴 Built with [DictaFileProvider.uriFor], not parsed from a literal —
+     * the literal stopped matching production the moment the provider grew a
+     * second root, and a fixture that can drift from the shape under test is
+     * pinning the author's memory rather than the app.
+     */
+    private val shot: Uri =
+        DictaFileProvider.uriFor(DictaFileProvider.ROOT_SCREENSHOTS, "dicta-42.png")
 
     /**
      * `onCreate` requests RECORD_AUDIO, which Robolectric records as a started

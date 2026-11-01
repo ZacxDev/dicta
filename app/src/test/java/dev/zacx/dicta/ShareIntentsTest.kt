@@ -23,7 +23,15 @@ import org.robolectric.annotation.Config
 class ShareIntentsTest {
 
     private val dictated = "the quick brown fox jumped"
-    private val image: Uri = Uri.parse("content://dev.zacx.dicta.files/dicta-42.png")
+    /**
+     * 🔴 Built with [DictaFileProvider.uriFor] rather than parsed from a
+     * literal. The literal was `content://dev.zacx.dicta.files/dicta-42.png`
+     * and it silently stopped matching production the moment the provider
+     * grew a second root — a hand-written fixture pins the shape the author
+     * imagined, not the shape the app emits.
+     */
+    private val image: Uri =
+        DictaFileProvider.uriFor(DictaFileProvider.ROOT_SCREENSHOTS, "dicta-42.png")
 
     @Test
     fun textWithImageCarriesBothExtrasAndTheUriGrant() {
