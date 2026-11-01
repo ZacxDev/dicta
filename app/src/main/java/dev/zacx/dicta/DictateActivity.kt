@@ -595,12 +595,17 @@ class DictateActivity : Activity() {
                     saveAudioButton.isEnabled = false
                     return@runOnUiThread
                 }
-                val uri = DictaFileProvider.uriFor(
-                    DictaFileProvider.ROOT_HISTORY,
-                    audio.name,
-                )
+                // 🔴 A COPY, not the stored file. The provider must not be
+                // able to reach the dictation archive — see ShareStage.
+                val uri = runCatching { ShareStage.stage(this, audio) }.getOrNull()
+                if (uri == null) {
+                    statusText.text = getString(R.string.save_audio_missing)
+                    return@runOnUiThread
+                }
                 val send = Intent(Intent.ACTION_SEND).apply {
-                    type = DictaFileProvider.mimeFor(uri)
+                    // From the BYTES: the capture is always named .ogg even
+                    // when the encoder produced MP4.
+                    type = ShareStage.mimeOf(audio)
                     putExtra(Intent.EXTRA_STREAM, uri)
                     // 🔴 Without this the receiver gets a SecurityException —
                     // grantUriPermissions in the manifest only makes the flag

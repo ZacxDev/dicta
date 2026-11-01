@@ -85,22 +85,28 @@ class DictaFileProviderTest {
      * off whichever one happens to fire.
      */
     @Test
-    fun nonSingleSegmentUrisAreRefused() {
-        val root = File(ctx.cacheDir, "screenshots").apply { mkdirs() }
-        for (hostile in listOf(
-            "content://dev.zacx.dicta.files/../shared_prefs/secrets.xml",
-            "content://dev.zacx.dicta.files/nested/deeper.png",
-            "content://dev.zacx.dicta.files/",
-        )) {
+    fun urisOfTheWrongShapeAreRefused() {
+        // 🔴 The shape is <root>/<name> — TWO segments. It was one until the
+        // provider grew a named share root; a URI that omits the root must be
+        // REFUSED rather than defaulting to one, or the other root becomes
+        // reachable by omission.
+        val wrongShape = mapOf(
+            "content://dev.zacx.dicta.files/../shared_prefs/secrets.xml" to "expected <root>/<name>",
+            "content://dev.zacx.dicta.files/" to "expected <root>/<name>",
+            "content://dev.zacx.dicta.files/lonely.png" to "expected <root>/<name>",
+            // Two segments, but the root is not one this provider serves.
+            "content://dev.zacx.dicta.files/nested/deeper.png" to "unknown root",
+        )
+        for ((hostile, expected) in wrongShape) {
             val thrown = assertThrows(
                 "accepted $hostile",
                 IllegalArgumentException::class.java
             ) {
-                DictaFileProvider.resolveIn(root, Uri.parse(hostile))
+                ctx.contentResolver.getType(Uri.parse(hostile))
             }
             assertTrue(
                 "wrong guard fired for $hostile: ${thrown.message}",
-                thrown.message!!.contains("expected exactly one path segment")
+                thrown.message!!.contains(expected)
             )
         }
     }
@@ -136,7 +142,7 @@ class DictaFileProviderTest {
                 "accepted $hostile",
                 IllegalArgumentException::class.java
             ) {
-                DictaFileProvider.resolveIn(root, uri)
+                DictaFileProvider.resolveName(root, uri.pathSegments.single())
             }
             assertTrue(
                 "wrong guard fired for $hostile: ${thrown.message}",
@@ -153,9 +159,7 @@ class DictaFileProviderTest {
     @Test
     fun aLegitimateNameIsAccepted() {
         val root = File(ctx.cacheDir, "screenshots").apply { mkdirs() }
-        val resolved = DictaFileProvider.resolveIn(
-            root, Uri.parse("content://dev.zacx.dicta.files/dicta-7.png")
-        )
+        val resolved = DictaFileProvider.resolveName(root, "dicta-7.png")
         assertEquals("dicta-7.png", resolved.name)
         assertEquals(root.canonicalFile, resolved.parentFile)
     }

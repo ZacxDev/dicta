@@ -17,8 +17,11 @@ import java.io.File
  * ## Two roots, named in the URI
  *
  * Paths are `<root>/<name>` where `<root>` is one of [ROOT_SCREENSHOTS] or
- * [ROOT_HISTORY] and nothing else. It served one implicit root (screenshots)
- * until *Save audio* needed the dictation recordings too.
+ * [ROOT_SHARE] and nothing else. It served one implicit root (screenshots)
+ * until *Save audio* needed to hand out a recording too.
+ *
+ * 🔴 **Both roots are under `cacheDir`.** The dictation archive is NOT one of
+ * them and must not become one — see [ShareStage].
  *
  * 🔴 **The root is an allowlist lookup, never a path fragment.** The obvious
  * widening — join the first segment onto the data dir — would turn this class
@@ -26,12 +29,6 @@ import java.io.File
  * exactly the attack [resolveName] already exists to stop one level down.
  * [directoryFor] therefore maps a known constant to a directory and throws on
  * anything else; an unknown root is refused before any file is touched.
- *
- * 🔴 **The history root is more sensitive than the screenshots one.**
- * Screenshots live in `cacheDir` and are transient; the history directory is
- * the user's entire dictation archive under `noBackupFilesDir`. A traversal
- * out of it reaches the app's `shared_prefs`, which holds the encrypted
- * bearer-token blob. The per-root guard below is what keeps that distance.
  *
  * Deliberately hand-rolled instead of `androidx.core.content.FileProvider`:
  * this app has an empty runtime `dependencies {}` block and the APK is meant to
@@ -48,7 +45,17 @@ class DictaFileProvider : ContentProvider() {
 
     override fun onCreate(): Boolean = true
 
-    override fun getType(uri: Uri): String = mimeFor(uri)
+    /**
+     * 🔴 The screenshot root declares PNG because this app wrote the PNG. The
+     * share root is sniffed from the BYTES — the capture is always named
+     * `.ogg` while the encoder may have produced MP4, so the extension is not
+     * evidence. See [ShareStage.mimeOf].
+     */
+    override fun getType(uri: Uri): String {
+        val file = resolve(uri)
+        return if (uri.pathSegments[0] == ROOT_SCREENSHOTS) MIME_PNG
+        else ShareStage.mimeOf(file)
+    }
 
     override fun openFile(uri: Uri, mode: String): ParcelFileDescriptor {
         require(mode == "r") { "DictaFileProvider is read-only (mode=$mode)" }
@@ -116,16 +123,22 @@ class DictaFileProvider : ContentProvider() {
         /** `cacheDir/screenshots` — transient capture for the share sheet. */
         const val ROOT_SCREENSHOTS = "screenshots"
 
-        /** `noBackupFilesDir/history` — the dictation archive. */
-        const val ROOT_HISTORY = "history"
+        /**
+         * `cacheDir/share` — ONE staged recording, put there by [ShareStage].
+         *
+         * 🔴 This is deliberately NOT `noBackupFilesDir/history`. Serving the
+         * archive directly would put every dictation AND `index.json` (every
+         * transcript) inside the provider's reach, one level from
+         * `shared_prefs` and the encrypted token. See [ShareStage]'s kdoc.
+         */
+        const val ROOT_SHARE = "share"
 
         /**
          * Fallback type for a recording whose extension we do not recognise.
          *
-         * 🔴 Deliberately not guessed as `audio/ogg`. The store preserves
-         * whatever extension the encoder produced (Opus *or* AAC, chosen at
-         * runtime), so asserting a container we have not read is how a share
-         * target gets handed an `.m4a` labelled as Ogg and fails to open it.
+         * 🔴 Returned when the bytes match no container we recognise. NOT a
+         * guess at `audio/ogg`: a wrong type is worse than an unknown one,
+         * because the receiving app acts on it.
          */
         const val MIME_UNKNOWN = "application/octet-stream"
 
@@ -145,31 +158,8 @@ class DictaFileProvider : ContentProvider() {
          */
         fun directoryFor(context: Context, root: String): File = when (root) {
             ROOT_SCREENSHOTS -> ScreenshotStore.directory(context)
-            ROOT_HISTORY -> DictationHistoryStore.directory(context)
+            ROOT_SHARE -> ShareStage.directory(context)
             else -> throw IllegalArgumentException("unknown root <$root>")
-        }
-
-        fun mimeFor(uri: Uri): String {
-            val segments = uri.pathSegments
-            require(segments.size == 2) {
-                "expected <root>/<name>, got ${segments.size} segment(s) in $uri"
-            }
-            if (segments[0] == ROOT_SCREENSHOTS) return MIME_PNG
-            return AUDIO_MIMES[segments[1].substringAfterLast('.', "").lowercase()]
-                ?: MIME_UNKNOWN
-        }
-
-        /**
-         * Maps a provider URI back to a file, refusing anything that does not
-         * land directly inside [root]. Pulled out of the instance so the
-         * traversal guard is testable.
-         */
-        fun resolveIn(root: File, uri: Uri): File {
-            val segments = uri.pathSegments
-            require(segments.size == 1) {
-                "expected exactly one path segment, got ${segments.size} in $uri"
-            }
-            return resolveName(root, segments[0])
         }
 
         /**
@@ -186,13 +176,5 @@ class DictaFileProvider : ContentProvider() {
             return candidate
         }
 
-        private val AUDIO_MIMES = mapOf(
-            "ogg" to "audio/ogg",
-            "opus" to "audio/ogg",
-            "m4a" to "audio/mp4",
-            "aac" to "audio/aac",
-            "mp3" to "audio/mpeg",
-            "wav" to "audio/wav",
-        )
     }
 }
