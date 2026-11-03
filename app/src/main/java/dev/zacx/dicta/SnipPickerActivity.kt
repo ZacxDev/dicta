@@ -103,6 +103,12 @@ class SnipPickerActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_snip_picker)
+        // 🔴 AFTER setContentView, never before — and that constraint, the
+        // defect it closes and why there is one owner are all in
+        // FloatingWindow's kdoc. Deliberately not restated here: the mechanism
+        // had been copied into six tracked files, and the copy nobody reads is
+        // the copy that goes stale.
+        FloatingWindow.applySize(this)
         search = findViewById(R.id.snip_search)
         list = findViewById(R.id.snip_list)
         empty = findViewById(R.id.snip_empty)
