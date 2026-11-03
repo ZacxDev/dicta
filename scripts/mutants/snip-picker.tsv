@@ -1,0 +1,48 @@
+# Mutant batch for issue #38's snippet picker.
+#
+#   scripts/mutate.sh batch scripts/mutants/snip-picker.tsv
+#
+# Tab-separated: NAME <TAB> FILE <TAB> FROM <TAB> TO [<TAB> TEST_FILTER]
+# FROM must occur EXACTLY ONCE in FILE or the mutant is refused.
+#
+# 🔴 DEFINITIONS ONLY, NEVER RESULTS. A verdict is void the moment the
+# tree moves — see scripts/MUTATION-TESTING.md. The verdicts these produced
+# live in the pull request for #38, stamped with the commit they were measured
+# on.
+#
+# 🔴 WHY THIS BATCH EXISTS AT ALL. None of #38's tests is a regression
+# test: every class it touches arrives with the feature, so "red at the base
+# commit" would be a compile error rather than a guard watched failing. This
+# batch is what stands in for that — each row breaks ONE expression and names
+# the class whose OWN assertion must go red, so a kill is attributable to that
+# expression and is credited to the guard that actually executed.
+#
+# Each TEST_FILTER is the single class making the claim, which is deliberate:
+# it both shortens the run and makes the kill a statement about that class
+# rather than about whatever else happened to notice. A filter is only safe
+# because the harness refuses a run that executed zero tests — without that,
+# a typo'd filter reads as SURVIVED.
+#
+# Every mutant leaves the branch structure intact. The two that replace a
+# statement with `Unit` (m-snip10, m-snip16) remove a guard or a write WITHOUT
+# touching its enclosing condition, which is the isolation
+# scripts/MUTATION-TESTING.md requires: a mutant that deletes the condition
+# too proves nothing about the guard and dies for the wrong reason.
+m-snip01-word-class-keeps-hyphens	app/src/main/java/dev/zacx/dicta/SnipMatcher.kt	Regex("[a-z0-9]+")	Regex("[a-z0-9-]+")	dev.zacx.dicta.SnipMatcherTest
+m-snip02-query-not-normalised	app/src/main/java/dev/zacx/dicta/SnipMatcher.kt	val norm = query.trim().lowercase()	val norm = query.trim()	dev.zacx.dicta.SnipMatcherTest
+m-snip03-multi-token-and-becomes-or	app/src/main/java/dev/zacx/dicta/SnipMatcher.kt	it.all { t -> tokenMatches(t, row, true) }	it.any { t -> tokenMatches(t, row, true) }	dev.zacx.dicta.SnipMatcherTest
+m-snip04-labeled-ranked-before-declared	app/src/main/java/dev/zacx/dicta/SnipMatcher.kt	return declared + labeled	return labeled + declared	dev.zacx.dicta.SnipMatcherTest
+m-snip05-blank-search-term-matches-all	app/src/main/java/dev/zacx/dicta/SnipMatcher.kt	if (term.isNotEmpty() && term.lowercase().contains(token))	if (term.lowercase().contains(token))	dev.zacx.dicta.SnipMatcherTest
+m-snip06-blank-query-is-not-browse	app/src/main/java/dev/zacx/dicta/SnipMatcher.kt	if (norm.isEmpty()) return rows	if (norm.isEmpty()) return emptyList()	dev.zacx.dicta.SnipMatcherTest
+m-snip07-clip-var-replaced-once	app/src/main/java/dev/zacx/dicta/SnipClip.kt	body.replace(CLIP_VAR, clipboard)	body.replaceFirst(CLIP_VAR, clipboard)	dev.zacx.dicta.SnipClipTest
+m-snip08-needsclip-only-at-the-start	app/src/main/java/dev/zacx/dicta/SnipClip.kt	body.contains(CLIP_VAR)	body.startsWith(CLIP_VAR)	dev.zacx.dicta.SnipClipTest
+m-snip09-empty-label-refusal-says-nothing	app/src/main/java/dev/zacx/dicta/SnipCatalog.kt	throw Invalid("entry ${i + 1} has no \"label\"")	throw Invalid("")	dev.zacx.dicta.SnipCatalogTest
+m-snip10-duplicate-label-accepted	app/src/main/java/dev/zacx/dicta/SnipCatalog.kt	if (!seen.add(label)) throw Invalid("the label \"$label\" appears twice")	if (!seen.add(label)) Unit	dev.zacx.dicta.SnipCatalogTest
+m-snip11-window-height-forgets-the-snip-button	app/src/main/java/dev/zacx/dicta/BubbleService.kt	if (snip?.visibility == View.VISIBLE) snipBlockPx else 0	if (snip?.visibility == View.VISIBLE) 0 else 0	dev.zacx.dicta.BubbleSnipRevealTest
+m-snip12-snip-button-always-visible	app/src/main/java/dev/zacx/dicta/BubbleService.kt	snip?.visibility = if (show) View.VISIBLE else View.GONE	snip?.visibility = View.VISIBLE	dev.zacx.dicta.BubbleSnipRevealTest
+m-snip13-snip-arm-guards-the-wrong-state	app/src/main/java/dev/zacx/dicta/BubbleDictation.kt	if (state == State.IDLE) listOf(Effect.OpenSnipPicker) else emptyList()	if (state == State.RECORDING) listOf(Effect.OpenSnipPicker) else emptyList()	dev.zacx.dicta.BubbleSnipStateTest
+m-snip14-picker-affinity-drifts-to-the-cards	app/src/main/java/dev/zacx/dicta/SnipLaunch.kt	"dev.zacx.dicta.snip"	"dev.zacx.dicta.overlay"	dev.zacx.dicta.SnipSeamLedgerTest
+m-snip15-picker-launch-loses-new-task	app/src/main/java/dev/zacx/dicta/SnipLaunch.kt	.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)	.addFlags(0)	dev.zacx.dicta.BubbleSnipRevealTest
+m-snip16-import-never-persists	app/src/main/java/dev/zacx/dicta/SettingsActivity.kt	store.save(parsed, System.currentTimeMillis())	Unit	dev.zacx.dicta.SettingsSnippetImportTest
+m-snip17-import-failure-loses-the-reason	app/src/main/java/dev/zacx/dicta/SettingsActivity.kt	(t as? SnipCatalog.Invalid)?.reason ?: t.javaClass.simpleName	t.javaClass.simpleName	dev.zacx.dicta.SettingsSnippetImportTest
+m-snip18-picker-copies-the-body-verbatim	app/src/main/java/dev/zacx/dicta/SnipPickerActivity.kt	SnipClip.resolve(snippet.body, currentClipText(clipboard))	snippet.body	dev.zacx.dicta.SnipPickerActivityTest
