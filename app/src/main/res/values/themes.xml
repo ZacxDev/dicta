@@ -67,7 +67,17 @@
         theme ("style attribute 'android:attr/windowFixedWidthMinor' is
         private"). windowMinWidth* can only widen. So the cap is applied in code
         via Window.setLayout(), from @fraction/overlay_width_fraction. See
-        DictateActivity.applyFloatingWindowSize().
+        FloatingWindow.applySize().
+
+      * 🔴 THE CAP IS NOT AUTOMATIC FOR AN ACTIVITY THAT WEARS THIS THEME, and
+        that is the trap this theme carries. The attributes above make the
+        window floating; NOTHING here makes it wide. SnipPickerActivity shipped
+        with this theme and no sizing call, and rendered at about a fifth of the
+        screen width on a real Galaxy S21. Every activity declaring
+        android:theme="@style/Theme.Dicta.Overlay" must call
+        FloatingWindow.applySize(this) from onCreate, after setContentView;
+        FloatingOverlaySeamLedgerTest derives that set from the manifest and
+        fails when it grows or shrinks.
 
       * windowAnimationStyle is deliberately NOT overridden: it already resolves
         to Animation.Material.Dialog through the parent (measured: 0x10302ff),

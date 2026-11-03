@@ -56,3 +56,23 @@ m-snip15-picker-launch-loses-new-task	app/src/main/java/dev/zacx/dicta/SnipLaunc
 m-snip16-import-never-persists	app/src/main/java/dev/zacx/dicta/SettingsActivity.kt	store.save(parsed, System.currentTimeMillis())	Unit	dev.zacx.dicta.SettingsSnippetImportTest
 m-snip17-import-failure-loses-the-reason	app/src/main/java/dev/zacx/dicta/SettingsActivity.kt	(t as? SnipCatalog.Invalid)?.reason ?: t.javaClass.simpleName	t.javaClass.simpleName	dev.zacx.dicta.SettingsSnippetImportTest
 m-snip18-picker-copies-the-body-verbatim	app/src/main/java/dev/zacx/dicta/SnipPickerActivity.kt	SnipClip.resolve(snippet.body, currentClipText(clipboard))	snippet.body	dev.zacx.dicta.SnipPickerActivityTest
+#
+# ---------------------------------------------------------------------------
+# The floating-window WIDTH defect (issue #38 follow-up)
+# ---------------------------------------------------------------------------
+# 🔴 These rows differ in kind from everything above. The width bug is a REAL
+# regression, reproducible at 4a0ad3e, so FloatingWindowSizeTest's picker cases
+# were watched FAILING on pre-change code — the matrix is in the pull request.
+# These mutants exist for the part red-at-base cannot establish: that each NEW
+# guard is killed by its OWN assertion rather than by whatever else noticed.
+#
+# m-width04a / m-width04b are the SAME mutation under two filters on purpose.
+# The seam ledger and the behavioural test make different claims about it, and
+# one filter would credit the kill to only one of them.
+m-width01-floating-window-never-sized	app/src/main/java/dev/zacx/dicta/FloatingWindow.kt	activity.window.setLayout(width, WindowManager.LayoutParams.WRAP_CONTENT)	Unit	dev.zacx.dicta.FloatingWindowSizeTest
+m-width02-fraction-ignored-full-width	app/src/main/java/dev/zacx/dicta/FloatingWindow.kt	(metrics.widthPixels * fraction).toInt()	(metrics.widthPixels * 1f).toInt()	dev.zacx.dicta.FloatingWindowSizeTest
+m-width03-window-not-centred	app/src/main/java/dev/zacx/dicta/FloatingWindow.kt	activity.window.setGravity(Gravity.CENTER)	activity.window.setGravity(Gravity.TOP)	dev.zacx.dicta.FloatingWindowSizeTest
+m-width04a-picker-loses-the-sizing-call	app/src/main/java/dev/zacx/dicta/SnipPickerActivity.kt	FloatingWindow.applySize(this)	Unit	dev.zacx.dicta.FloatingOverlaySeamLedgerTest
+m-width04b-picker-loses-the-sizing-call	app/src/main/java/dev/zacx/dicta/SnipPickerActivity.kt	FloatingWindow.applySize(this)	Unit	dev.zacx.dicta.FloatingWindowSizeTest
+m-width05-card-loses-the-sizing-call	app/src/main/java/dev/zacx/dicta/DictateActivity.kt	FloatingWindow.applySize(this)	Unit	dev.zacx.dicta.FloatingWindowSizeTest
+m-width06-window-height-pinned-instead-of-content-driven	app/src/main/java/dev/zacx/dicta/FloatingWindow.kt	WindowManager.LayoutParams.WRAP_CONTENT	100	dev.zacx.dicta.FloatingWindowSizeTest

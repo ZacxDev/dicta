@@ -14,6 +14,17 @@
   (NOT a RecyclerView — the app has zero runtime dependencies by decision; see
   app/build.gradle.kts).
 
+  🔴 EVERY `match_parent` BELOW MATCHES THE WINDOW, NOT THE SCREEN, and the
+  window is only screen-sized because CODE makes it so. @style/Theme.Dicta.Overlay
+  is a floating dialog theme, so this window is WRAP_CONTENT in both axes until
+  SnipPickerActivity.onCreate calls FloatingWindow.applySize(this) — which sets
+  the width to @fraction/overlay_width_fraction of the display. Without that
+  call the window's width is its widest wrap_content child, i.e. the SNIPPETS
+  heading TextView directly below, and the whole card renders about a fifth of
+  the screen wide with every label truncated to ~6 characters. That is not a
+  hypothetical: it is what 0.4.0 did on a Galaxy S21. A `match_parent` here is
+  therefore a claim about a window that something else has to size.
+
   🔴 The list's height is a FIXED 320dp, and that is what the file says
   because it is what the file does. It is deliberately NOT wrap_content:
   wrap_content asks a ListView to measure every row, which both defeats
@@ -22,12 +33,19 @@
 
   It is also not `0dp` + layout_weight="1", which an earlier version of this
   comment described and the file never implemented. The weighted design needs a
-  parent with a bounded height to divide up, and this root is wrap_content
-  inside @style/Theme.Dicta.Overlay — a FLOATING dialog window that sizes
-  itself to its content. A weighted child in a wrap_content parent resolves to
-  zero height, i.e. an invisible list. Making the weighted version work means
-  choosing a window height, and there is no device in this loop to measure one
-  on; a fixed cap is the honest version of the same bound.
+  parent with a bounded HEIGHT to divide up, and this root's height is
+  wrap_content inside a floating dialog window whose height stays content-driven
+  (FloatingWindow.applySize caps the WIDTH only, and passes WRAP_CONTENT for the
+  height deliberately). A weighted child in a wrap_content parent resolves to
+  zero height, i.e. an invisible list.
+
+  🔴 The earlier version of this paragraph argued the fixed height partly on
+  "there is no device in this loop to measure one on". THAT IS NO LONGER TRUE —
+  0.4.0 was driven on a Galaxy S21 and the list was confirmed to scroll
+  correctly at 320dp — so the fixed cap is kept on its own merits (a bounded
+  height the ListView can recycle against) and not for want of a device. Nobody
+  has measured a better number; if you change it, measure it on hardware and say
+  which.
 
   The cost, stated: at a large font scale 320dp shows fewer rows rather than
   growing. The list scrolls, so nothing is unreachable.

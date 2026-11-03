@@ -103,6 +103,22 @@ class SnipPickerActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_snip_picker)
+        // 🔴 THE DEFECT THIS CLOSES, measured on a Galaxy S21 running 0.4.0:
+        // without this call the picker rendered at roughly a FIFTH of the
+        // screen width and every row label truncated to about six characters
+        // ("Greet…", "SSH r…"). @style/Theme.Dicta.Overlay is a FLOATING
+        // window, so `match_parent` in activity_snip_picker.xml matches the
+        // WINDOW, and the window's own width comes from its widest
+        // `wrap_content` child — here the one-word SNIPPETS heading.
+        //
+        // Must run AFTER setContentView: PhoneWindow.generateLayout() resets a
+        // floating window to WRAP_CONTENT x WRAP_CONTENT while inflating.
+        //
+        // Through FloatingWindow rather than a copy of DictateActivity's old
+        // applyFloatingWindowSize(): one owner, so the third floating surface
+        // cannot repeat this. FloatingOverlaySeamLedgerTest derives who must
+        // call it from the manifest's android:theme.
+        FloatingWindow.applySize(this)
         search = findViewById(R.id.snip_search)
         list = findViewById(R.id.snip_list)
         empty = findViewById(R.id.snip_empty)
