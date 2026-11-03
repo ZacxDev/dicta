@@ -2,6 +2,7 @@ package dev.zacx.dicta
 
 import android.app.Activity
 import android.app.AlertDialog
+import android.content.Intent
 import android.os.Bundle
 import android.widget.ArrayAdapter
 import android.widget.Button
@@ -10,6 +11,7 @@ import android.widget.EditText
 import android.widget.Spinner
 import android.widget.TextView
 import android.widget.Toast
+import java.io.IOException
 import java.util.Locale
 import java.util.concurrent.Executors
 
@@ -38,6 +40,7 @@ class SettingsActivity : Activity() {
     private lateinit var remoteToggle: CheckBox
     private lateinit var languageSpinner: Spinner
     private lateinit var historyUsage: TextView
+    private lateinit var snippetsState: TextView
 
     /**
      * History, read here only through [DictationHistoryStore.usage] and
@@ -46,6 +49,18 @@ class SettingsActivity : Activity() {
      * `activity_settings.xml`.
      */
     private lateinit var history: DictationHistoryStore
+
+    /**
+     * The snip catalog (issue #38). This screen is the only **writer**; the
+     * picker is the only reader.
+     *
+     * `internal` so a test can point it at a temp directory: the production
+     * store roots itself under `noBackupFilesDir`, which is process-wide under
+     * Robolectric, so a test that used it would be at the mercy of whatever the
+     * previous test left behind. Assigned before `onCreate` when a test wants
+     * that; `onCreate` only fills it in if it is still unset.
+     */
+    internal var snippets: SnipStore? = null
 
     /**
      * The last usage actually rendered, so the delete confirmation can name the
@@ -85,7 +100,9 @@ class SettingsActivity : Activity() {
         remoteToggle = findViewById(R.id.stt_remote_enabled)
         languageSpinner = findViewById(R.id.stt_language)
         historyUsage = findViewById(R.id.stt_history_usage)
+        snippetsState = findViewById(R.id.stt_snippets_state)
         history = DictationHistoryStore(this)
+        if (snippets == null) snippets = SnipStore(this)
 
         urlField.setText(settings.baseUrl)
         remoteToggle.isChecked = settings.remoteEnabled
@@ -96,8 +113,11 @@ class SettingsActivity : Activity() {
         findViewById<Button>(R.id.stt_clear_token).setOnClickListener { clearToken() }
         findViewById<Button>(R.id.stt_test).setOnClickListener { testConnection() }
         findViewById<Button>(R.id.stt_clear_history).setOnClickListener { clearHistory() }
+        findViewById<Button>(R.id.stt_import_snippets)
+            .setOnClickListener { importSnippets() }
 
         refreshHistoryUsage()
+        refreshSnippetsState()
     }
 
     override fun onDestroy() {
@@ -369,6 +389,184 @@ class SettingsActivity : Activity() {
         }
     }
 
+    // --- snippets (issue #38) -----------------------------------------------
+
+    /**
+     * Starts the document picker for a snip `snippets.json`.
+     *
+     * ## 🔴 An in-app picker, and NO new exported surface
+     *
+     * The operator's decision over the issue's share-sheet wording:
+     * `ZacxDev/dicta` is a public app, and an `<intent-filter>` that accepts a
+     * catalog is an entry point **any installed app can invoke**. An
+     * `ACTION_OPEN_DOCUMENT` started from a button on this screen can be
+     * reached only by the person holding the phone.
+     *
+     * ## 🔴 Hand-rolled `startActivityForResult`, deliberately
+     *
+     * `ActivityResultContracts` is androidx, and this app's runtime
+     * `dependencies {}` block is empty by explicit, re-measured decision (see
+     * `app/build.gradle.kts`). Importing androidx.activity to save six lines
+     * would put a dependency tree in the shipped dex for a button.
+     *
+     * ## 🔴 The type filter is a HINT; the CONTENT is what is validated
+     *
+     * `type` is `application/json` with [IMPORT_MIME_TYPES] alongside it,
+     * because a document provider's declared type is a claim about a file
+     * rather than a fact — a `snippets.json` served as `text/plain`, or as
+     * `application/octet-stream`, is still the file the user meant. The
+     * fallback entry keeps such a provider's files selectable; [SnipCatalog]
+     * then decides, from the bytes, whether this is a catalog. Nothing here
+     * looks at the file's NAME.
+     */
+    private fun importSnippets() {
+        val picker = Intent(Intent.ACTION_OPEN_DOCUMENT)
+            .addCategory(Intent.CATEGORY_OPENABLE)
+            .setType(IMPORT_MIME)
+            .putExtra(Intent.EXTRA_MIME_TYPES, IMPORT_MIME_TYPES)
+        // A device with no documents provider at all raises
+        // ActivityNotFoundException. Saying so beats a crash on a settings
+        // screen, and beats a silent no-op even more.
+        if (!runCatching { startActivityForResult(picker, REQUEST_IMPORT_SNIPPETS) }.isSuccess) {
+            snippetsState.text = getString(R.string.stt_snippets_no_picker)
+        }
+    }
+
+    /**
+     * Reads the chosen document, validates it, and replaces the catalog.
+     *
+     * 🔴 **A refused file changes nothing.** [SnipStore.save] is reached only
+     * after [SnipCatalog.parse] has returned, so a malformed document leaves
+     * the previous catalog exactly as it was and the reason goes on screen. The
+     * alternative — clear first, then import — turns one bad file into a lost
+     * catalog, which is the shape [DictationHistoryStore] spends four
+     * paragraphs avoiding for recordings.
+     *
+     * On [worker] because it is file IO plus a parse of the whole catalog, and
+     * a `ContentResolver` read can be a network fetch behind a cloud provider's
+     * `DocumentsProvider`.
+     */
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != REQUEST_IMPORT_SNIPPETS) return
+        // A cancelled picker is not a failure and must not report one: the
+        // state line keeps saying whatever is actually stored.
+        if (resultCode != RESULT_OK) return
+        // 🔴 RESULT_OK with no URI, which is NOT a cancellation: the user went
+        // through the picker and chose something, and the provider handed back
+        // a result with no document in it. Returning silently here is the
+        // silent no-op this feature argues against everywhere else — the
+        // operator taps Import, watches nothing happen, and has no way to learn
+        // whether the file was rejected or the tap was lost. It is a read
+        // failure, so it gets the read-failure wording.
+        val uri = data?.data ?: run {
+            snippetsState.text = getString(
+                R.string.stt_snippets_import_unreadable,
+                getString(R.string.stt_snippets_import_no_file),
+            )
+            return
+        }
+        val store = snippets ?: return
+        worker.execute {
+            val outcome = runCatching {
+                val text = contentResolver.openInputStream(uri)
+                    ?.use { it.readBytes().toString(Charsets.UTF_8) }
+                    // 🔴 An IOException, NOT SnipCatalog.Invalid. A provider
+                    // that cannot open its own document says nothing about the
+                    // file's contents, and routing it through the "that file is
+                    // not a snippets.json" frame tells the operator to re-export
+                    // a file that is probably fine.
+                    ?: throw IOException("the provider returned no stream")
+                val parsed = SnipCatalog.parse(text)
+                store.save(parsed, System.currentTimeMillis())
+                parsed
+            }
+            runOnUiThread {
+                outcome.fold(
+                    onSuccess = { renderSnippets(SnipStore.Catalog(it, System.currentTimeMillis())) },
+                    onFailure = { snippetsState.text = importFailureText(it) },
+                )
+            }
+        }
+    }
+
+    /**
+     * The one place an import failure is worded — in **two** frames, because
+     * there are two different failures and they have different next steps.
+     *
+     * 🔴 A refusal must name what is actually wrong ([SnipCatalog]'s own
+     * doctrine). [SnipCatalog.Invalid] genuinely means "this is not a
+     * snippets.json", and [SnipCatalog.Invalid.reason] names which way — not an
+     * array, a row with no label, a duplicate label — all of them things the
+     * operator fixes by editing or re-exporting the file.
+     *
+     * Everything else is a READ failure over a file that may be perfectly
+     * valid: a `SecurityException` from a URI whose grant was revoked, an
+     * `IOException`, a timeout from a cloud provider's `DocumentsProvider`. One
+     * `runCatching` wraps the whole read, so these arrive here by the same
+     * path — and wording them as "that file is not a snippets.json" sends the
+     * operator off to re-export a good file when the right action is to try
+     * again. They get their own frame; the exception's class name is the honest
+     * stand-in for a reason, since there is none to quote.
+     */
+    private fun importFailureText(t: Throwable): String {
+        val invalid = t as? SnipCatalog.Invalid
+        return if (invalid != null) {
+            getString(R.string.stt_snippets_import_failed, invalid.reason)
+        } else {
+            getString(R.string.stt_snippets_import_unreadable, t.javaClass.simpleName)
+        }
+    }
+
+    /** Reads the stored catalog on [worker] and renders it. See [refreshHistoryUsage]. */
+    private fun refreshSnippetsState() {
+        val store = snippets ?: return
+        worker.execute {
+            val catalog = runCatching { store.catalog() }.getOrNull()
+            runOnUiThread { renderSnippets(catalog) }
+        }
+    }
+
+    /**
+     * The one place the snippets line is written.
+     *
+     * 🔴 `null` renders the **named** empty state, never a blank line and
+     * never "0 snippets": "nothing imported yet" tells the operator what to do
+     * next, and it is the same reasoning the picker's own three distinct empty
+     * strings rest on. A silently empty surface is indistinguishable from a
+     * broken feature.
+     */
+    private fun renderSnippets(catalog: SnipStore.Catalog?) {
+        snippetsState.text = when {
+            catalog == null || catalog.snippets.isEmpty() ->
+                getString(R.string.stt_snippets_none)
+            else -> resources.getQuantityString(
+                R.plurals.stt_snippets_count,
+                catalog.snippets.size,
+                catalog.snippets.size,
+                importedAtText(catalog.importedAtMs),
+            )
+        }
+    }
+
+    /**
+     * When the catalog was imported.
+     *
+     * Formatted in `resources.configuration.locales[0]` for [usageText]'s
+     * measured reason: the count beside it is formatted by
+     * `getQuantityString`, which uses the resource configuration's locale, and
+     * the two disagreeing under a per-app locale produces one sentence
+     * carrying two locales' conventions.
+     */
+    private fun importedAtText(importedAtMs: Long): String =
+        java.text.DateFormat
+            .getDateTimeInstance(
+                java.text.DateFormat.SHORT,
+                java.text.DateFormat.SHORT,
+                resources.configuration.locales[0],
+            )
+            .format(java.util.Date(importedAtMs))
+
     /**
      * Probes `GET /healthz` against the URL currently in the field.
      *
@@ -398,5 +596,33 @@ class SettingsActivity : Activity() {
     private companion object {
         /** Mebibytes, per the note on [usageText]. */
         const val HISTORY_BYTES_PER_MB = 1024.0 * 1024.0
+
+        /**
+         * `startActivityForResult` request code for the snippets import.
+         *
+         * Hand-rolled rather than `ActivityResultContracts` — see
+         * [importSnippets] for why androidx is not an option here. It is the
+         * only request code this activity uses, and [onActivityResult] branches
+         * on it rather than assuming so.
+         */
+        const val REQUEST_IMPORT_SNIPPETS = 1001
+
+        /** The type a `snippets.json` ought to be served as. */
+        const val IMPORT_MIME = "application/json"
+
+        /**
+         * The types a document provider is allowed to be wrong about.
+         *
+         * 🔴 Not permissiveness: the content is validated either way (see
+         * [importSnippets]). This only decides which files the picker lets the
+         * user SELECT, and a provider that serves a `.json` as `text/plain` or
+         * `application/octet-stream` would otherwise grey out the very file
+         * they came to choose.
+         */
+        val IMPORT_MIME_TYPES = arrayOf(
+            IMPORT_MIME,
+            "text/plain",
+            "application/octet-stream",
+        )
     }
 }

@@ -142,6 +142,35 @@ class BubbleDictation(
         object TouchedOutside : Event
 
         /**
+         * The **snip** button inside the long-press reveal (issue #38).
+         *
+         * 🔴 Routed through the machine rather than wired straight from the
+         * view to `startActivity`, for the reason [Event.TouchedOutside]
+         * records: `on()` already prefixes [Effect.HideHistory] to every event
+         * that is not a long press, so "the reveal goes away, then the picker
+         * opens" is expressed by adding an event with a one-effect arm instead
+         * of by a second dismissal path in the shell. A view that called
+         * `startActivity` itself would leave the chips floating behind the
+         * picker, and would need its own copy of the hide predicate — the
+         * N-sites duplicate this class exists to avoid.
+         *
+         * 🔴 It can reach **no** microphone path. The arm emits
+         * [Effect.OpenSnipPicker] and nothing else: no [Effect.StartRecording],
+         * no [Event.BubbleTapped], no session. Opening the picker is not a
+         * dictation start, which is why `StartSurfaceLedgerTest`'s ledger does
+         * not grow for it — issue #38 says so explicitly, and
+         * `SnipSeamLedgerTest` asserts it of the source rather than trusting
+         * this sentence.
+         *
+         * Reachable only from IDLE in practice, because the reveal that carries
+         * the button only opens in IDLE ([onLongPress]) — but the arm refuses
+         * the other two states anyway rather than relying on that, since "the
+         * only caller cannot reach it" is a claim about today's wiring and this
+         * is a claim about the machine.
+         */
+        object SnipTapped : Event
+
+        /**
          * Capture could not start at all, and [failure] says why — the shell
          * knows which of its own steps refused, and the user needs to be told
          * which.
@@ -230,6 +259,21 @@ class BubbleDictation(
          * would pass with the row still on screen.
          */
         object HideHistory : Effect
+
+        /**
+         * Open the snippet picker (issue #38).
+         *
+         * 🔴 **Not** a recording effect and not reached from any tap path. The
+         * shell carries it out by starting [SnipPickerActivity] through
+         * [SnipLaunch]; it opens no microphone, holds no session and asks for
+         * no permission.
+         *
+         * 🔴 Emitted **after** the [HideHistory] that `on()` prefixes, so the
+         * reveal is down before the picker is on screen. Ordering is the
+         * assertion — membership alone would pass with a row of chips left
+         * floating over the picker's own window.
+         */
+        object OpenSnipPicker : Effect
     }
 
     var state: State = State.IDLE
@@ -272,6 +316,7 @@ class BubbleDictation(
         return dismiss + when (event) {
             is Event.BubbleTapped -> onTap(event.micGranted)
             Event.CancelTapped -> onCancel()
+            Event.SnipTapped -> onSnipTapped()
             is Event.CaptureFailed -> onCaptureFailed(event.failure)
             Event.MaxDurationReached -> onMaxDuration()
             Event.TranscriptSettled -> toIdle()
@@ -307,6 +352,20 @@ class BubbleDictation(
     } else {
         emptyList()
     }
+
+    /**
+     * The snip button, honoured **only while idle** — and the state is left
+     * exactly as it was in all three cases.
+     *
+     * The two refusals are [onLongPress]'s, inherited rather than re-argued:
+     * the button only exists inside the reveal, the reveal only opens in IDLE,
+     * so a RECORDING or TRANSCRIBING machine seeing this event means something
+     * has gone wrong upstream and the right answer is to do nothing rather than
+     * to open a window over a live recording. See [Event.SnipTapped] for why
+     * the guard is here even though no caller can reach past it today.
+     */
+    private fun onSnipTapped(): List<Effect> =
+        if (state == State.IDLE) listOf(Effect.OpenSnipPicker) else emptyList()
 
     private fun onTap(micGranted: Boolean): List<Effect> = when (state) {
         State.IDLE -> {

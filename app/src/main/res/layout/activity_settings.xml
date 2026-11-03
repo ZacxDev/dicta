@@ -422,5 +422,61 @@
             android:textColor="@color/dicta_error"
             android:contentDescription="@string/stt_clear_history_desc"
             android:text="@string/stt_clear_history" />
+
+        <!-- Snippets (issue #38): the snip catalog the bubble's long-press
+             picker searches.
+
+             🔴 Its own group rather than a row inside Connection or History,
+             on the same reasoning the History comment above gives: those three
+             are all about one subject (which service, which language, which
+             token) and @id/stt_status is that cluster's result line. A snippet
+             catalog is a different subject, so it gets its own heading, its own
+             state line and its own action.
+
+             🔴 The import is an in-app ACTION_OPEN_DOCUMENT and there is NO
+             <intent-filter> anywhere in this change — see
+             @string/stt_section_snippets' comment and AndroidManifest.xml. The
+             state line is read from disk on a worker thread, so its
+             android:text is the pending string and never a stale count. -->
+        <TextView
+            style="@style/Text.Dicta.SectionHeading"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="32dp"
+            android:text="@string/stt_section_snippets" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:layout_marginTop="10dp"
+            android:background="@drawable/row_bg"
+            android:padding="14dp">
+
+            <TextView
+                android:id="@+id/stt_snippets_state"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/stt_snippets_pending"
+                android:textSize="15sp"
+                android:textColor="@color/dicta_on_surface" />
+        </LinearLayout>
+
+        <!-- Built exactly like @id/stt_save and @id/stt_test — same drawable,
+             same on-surface label, same suppressed platform animator. NOT
+             destructive styling: an import replaces a re-importable cache, and
+             spending the error colour on it would devalue that cue on the two
+             controls that destroy the user's own voice. -->
+        <Button
+            android:id="@+id/stt_import_snippets"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:layout_marginTop="8dp"
+            android:background="@drawable/outline_button_bg"
+            android:stateListAnimator="@null"
+            android:textAllCaps="false"
+            android:textColor="@color/dicta_on_surface"
+            android:contentDescription="@string/stt_import_snippets_desc"
+            android:text="@string/stt_import_snippets" />
     </LinearLayout>
 </ScrollView>

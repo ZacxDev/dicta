@@ -105,6 +105,33 @@ class BubbleService : Service() {
     private var cancel: ImageButton? = null
 
     /**
+     * The snip button inside the long-press reveal (issue #38).
+     *
+     * 🔴 A child of the existing window, added with `ViewGroup.addView` and
+     * **never** a second `WindowManager.addView`: an overlay window is
+     * composited into every MediaProjection frame, and
+     * [OverlayWindowLedgerTest] asserts a per-FILE count of `addView` calls for
+     * that reason. A third one fails it, correctly.
+     *
+     * 🔴 Positioned **below** the bubble, like [cancel] and unlike the chips,
+     * and that is arithmetic rather than taste. With `Gravity.TOP` the window's
+     * top edge is pinned at `y`, so a child added below the bubble needs no `y`
+     * compensation at all and cannot move the bubble — which means the reveal's
+     * existing shift arithmetic, and all of the device evidence behind it
+     * (`#17` audit round 1's F4 included), carries over unchanged. Putting it
+     * above the bubble would fold a second term into `revealBlockPx` and
+     * re-open every one of those claims for a button.
+     *
+     * What it DOES change is the window's height, so [snipBlockPx] is in
+     * [windowHeightPx] exactly as `cancelBlockPx` is — see that function.
+     *
+     * 🔴 Visibility is owned by [showReveal] and by nothing else. This is not
+     * a new always-on surface: it is visible while the reveal is up and gone
+     * otherwise, which is the same predicate the chips obey.
+     */
+    private var snip: ImageButton? = null
+
+    /**
      * The box holding the bubble and its pulse ring.
      *
      * Kept as a field for one reason: both the cancel button and the history
@@ -207,6 +234,19 @@ class BubbleService : Service() {
     private var bubbleSizePx = 0
     private var haloSizePx = 0
     private var cancelBlockPx = 0
+
+    /**
+     * How much taller the window is while the snip button is shown — the
+     * button plus the gap above it.
+     *
+     * 🔴 Feeds [BubbleChrome.clampY] through [windowHeightPx]. Leaving it out
+     * is the mutation that re-opens the unreachable-control defect for the
+     * bottom-most control: long-press with the bubble near the bottom edge and
+     * the snip button lands off-screen, visible and untappable. That is the
+     * same failure `cancelBlockPx` and `revealBlockPx` are each in the clamp
+     * for, arrived at by a third route.
+     */
+    private var snipBlockPx = 0
 
     /**
      * How much taller the window is while the history row is shown — the sum
@@ -449,6 +489,7 @@ class BubbleService : Service() {
         bubbleSizePx = (BUBBLE_DP * density).toInt()
         haloSizePx = (HALO_DP * density).toInt()
         cancelBlockPx = ((CANCEL_DP + CANCEL_GAP_DP) * density).toInt()
+        snipBlockPx = ((SNIP_DP + SNIP_GAP_DP) * density).toInt()
         revealWidthPx = (REVEAL_WIDTH_DP * density).toInt()
         chipBlockPx = ((CHIP_DP + CHIP_GAP_DP) * density).toInt()
         revealRowMarginPx = (CHIP_GAP_DP * density).toInt()
@@ -528,6 +569,37 @@ class BubbleService : Service() {
             }
         }
 
+        // The reveal's second affordance (issue #38). Built mirroring `abort`
+        // above for size and style — same bubble_bg, same on-surface tint, same
+        // contentDescription-and-tooltip pairing — because it is the same KIND
+        // of thing: a small round control hanging off the bubble.
+        //
+        // 🔴 No DragListener, for `abort`'s reason: the bubble is the drag
+        // handle, and a drag that started here would open a picker when the
+        // finger lifted.
+        //
+        // 🔴 The click goes through the machine, never straight to
+        // startActivity — see BubbleDictation.Event.SnipTapped. That is what
+        // puts the reveal away first, in the one place the hide predicate
+        // lives.
+        val snipButton = ImageButton(this).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                (SNIP_DP * density).toInt(),
+                (SNIP_DP * density).toInt(),
+            ).apply { topMargin = (SNIP_GAP_DP * density).toInt() }
+            setImageResource(R.drawable.ic_snip)
+            imageTintList = android.content.res.ColorStateList
+                .valueOf(getColor(R.color.dicta_on_surface))
+            background = getDrawable(R.drawable.bubble_bg)
+            val snipLabel = getString(R.string.bubble_snip)
+            contentDescription = snipLabel
+            tooltipText = snipLabel
+            visibility = View.GONE
+            setOnClickListener {
+                applyEffects(machine.on(BubbleDictation.Event.SnipTapped))
+            }
+        }
+
         // 🔴 A VERTICAL stack of chips, not the horizontal strip the design
         // sketch proposed. Four chips side by side, each carrying a relative
         // timestamp plus the opening words of a transcript, is ~600 dp of row
@@ -577,8 +649,16 @@ class BubbleService : Service() {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
             // The reveal sits ABOVE the bubble at index 0; see showReveal.
+            // The snip button sits immediately BELOW the bubble — see the
+            // `snip` field for why below rather than above, and note that
+            // showCancel's "below" arm appends at childCount, so cancel lands
+            // after it rather than between it and the bubble. The two are never
+            // visible at once (cancel is RECORDING-only, snip is reveal-only,
+            // and the reveal opens in IDLE), so their order relative to each
+            // other is bookkeeping, not layout.
             addView(recents)
             addView(bubbleBox)
+            addView(snipButton)
             addView(abort)
         }
 
@@ -603,6 +683,7 @@ class BubbleService : Service() {
         root = container
         ring = pulse
         cancel = abort
+        snip = snipButton
         bubble = button
         halo = bubbleBox
         historyRow = recents
@@ -717,6 +798,7 @@ class BubbleService : Service() {
         bubble = null
         ring = null
         cancel = null
+        snip = null
         halo = null
         historyRow = null
         // shutdownNow, like SettingsActivity: a history read in flight is
@@ -795,6 +877,12 @@ class BubbleService : Service() {
                 BubbleDictation.Effect.IgnoredAsTooFast -> Unit
                 BubbleDictation.Effect.RevealHistory -> revealHistory()
                 BubbleDictation.Effect.HideHistory -> showReveal(false)
+                // 🔴 Issue #38. Not a recording path: this starts an activity
+                // that reads the clipboard and writes it, and nothing else.
+                // The HideHistory the machine prefixes has already put the
+                // reveal away by the time this runs — ordering the machine
+                // owns, not this loop.
+                BubbleDictation.Effect.OpenSnipPicker -> openSnipPicker()
             }
         }
         // 🔴 `state == IDLE ⇒ session == null` is relied on by startRecording()
@@ -966,6 +1054,27 @@ class BubbleService : Service() {
 
     private fun openCard() {
         runCatching { startActivity(DictateLaunch.transcribingIntent(this)) }
+    }
+
+    /**
+     * Opens the snippet picker (issue #38).
+     *
+     * 🔴 Through [SnipLaunch], never a hand-built `Intent` — the same mechanism
+     * as [requestMicPermission] and [openHistoryItem] above, and the same bug
+     * (#11) if it is skipped: a floating activity must land in its OWN task or
+     * the translucent window renders over Dicta's own UI instead of over the
+     * app the user is in. `SnipSeamLedgerTest`'s construction ledger is what
+     * makes that a red test rather than a code review.
+     *
+     * 🔴 Deliberately NOT through [DictateLaunch]. That object builds
+     * `DictateActivity` intents, a plain one of which auto-starts a capture —
+     * which is why `DictateLaunchTest` keeps a one-file ledger of who may
+     * construct them and `StartSurfaceLedgerTest` counts the plain ones. The
+     * picker is a different activity with a different affinity and no
+     * microphone, so it gets its own launcher and neither ledger grows.
+     */
+    private fun openSnipPicker() {
+        runCatching { startActivity(SnipLaunch.intent(this)) }
     }
 
     // --- what the session says back -----------------------------------------
@@ -1415,6 +1524,14 @@ class BubbleService : Service() {
         // never execute in exactly the case it exists for.
         if (!show) revealGeneration++
         if ((row.visibility == View.VISIBLE) == show) return
+        // 🔴 The snip button's visibility is tied to the row's HERE, in the one
+        // function that owns "is the reveal up", and tracked in both arms. A
+        // second predicate elsewhere — renderState, the click handler — is how
+        // the button becomes an always-on surface, which is the one thing issue
+        // #38 and this repo's "everything the user is shown derives from one
+        // predicate" discipline both forbid. It takes no `y` compensation: it
+        // is below the bubble. See the `snip` field.
+        snip?.visibility = if (show) View.VISIBLE else View.GONE
         if (show) {
             row.visibility = View.VISIBLE
             params.y -= revealBlockPx
@@ -1519,6 +1636,12 @@ class BubbleService : Service() {
     private fun windowHeightPx(): Int =
         haloSizePx +
             (if (cancel?.visibility == View.VISIBLE) cancelBlockPx else 0) +
+            // 🔴 The snip button grows the window DOWNWARD (it is below the
+            // bubble), so unlike `revealBlockPx` it never shifts `y` — but it
+            // is every bit as much part of the height clampY has to know
+            // about. Omitting it is the mutation that leaves the bottom-most
+            // control off-screen on a bubble parked near the bottom edge.
+            (if (snip?.visibility == View.VISIBLE) snipBlockPx else 0) +
             (if (historyRow?.visibility == View.VISIBLE) revealBlockPx else 0)
 
     /** As [windowHeightPx]: the row is wider than the bubble when shown. */
@@ -2187,6 +2310,18 @@ class BubbleService : Service() {
 
         private const val CANCEL_DP = 44
         private const val CANCEL_GAP_DP = 6
+
+        /**
+         * The snip button's size and the gap above it — the cancel button's
+         * numbers, on purpose.
+         *
+         * 44 dp is this project's tap-target floor (it is `CANCEL_DP` and
+         * `CHIP_DP` as well), and the two controls hang off the bubble in the
+         * same place, so a different size would read as a different kind of
+         * thing. Their sum is `snipBlockPx`, which is in the clamp.
+         */
+        private const val SNIP_DP = 44
+        private const val SNIP_GAP_DP = 6
 
         /**
          * How many chips are **on screen at once**. The reveal SCROLLS, so this

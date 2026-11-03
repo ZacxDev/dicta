@@ -108,6 +108,12 @@ class SettingsThemingTest {
         "stt_test" to "@drawable/outline_button_bg",
         "stt_clear_token" to "@drawable/destructive_button_bg",
         "stt_clear_history" to "@drawable/destructive_button_bg",
+        // Issue #38's import button. Outline, not destructive: an import
+        // replaces a re-importable cache, and spending the error colour on it
+        // would devalue that cue on the two controls that destroy the user's
+        // own voice. The ledger GREW deliberately, which is exactly what its
+        // failure message asks a new control to do.
+        "stt_import_snippets" to "@drawable/outline_button_bg",
     )
 
     /**
@@ -127,6 +133,10 @@ class SettingsThemingTest {
         R.string.stt_section_language,
         R.string.stt_section_connection,
         R.string.stt_section_history,
+        // Issue #38's group. Added here rather than left out: the whole point
+        // of this list is that the rule is a property of EVERY group, so a new
+        // heading that is not in it is a heading nothing checks.
+        R.string.stt_section_snippets,
     )
 
     private val controlTags = setOf("Button", "Spinner", "CheckBox", "EditText")
@@ -287,9 +297,10 @@ class SettingsThemingTest {
         // Positive control: a zero here would make the loop vacuous and
         // indistinguishable from a tree with no text-bearing controls at all.
         assertEquals(
-            "expected to examine the checkbox, both fields and both outlined " +
-                "buttons; examined $examined",
-            5,
+            "expected to examine the checkbox, both fields and all THREE " +
+                "outlined buttons (Save, Test, Import snippets); examined " +
+                "$examined",
+            6,
             examined.size
         )
     }
@@ -525,10 +536,13 @@ class SettingsThemingTest {
         val buttons = descendants(inflate())
             .filterIsInstance<Button>()
             .filter { it !is android.widget.CompoundButton }
+        // 🔴 Five since issue #38 added @id/stt_import_snippets. RE-DERIVED
+        // from what the screen holds, not loosened: the four are Save, Test,
+        // Clear token and Delete all history, and the fifth is the import.
         assertEquals(
-            "the screen no longer has the four buttons this guard was written " +
+            "the screen no longer has the five buttons this guard was written " +
                 "for; re-derive it rather than loosening it",
-            4,
+            5,
             buttons.size
         )
         for (button in buttons) {
