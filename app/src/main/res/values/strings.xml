@@ -463,12 +463,9 @@
          "a snippet" at best, and is silent about search, about copying, and
          about the fact that this control does NOT paste into the recording.
 
-         🔴 THE OLD JUSTIFICATION HERE WAS "because the glyph is a clipboard",
-         and it is no longer true — @drawable/ic_snip is braces now, for the
-         reasons its own comment records (the clipboard was both wrong about
-         what the button does and near-identical to @drawable/ic_copy). The
-         conclusion survives the correction: the string still has to say what
-         tapping does. -->
+         🔴 Do not re-justify this wording from the glyph — it was once argued
+         "because the glyph is a clipboard", which @drawable/ic_snip no longer
+         is. The string says what tapping does whatever the icon shows. -->
 
     <string name="bubble_snip">Snippets — search and copy one to the clipboard</string>
 

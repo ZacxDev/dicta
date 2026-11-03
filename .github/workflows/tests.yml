@@ -36,18 +36,19 @@ jobs:
       # measured nothing is worse than no gate — so the count is asserted, not
       # inferred from the task's exit status.
       #
-      # BASELINE: 718 against a suite of 826 tests / 78 classes, read from the
+      # BASELINE: 717 against a suite of 825 tests / 78 classes, read from the
       # JUnit XML of a full run on `fix/snip-picker-width` — the floating-window
-      # width fix for issue #38's snippet picker. It adds eleven tests and one
+      # width fix for issue #38's snippet picker. It adds ten tests and one
       # class: six in the new FloatingOverlaySeamLedgerTest (the theme-derived
-      # ledger of floating overlay activities) and five in FloatingWindowSizeTest
-      # (four picker width cases plus the control on the expected widths), less
-      # none removed. 826/78 was measured directly (78 TEST-*.xml files summing
-      # to tests=826 failures=0 errors=0 skipped=0), agrees with
-      # scripts/assert-tests-ran.py's own TOTAL line on the same run, and was
-      # additionally reconciled PER CLASS against TestCountFloorTest's source
-      # counter — 78 classes, zero mismatches, both totals 826.
-      # 826 * 500 / 575 = 718.26 -> 718, which is 13.08% slack.
+      # ledger of floating overlay activities) and four picker width cases in
+      # FloatingWindowSizeTest, less one DELETED — round 0's D1,
+      # theExpectedWidthsCannotBeHitByAccident, which rebuilt its expectation
+      # from its own copied literals and so could not fail; the deletion note in
+      # that file says why assertCappedAt already covers it. 825/78 was measured
+      # directly (78 TEST-*.xml files summing to tests=825 failures=0 errors=0
+      # skipped=0) and agrees with scripts/assert-tests-ran.py's own TOTAL line
+      # on the same run.
+      # 825 * 500 / 575 = 717.39 -> 717, which is 13.09% slack.
       #
       # 🔴 COMMIT COUNTED ON, since a branch is not a tree: b127185, the second
       # of the branch's two code commits and the tree the full run above was
@@ -139,8 +140,8 @@ jobs:
       # 🔴 THE HEADROOM IS THE CONSTANT, NOT THE FLOOR — re-derive it, do not
       # pick a round number:
       #     floor = floor(current_total * 500 / 575)      # 0.86957, 13.04% slack
-      # 826 * 500 / 575 = 718.26 -> 718, which is 13.08% slack.
-      # (Previous entries: 815 * 500 / 575 = 708.69 -> 708, 13.13% slack;
+      # 825 * 500 / 575 = 717.39 -> 717, which is 13.09% slack.
+      # (Previous entries: 826 * 500 / 575 = 718.26 -> 718, 13.08% slack; 815 * 500 / 575 = 708.69 -> 708, 13.13% slack;
       #  807 * 500 / 575 = 701.7 -> 701, 13.14% slack;
       #  696 * 500 / 575 = 605.22 -> 605, 13.07% slack;
       #  691 * 500 / 575 = 600.87 -> 600, 13.17% slack;
@@ -173,7 +174,7 @@ jobs:
       # one place.
       - name: Assert tests actually ran
         if: always()
-        run: python3 scripts/assert-tests-ran.py --min 718
+        run: python3 scripts/assert-tests-ran.py --min 717
 
       - name: Upload test reports
         if: always()

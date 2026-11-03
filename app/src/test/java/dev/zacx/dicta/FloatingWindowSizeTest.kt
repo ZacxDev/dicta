@@ -61,8 +61,10 @@ import org.robolectric.annotation.Config
  * 🔴 Every expected value is distinct from `MATCH_PARENT` (-1), from
  * `WRAP_CONTENT` (-2) and from the display width itself (1134≠1233,
  * 1700≠2742, 1120≠1600, 1280≠2560), so no assertion here can pass by
- * coincidence — [theExpectedWidthsCannotBeHitByAccident] pins that property
- * rather than leaving it to arithmetic in a comment.
+ * coincidence. That property is enforced by [assertCappedAt] itself, which
+ * asserts all three against the LIVE activity under the real qualifier — not
+ * by a separate test, and the deletion note further down says why the separate
+ * test was removed rather than kept.
  *
  * The set of activities that must appear in this file is not a judgement call:
  * `FloatingOverlaySeamLedgerTest` derives it from the manifest's
@@ -170,48 +172,30 @@ class FloatingWindowSizeTest {
         }
     }
 
-    /**
-     * 🔴 The control on the assertions above: each expected width must be a
-     * number nothing else in the computation can produce.
+    /*
+     * 🔴 DELETED (round 0, D1): `theExpectedWidthsCannotBeHitByAccident`.
      *
-     * An assertion that happened to expect `-1`, `-2` or the display width
-     * itself would pass on an unsized window — i.e. it would be green for the
-     * exact defect. This checks the four (qualifier, fraction) pairs chosen
-     * above actually avoid all three, so the choice is pinned rather than
-     * asserted in a comment.
+     * It claimed to be the control on the assertions above — that each expected
+     * width is a number nothing else in the computation can produce. It was a
+     * TAUTOLOGY: it rebuilt `expected` from its OWN copied literals
+     * (1233 × 0.92f, …) and asserted the product was not -1, -2 or the display
+     * width. For any 0 < fraction < 1 and displayWidth > 0 the product is
+     * always in [0, displayWidth), so all four assertions were arithmetically
+     * guaranteed. It read neither the `@Config` qualifiers nor
+     * `R.fraction.overlay_width_fraction`, so no change to either could ever
+     * redden it — the only reachable failure was editing its own literal list.
+     *
+     * Its kdoc said it "pins that property rather than leaving it to arithmetic
+     * in a comment". Backwards: it MOVED the arithmetic into a test that cannot
+     * fail, which reads as coverage while providing none — the worse outcome,
+     * because it stops anyone looking.
+     *
+     * Nothing is lost. `assertCappedAt` already asserts all three properties
+     * against a REAL activity under the REAL qualifier: not WRAP_CONTENT, not
+     * MATCH_PARENT, and strictly narrower than the display. Those run against
+     * live resources, so a fraction edited to 100% reddens them — which the
+     * deleted test could not see.
      */
-    @Test
-    fun theExpectedWidthsCannotBeHitByAccident() {
-        val cases = listOf(
-            Triple("phone portrait", 1233, 0.92f),
-            Triple("phone landscape", 2742, 0.62f),
-            Triple("tablet portrait", 1600, 0.70f),
-            Triple("tablet landscape", 2560, 0.50f),
-        )
-        for ((label, displayWidth, fraction) in cases) {
-            val expected = (displayWidth * fraction).toInt()
-            assertNotEquals(
-                "$label's expected width equals MATCH_PARENT, so the " +
-                    "assertion would pass on a window that was never sized",
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                expected,
-            )
-            assertNotEquals(
-                "$label's expected width equals WRAP_CONTENT, so the " +
-                    "assertion would pass on a window that was never sized",
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                expected,
-            )
-            assertNotEquals(
-                "$label's expected width equals the display width, so the " +
-                    "assertion could not tell a capped window from one that " +
-                    "clamped to the whole screen",
-                displayWidth,
-                expected,
-            )
-            assertTrue("$label's expected width is not positive", expected > 0)
-        }
-    }
 
     /**
      * The card must be inside a scroll container, or a landscape phone clips the
