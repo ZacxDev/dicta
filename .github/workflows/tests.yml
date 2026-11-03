@@ -50,11 +50,12 @@ jobs:
       # on the same run.
       # 825 * 500 / 575 = 717.39 -> 717, which is 13.09% slack.
       #
-      # 🔴 COMMIT COUNTED ON, since a branch is not a tree: b127185, the second
-      # of the branch's two code commits and the tree the full run above was
-      # made on. The commit carrying THIS comment differs from it only by this
-      # comment block and the --min argument below, neither of which contains an
-      # @Test, so the number is exact for both — stated rather than assumed,
+      # 🔴 COMMIT COUNTED ON, since a branch is not a tree: 091186b, the commit
+      # that DELETED theExpectedWidthsCannotBeHitByAccident. It is the tree the
+      # 825/78 run above was made on, and it is NOT b127185 — that earlier tree
+      # had 826, one more test, so quoting it here would be the exact error the
+      # correction note below is about. This comment block and the --min
+      # argument are in that same commit, so the number is exact for it —
       # because "measured on the branch" is precisely the imprecision the
       # correction note below is about.
       #
