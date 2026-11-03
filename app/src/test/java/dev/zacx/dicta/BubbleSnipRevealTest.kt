@@ -77,31 +77,11 @@ class BubbleSnipRevealTest {
         val c = Robolectric.buildService(BubbleService::class.java)
         controller = c
         c.get().sessionFactory = { fake }
-        c.get().historyProvider = { limit -> twoItems().take(limit) }
-        c.get().historyExecutor = java.util.concurrent.Executor { it.run() }
+        // 🔴 No history seams and no history fixture. The reveal reads nothing
+        // — it shows two buttons — so `historyProvider`/`historyExecutor` are
+        // deleted from the service along with the chip list they fed.
         return c.create().get()
     }
-
-    private fun twoItems() = listOf(
-        DictationHistoryStore.Item(
-            id = "alpha",
-            createdAtMs = System.currentTimeMillis() - 7_200_000L,
-            audioBytes = 1234L,
-            audioFile = "alpha.ogg",
-            text = "the quick brown fox",
-            fromRemote = true,
-            audioSeconds = 2.5,
-        ),
-        DictationHistoryStore.Item(
-            id = "bravo",
-            createdAtMs = System.currentTimeMillis() - 259_200_000L,
-            audioBytes = 2345L,
-            audioFile = "bravo.ogg",
-            text = "another saved dictation",
-            fromRemote = true,
-            audioSeconds = 3.5,
-        ),
-    )
 
     private fun <T> field(service: BubbleService, name: String): T {
         val f = BubbleService::class.java.getDeclaredField(name)
@@ -119,8 +99,8 @@ class BubbleSnipRevealTest {
     private fun cancel(service: BubbleService): ImageButton =
         requireNotNull(field<ImageButton?>(service, "cancel")) { "no cancel button" }
 
-    private fun row(service: BubbleService): android.widget.ListView =
-        requireNotNull(field<android.widget.ListView?>(service, "historyRow")) { "no history row" }
+    private fun history(service: BubbleService): ImageButton =
+        requireNotNull(field<ImageButton?>(service, "history")) { "no history button" }
 
     private fun params(service: BubbleService): WindowManager.LayoutParams =
         field(service, "params")

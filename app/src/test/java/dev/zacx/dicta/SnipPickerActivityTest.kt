@@ -71,9 +71,9 @@ class SnipPickerActivityTest {
 
     private fun stocked() = start(SnipStore.Catalog(rows, 1_700_000_000_000L))
 
-    private fun list(a: SnipPickerActivity) = a.findViewById<ListView>(R.id.snip_list)
-    private fun search(a: SnipPickerActivity) = a.findViewById<EditText>(R.id.snip_search)
-    private fun empty(a: SnipPickerActivity) = a.findViewById<TextView>(R.id.snip_empty)
+    private fun list(a: SnipPickerActivity) = a.findViewById<ListView>(R.id.picker_list)
+    private fun search(a: SnipPickerActivity) = a.findViewById<EditText>(R.id.picker_search)
+    private fun empty(a: SnipPickerActivity) = a.findViewById<TextView>(R.id.picker_empty)
 
     private fun labels(a: SnipPickerActivity): List<String> {
         val adapter = requireNotNull(list(a).adapter) { "no adapter" }

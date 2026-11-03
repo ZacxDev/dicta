@@ -82,8 +82,9 @@ class BubbleHiddenWhileTheCardIsUpTest {
         val c = Robolectric.buildService(BubbleService::class.java)
         service = c
         c.get().sessionFactory = { FakeSession() }
-        c.get().historyProvider = { emptyList() }
-        c.get().historyExecutor = java.util.concurrent.Executor { it.run() }
+        // 🔴 No history seams here any more. This service does not read the
+        // history store at all: the long press shows a BUTTON, and the reading
+        // moved to HistoryPickerActivity with its own `source` seam.
         return c.create().get()
     }
 

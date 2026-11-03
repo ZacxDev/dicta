@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  One history picker row: the age and which engine produced it on the first
+  line, a truncated one-line transcript preview on the second.
+
+  🔴 @drawable/row_bg, NOT the deleted @drawable/history_chip_bg. That drawable
+  was a filled PILL, and its own comment argued the fill "because these chips
+  float over an arbitrary wallpaper, not over a Dicta surface". In an Activity
+  that premise is false: these rows float over a dimmed Dicta surface, which is
+  exactly what @drawable/row_bg is the level-1 step for, and it is what
+  snip_row.xml already uses. Same shape, same family, one drawable.
+
+  🔴 The transcript is NEVER rendered in full. A dictation is free text and can
+  be thousands of characters, so a row showing all of it would be a screenful
+  per entry. The truncation is HistoryRow.preview — a character budget, because
+  this project's Robolectric cannot measure text and a rendered-width claim
+  could therefore be checked nowhere. ellipsize here is the backstop for
+  whatever the device does with those characters.
+
+  Deliberately the same two-line shape as snip_row.xml and deliberately NOT the
+  same file: the two rows carry different content with different ids, and
+  forcing one row type is the coupling FloatingPickerActivity's kdoc declines.
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:background="@drawable/row_bg"
+    android:layout_marginBottom="6dp"
+    android:orientation="vertical"
+    android:padding="12dp">
+
+    <TextView
+        android:id="@+id/history_row_title"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:ellipsize="end"
+        android:maxLines="1"
+        android:textColor="@color/dicta_on_surface_variant"
+        android:textSize="13sp" />
+
+    <TextView
+        android:id="@+id/history_row_preview"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:ellipsize="end"
+        android:maxLines="1"
+        android:textColor="@color/dicta_on_surface"
+        android:textSize="15sp" />
+</LinearLayout>

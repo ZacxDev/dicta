@@ -141,6 +141,47 @@
             android:taskAffinity="dev.zacx.dicta.snip"
             android:launchMode="singleTop" />
 
+        <!--
+          The history picker: search the stored dictations and open one.
+
+          It REPLACED the chip list that used to live inside the bubble's own
+          overlay window. Every attribute below is the snippet picker's, for the
+          reasons written above it, and the two elements are deliberately
+          identical except for the name and the affinity — they are the same
+          KIND of surface and both are FloatingPickerActivity subclasses, so a
+          difference in any of these would be a difference nobody decided on.
+
+          🔴 exported="false" and NO <intent-filter>. Stronger here than for the
+          snippet picker: this activity lists the user's own dictation
+          transcripts, so an exported surface would be a read of their recorded
+          speech that any installed app could invoke. The element being
+          self-closing IS the no-filter claim — a filter would have to be a
+          child, so it could not be.
+
+          🔴 taskAffinity is LOAD-BEARING for DictateActivity's reason (issue
+          #11), and must stay DIFFERENT from BOTH the others. It is the card's
+          partner in a way the snippet picker is not: this picker STARTS the
+          card, so sharing the card's affinity with singleTop on both would
+          stack them and Back from the card would land on the picker rather than
+          on the app the user began in — which is precisely what the shell's
+          finish() exists to prevent. The value must stay in sync with
+          HistoryLaunch.PICKER_TASK_AFFINITY; PickerShellSeamLedgerTest pins
+          that and the all-different property.
+
+          It starts no recording and touches no microphone. The one activity it
+          can start is the card through DictateLaunch.historyIntent, which
+          carries EXTRA_HISTORY_ID — so DictateActivity populates from history
+          rather than capturing. See HistoryLaunch's kdoc and
+          PickerShellSeamLedgerTest.
+        -->
+        <activity
+            android:name=".HistoryPickerActivity"
+            android:exported="false"
+            android:theme="@style/Theme.Dicta.Overlay"
+            android:excludeFromRecents="true"
+            android:taskAffinity="dev.zacx.dicta.history"
+            android:launchMode="singleTop" />
+
         <!-- Transcription settings: the base URL and the bearer token. Not
              exported — the token field must not be reachable by another app's
              intent. -->

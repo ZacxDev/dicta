@@ -1,12 +1,28 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  The snippet picker: a search field over a scrolling list of snippets.
+  🔴 The ONE layout behind BOTH floating pickers — the snippet picker (issue
+  #38) and the history picker. A search field over a scrolling list, with one
+  place a reason is shown when there are no rows.
+
+  It replaced activity_snip_picker.xml rather than being copied from it. Every
+  argument below is a rule the two pickers must AGREE on — the window-sizing
+  contract, the fixed list height, the single empty-state slot — and a second
+  copy of a rule that must agree is how the width defect this file's own
+  comment describes happened in the first place.
+
+  🔴 The HEADING and the search HINT are set in CODE, from
+  FloatingPickerActivity.titleRes / searchHintRes, because they are the one
+  thing that genuinely differs per picker. There is deliberately no
+  android:text/android:hint here: a default would render for a frame before the
+  subclass's own string replaced it, and (worse) a subclass that forgot to
+  declare one would silently show the other picker's.
 
   🔴 A floating Activity rather than a view in the bubble's overlay window, for
-  two independent reasons written out on SnipPickerActivity: a search field
+  two independent reasons written out on FloatingPickerActivity: a search field
   needs IME focus, which the bubble's FLAG_NOT_FOCUSABLE window cannot give it
-  without stealing focus from the app underneath; and from Android 10 only the
-  focused app may READ the clipboard, which {{clip}} resolution requires.
+  without stealing focus from the app underneath; and an Activity's lifecycle
+  removes the late-async-load defect class the chip reveal needed a generation
+  counter for.
 
   Built from the same four conventions as activity_settings.xml and from no new
   ones: @drawable/input_bg on the field, @color/dicta_on_surface for text,
@@ -17,18 +33,20 @@
   🔴 EVERY `match_parent` BELOW MATCHES THE WINDOW, NOT THE SCREEN, and the
   window is only screen-sized because CODE makes it so. @style/Theme.Dicta.Overlay
   is a floating dialog theme, so this window is WRAP_CONTENT in both axes until
-  SnipPickerActivity.onCreate calls FloatingWindow.applySize(this) — which sets
-  the width to @fraction/overlay_width_fraction of the display. Without that
-  call the window's width is its widest wrap_content child, i.e. the SNIPPETS
+  FloatingPickerActivity.onCreate calls FloatingWindow.applySize(this) — which
+  sets the width to @fraction/overlay_width_fraction of the display. Without
+  that call the window's width is its widest wrap_content child, i.e. the
   heading TextView directly below, and the whole card renders about a fifth of
   the screen wide with every label truncated to ~6 characters. That is not a
   hypothetical: it is what 0.4.0 did on a Galaxy S21. A `match_parent` here is
-  therefore a claim about a window that something else has to size.
+  therefore a claim about a window that something else has to size — and the
+  reason that call now lives in the SHELL is that remembering it per activity
+  is the obligation that was already missed once.
 
   🔴 The list's height is a FIXED 320dp, and that is what the file says
   because it is what the file does. It is deliberately NOT wrap_content:
   wrap_content asks a ListView to measure every row, which both defeats
-  recycling and unbounds the window — a 200-row catalog would grow the window
+  recycling and unbounds the window — a 1000-row history would grow the window
   past the screen.
 
   It is also not `0dp` + layout_weight="1", which an earlier version of this
@@ -45,7 +63,8 @@
   correctly at 320dp — so the fixed cap is kept on its own merits (a bounded
   height the ListView can recycle against) and not for want of a device. Nobody
   has measured a better number; if you change it, measure it on hardware and say
-  which.
+  which. ⚠ That measurement is the SNIPPET picker's; the history picker's rows
+  are a different height and nothing on hardware has looked at them yet.
 
   The cost, stated: at a large font scale 320dp shows fewer rows rather than
   growing. The list scrolls, so nothing is unreachable.
@@ -57,18 +76,17 @@
     android:padding="20dp">
 
     <TextView
+        android:id="@+id/picker_title"
         style="@style/Text.Dicta.SectionHeading"
         android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="@string/snip_title" />
+        android:layout_height="wrap_content" />
 
     <EditText
-        android:id="@+id/snip_search"
+        android:id="@+id/picker_search"
         android:layout_width="match_parent"
         android:layout_height="48dp"
         android:layout_marginTop="12dp"
         android:background="@drawable/input_bg"
-        android:hint="@string/snip_search_hint"
         android:importantForAutofill="no"
         android:inputType="text"
         android:maxLines="1"
@@ -79,20 +97,21 @@
         android:textSize="15sp" />
 
     <!-- The one place a reason is shown when there are no rows. Three distinct
-         reasons (nothing imported / an empty catalog / nothing matches) share
-         this view and never share a string — see SnipPickerActivity.render. -->
+         reasons (unreadable / nothing stored / nothing matches) share this view
+         and never share a string — see FloatingPickerActivity.render. No
+         android:text: the shell sets it on every render, and a default here
+         would be one picker's copy showing in the other. -->
     <TextView
-        android:id="@+id/snip_empty"
+        android:id="@+id/picker_empty"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginTop="16dp"
-        android:text="@string/snip_empty_no_catalog"
         android:textColor="@color/dicta_on_surface_variant"
         android:textSize="15sp"
         android:visibility="gone" />
 
     <ListView
-        android:id="@+id/snip_list"
+        android:id="@+id/picker_list"
         android:layout_width="match_parent"
         android:layout_height="320dp"
         android:layout_marginTop="12dp"

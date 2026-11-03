@@ -27,7 +27,6 @@ import android.view.WindowManager
 import android.widget.FrameLayout
 import android.widget.ImageButton
 import android.widget.LinearLayout
-import android.widget.ListView
 import android.widget.TextView
 import android.widget.Toast
 import kotlin.math.abs
@@ -80,9 +79,9 @@ import kotlin.math.abs
  * rather than listing files, precisely because a file-name set stays green when
  * an existing owner opens a second window.
  *
- * The cancel button and the history row are still children of the bubble's
- * window rather than windows of their own, for the reason each of their fields
- * gives. The warning dialog cannot be: see [warning].
+ * The cancel button and the two reveal buttons are still children of the
+ * bubble's window rather than windows of their own, for the reason each of
+ * their fields gives. The warning dialog cannot be: see [warning].
  */
 class BubbleService : Service() {
 
@@ -113,53 +112,63 @@ class BubbleService : Service() {
      * [OverlayWindowLedgerTest] asserts a per-FILE count of `addView` calls for
      * that reason. A third one fails it, correctly.
      *
-     * 🔴 Positioned **below** the bubble, like [cancel] and unlike the chips,
-     * and that is arithmetic rather than taste. With `Gravity.TOP` the window's
-     * top edge is pinned at `y`, so a child added below the bubble needs no `y`
-     * compensation at all and cannot move the bubble — which means the reveal's
-     * existing shift arithmetic, and all of the device evidence behind it
-     * (`#17` audit round 1's F4 included), carries over unchanged. Putting it
-     * above the bubble would fold a second term into `revealBlockPx` and
-     * re-open every one of those claims for a button.
+     * 🔴 Positioned **below** the bubble, like [cancel] and [history], and
+     * that is arithmetic rather than taste. With `Gravity.TOP` the window's top
+     * edge is pinned at `y`, so a child added below the bubble needs no `y`
+     * compensation at all and cannot move the bubble. **Since the chip list was
+     * deleted, EVERY optional child is below the bubble**, which is what
+     * removed the reveal's `y` arithmetic outright — see [showActions].
      *
      * What it DOES change is the window's height, so [snipBlockPx] is in
-     * [windowHeightPx] exactly as `cancelBlockPx` is — see that function.
+     * [windowHeightPx] exactly as `cancelBlockPx` and [historyBlockPx] are —
+     * see that function.
      *
-     * 🔴 Visibility is owned by [showReveal] and by nothing else. This is not
+     * 🔴 Visibility is owned by [showActions] and by nothing else. This is not
      * a new always-on surface: it is visible while the reveal is up and gone
-     * otherwise, which is the same predicate the chips obey.
+     * otherwise.
      */
     private var snip: ImageButton? = null
 
     /**
-     * The box holding the bubble and its pulse ring.
+     * The history button inside the long-press reveal.
      *
-     * Kept as a field for one reason: both the cancel button and the history
-     * row are positioned *relative to the bubble* inside the root, and
-     * `indexOfChild(halo)` is the only spelling of "above the bubble" that
-     * stays correct as the number of optional children changes. The previous
-     * `addView(abort, 0)` meant "above the bubble" only while the bubble was
-     * the first child, which the history row ends.
+     * 🔴 It REPLACED a scrolling `ListView` of history chips that lived in this
+     * same window. That list, its adapter, its slot and width constants and all
+     * of its height arithmetic are deleted — and the deletion closes a real
+     * defect class by construction rather than merely removing lines: the chips
+     * were loaded ASYNCHRONOUSLY, so a reveal dismissed while its store read
+     * was in flight could leave a PERMANENT row on screen with
+     * `FLAG_WATCH_OUTSIDE_TOUCH` armed device-wide (found by audit round 1 of
+     * #17, and the whole reason a `revealGeneration` counter existed here). A
+     * button needs no load, so there is nothing left to arrive late.
+     *
+     * Everything [snip]'s field says about being a child of the existing
+     * window, about sitting below the bubble and about [showActions] owning its
+     * visibility applies here identically — which is why it is said once,
+     * there.
+     *
+     * 🔴 FIRST of the two, i.e. nearest the bubble. History is what the long
+     * press meant before this change, so it is the affordance most likely to be
+     * wanted by the finger that just performed it. Order relative to [cancel]
+     * is bookkeeping rather than layout — see `buildWindow`.
      */
-    private var halo: View? = null
+    private var history: ImageButton? = null
 
     /**
-     * The recent-dictations row, revealed by a long press. 🔴 A child of the
-     * existing window, **never a second window** — see the class header and
-     * [OverlayWindowLedgerTest]. As a window it would need its own `params`,
-     * its own alpha, its own add/remove lifecycle and its own place in the
-     * clamp arithmetic, and it needs none of those as a child.
+     * The box holding the bubble and its pulse ring.
      *
-     * ⚠ This used to end *"and its own [OverlayVisibility] sink; forgetting the
-     * last of those is PR #4's bug"*. The hazard is real and is still PR #4's
-     * bug, but "its own sink" is not how it is paid: [warning] is a second
-     * window and shares the ONE sink registered in [onCreate], deliberately,
-     * so that two windows cannot disagree about whether Dicta is on screen.
+     * Kept as a field for one reason: the cancel button is positioned
+     * *relative to the bubble* inside the root, and `indexOfChild(halo)` is the
+     * only spelling of "above the bubble" that stays correct as the number of
+     * optional children changes.
+     *
+     * ⚠ **The bubble IS the first child again**, now that the chip list is
+     * gone, so `indexOfChild(halo)` and a literal `0` happen to agree today.
+     * The spelling is kept anyway and that is deliberate: the previous
+     * `addView(abort, 0)` was correct right up until a child was added above
+     * the bubble, and it failed silently when one was — see [showCancel].
      */
-    private var historyRow: ListView? = null
-
-    /** One adapter for the service's lifetime; [HistoryAdapter.submit] swaps rows. */
-    private val historyAdapter = HistoryAdapter()
+    private var halo: View? = null
 
     private val main = Handler(Looper.getMainLooper())
     private val machine = BubbleDictation()
@@ -243,44 +252,44 @@ class BubbleService : Service() {
      * is the mutation that re-opens the unreachable-control defect for the
      * bottom-most control: long-press with the bubble near the bottom edge and
      * the snip button lands off-screen, visible and untappable. That is the
-     * same failure `cancelBlockPx` and `revealBlockPx` are each in the clamp
+     * same failure `cancelBlockPx` and [historyBlockPx] are each in the clamp
      * for, arrived at by a third route.
      */
     private var snipBlockPx = 0
 
     /**
-     * How much taller the window is while the history row is shown — the sum
-     * of the chips ON SCREEN (`min(count, REVEAL_SLOTS)`), not of every row the
-     * scrollable list holds.
+     * How much taller the window is while the history button is shown — the
+     * button plus the gap above it. [snipBlockPx]'s twin, and in the clamp for
+     * the same reason.
      *
-     * 🔴 Feeds [BubbleChrome.clampY]. Leaving it out of the clamp is the
-     * mutation that re-opens the unreachable-control defect from the other
-     * end: long-press with the bubble near the bottom edge and the chips land
-     * off-screen, which is a row of controls the user can see the top pixel of
-     * and cannot tap.
+     * 🔴 **BOTH blocks, not one doubled value**, even though the two buttons
+     * are the same size today. A single `actionsBlockPx = 2 * …` would be a
+     * term whose correctness depends on the two dp constants staying equal,
+     * with nothing saying so; two terms summed in [windowHeightPx] stay right
+     * if either changes.
      */
-    private var revealBlockPx = 0
-
-    /** The history row's fixed width, and therefore the window's when shown. */
-    private var revealWidthPx = 0
-
-    /** One chip plus the gap under it. */
-    private var chipBlockPx = 0
+    private var historyBlockPx = 0
 
     /**
-     * The chip row's own `bottomMargin`, which is part of the height the
-     * window gains while the row is VISIBLE. See [renderReveal].
+     * 🔴 Whether the long-press action buttons are on screen.
+     *
+     * **An explicit flag, because there is no longer a view to read it off.**
+     * "Is the reveal up?" used to be `historyRow.visibility == VISIBLE` — the
+     * chip `ListView` WAS the source of truth, and the buttons' visibility was
+     * derived from it. With the list deleted, the only candidates were "ask one
+     * of the two buttons" or this. Nominating a button would make the other
+     * one's state a derived fact about its sibling, so that a future third
+     * control, or a button hidden for any other reason, silently redefines the
+     * predicate. A field cannot be hidden by accident.
+     *
+     * 🔴 Written in [showActions] and nowhere else, which is the discipline
+     * that function's own comment names: a second predicate elsewhere —
+     * `renderState`, a click handler — is how a reveal-only button becomes an
+     * always-on surface.
      */
-    private var revealRowMarginPx = 0
+    private var actionsShown = false
 
-    /**
-     * Bumped on every reveal and every dismissal, so an in-flight async
-     * history load can tell that the reveal it belongs to is gone. See
-     * [revealHistory].
-     */
-    private var revealGeneration = 0
-
-    /** Off-main-thread reads of the history index. See [loadRecentHistory]. */
+    /** Off-main-thread work: today the `/healthz` probe. See [runProbe]. */
     private val worker = java.util.concurrent.Executors.newSingleThreadExecutor()
 
     /**
@@ -337,7 +346,7 @@ class BubbleService : Service() {
      */
     internal var healthProbe: ((String) -> Boolean)? = null
 
-    /** Where [healthProbe] runs. `null` means [worker]. As [historyExecutor]. */
+    /** Where [healthProbe] runs. `null` means [worker]. */
     internal var probeExecutor: java.util.concurrent.Executor? = null
 
     /**
@@ -388,26 +397,21 @@ class BubbleService : Service() {
      */
     internal var foregroundPromoter: ((Boolean) -> Boolean)? = null
 
-    /**
-     * Where the reveal's chips come from. `null` means the real
-     * [DictationHistoryStore].
+    /*
+     * 🔴 `historyProvider` AND `historyExecutor` WERE HERE AND ARE DELETED.
      *
-     * A seam rather than a direct call because the production read touches the
-     * filesystem and, when an audio file has gone missing, **rewrites the
-     * index** — so a test driving the reveal would otherwise be a test of the
-     * store as well as of the gesture, and would be at the mercy of whatever
-     * the previous test left in `noBackupFilesDir`.
-     */
-    internal var historyProvider: ((Int) -> List<DictationHistoryStore.Item>)? = null
-
-    /**
-     * Where [historyProvider] runs. `null` means [worker].
+     * They were the seams the chip reveal's async store read needed: a
+     * provider, so a test driving the gesture was not also a test of the
+     * filesystem, and a synchronous executor, so "long press, then assert" had
+     * no race in it. This service no longer reads the history store at all —
+     * the long press shows a button and the button starts an Activity.
      *
-     * Separate from the provider seam on purpose: a test wants a *synchronous*
-     * executor so that "long press, then assert" has no race in it, and that
-     * is an orthogonal choice from where the items come from.
+     * Both seams still exist, in the same shape, on the surface that does the
+     * reading now: `HistoryPickerActivity.source` and
+     * `FloatingPickerActivity.loadExecutor`. Deleted rather than left for a
+     * future caller, because a seam with no production consumer is a
+     * test-visible hook onto nothing.
      */
-    internal var historyExecutor: java.util.concurrent.Executor? = null
 
     /**
      * What the service needs from a recording, and nothing more.
@@ -490,9 +494,7 @@ class BubbleService : Service() {
         haloSizePx = (HALO_DP * density).toInt()
         cancelBlockPx = ((CANCEL_DP + CANCEL_GAP_DP) * density).toInt()
         snipBlockPx = ((SNIP_DP + SNIP_GAP_DP) * density).toInt()
-        revealWidthPx = (REVEAL_WIDTH_DP * density).toInt()
-        chipBlockPx = ((CHIP_DP + CHIP_GAP_DP) * density).toInt()
-        revealRowMarginPx = (CHIP_GAP_DP * density).toInt()
+        historyBlockPx = ((HISTORY_DP + HISTORY_GAP_DP) * density).toInt()
 
         params = WindowManager.LayoutParams(
             // 🔴 WRAP_CONTENT, not the old fixed 60 dp square. The window has
@@ -600,64 +602,78 @@ class BubbleService : Service() {
             }
         }
 
-        // 🔴 A VERTICAL stack of chips, not the horizontal strip the design
-        // sketch proposed. Four chips side by side, each carrying a relative
-        // timestamp plus the opening words of a transcript, is ~600 dp of row
-        // — wider than any phone — so a horizontal strip would have to cut
-        // each label to a handful of characters and the labels are the whole
-        // point of the feature. Stacked, each chip gets the full width the
-        // window can afford and the row reads as a menu rising out of the
-        // bubble.
+        // The reveal's FIRST affordance, built mirroring `snipButton` above in
+        // every respect — same 44 dp square, same bubble_bg, same on-surface
+        // tint, same contentDescription-and-tooltip pairing, no DragListener,
+        // the click through the machine. They are two of the same KIND of
+        // thing, so a difference in any of those would read as a difference in
+        // meaning.
         //
-        // 🔴 A framework ListView, NOT a RecyclerView and NOT a ScrollView.
-        //  - RecyclerView would be the obvious choice and is FORBIDDEN here:
-        //    `app/build.gradle.kts` has an EMPTY runtime `dependencies {}`
-        //    block by explicit, re-measured decision, and androidx.recyclerview
-        //    drags in annotation/lifecycle/collection/customview. ListView is
-        //    in the platform at minSdk 26 and costs nothing.
-        //  - A ScrollView would scroll but NOT recycle, so 50 chips would be
-        //    50 live views. ListView's `convertView` IS the virtualization:
-        //    only the ~4 on screen plus a scrap view ever exist.
-        //
-        // 🔴 The height is set EXPLICITLY in renderReveal, never WRAP_CONTENT.
-        // WRAP_CONTENT asks a ListView to measure every row, which both defeats
-        // recycling and unbounds the window — the two things this is for.
-        val recents = ListView(this).apply {
+        // 🔴 It REPLACED the chip ListView that used to be here. See the
+        // `history` field for the defect class that deletion closes.
+        val historyButton = ImageButton(this).apply {
             layoutParams = LinearLayout.LayoutParams(
-                revealWidthPx,
-                // Replaced per-reveal by renderReveal. Zero, not WRAP_CONTENT,
-                // so a reveal that somehow renders before the adapter is set
-                // contributes no height rather than an unbounded one.
-                0,
-            // Same field renderReveal adds to revealBlockPx — one rule, one
-            // place. Computing it twice is how F4 got in.
-            ).apply { bottomMargin = revealRowMarginPx }
+                (HISTORY_DP * density).toInt(),
+                (HISTORY_DP * density).toInt(),
+            ).apply { topMargin = (HISTORY_GAP_DP * density).toInt() }
+            setImageResource(R.drawable.ic_history)
+            imageTintList = android.content.res.ColorStateList
+                .valueOf(getColor(R.color.dicta_on_surface))
+            background = getDrawable(R.drawable.bubble_bg)
+            val historyLabel = getString(R.string.bubble_history)
+            contentDescription = historyLabel
+            tooltipText = historyLabel
             visibility = View.GONE
-            // The chips carry their own separation via chipBlockPx; a divider
-            // would add height the clamp arithmetic does not know about.
-            divider = null
-            dividerHeight = 0
-            isVerticalScrollBarEnabled = false
-            // Chips are the tap targets and each sets its own click listener;
-            // ListView's own selector would draw a second highlight over them.
-            selector = android.graphics.drawable.ColorDrawable(0)
-            // Overscroll glow on a tiny floating window reads as a glitch.
-            overScrollMode = View.OVER_SCROLL_NEVER
+            setOnClickListener {
+                applyEffects(machine.on(BubbleDictation.Event.HistoryTapped))
+            }
         }
+
+        // 🔴 THE CHIP `ListView` WAS BUILT HERE AND IS DELETED, along with its
+        // adapter, its chip views, `REVEAL_SLOTS`, `REVEAL_WIDTH_DP`,
+        // `CHIP_DP`/`CHIP_GAP_DP`, `REVEAL_WIDTH_DP`'s width arithmetic and the
+        // whole of `renderReveal`. History is a BUTTON now; the list, the
+        // search field and the scrolling live in `HistoryPickerActivity`.
+        //
+        // Three arguments died with it and are recorded because they were real:
+        // that a vertical stack beat a horizontal strip (four chips side by
+        // side is ~600 dp, wider than any phone); that a framework `ListView`
+        // beat both a `RecyclerView` (forbidden — `app/build.gradle.kts` has an
+        // EMPTY runtime `dependencies {}` block by explicit decision) and a
+        // `ScrollView` (scrolls without recycling); and that the list's height
+        // had to be set EXPLICITLY, never `WRAP_CONTENT`, or the window
+        // unbounds. 🔴 The second of those is NOT retracted — it is why the
+        // picker's own list is a framework `ListView` too, and it is restated
+        // on `FloatingPickerActivity`.
+        //
+        // 🔴 What the deletion BUYS, beyond the lines: the chip list was loaded
+        // asynchronously, so the reveal needed `revealGeneration` to stop a
+        // late load showing a permanent row with `FLAG_WATCH_OUTSIDE_TOUCH`
+        // armed device-wide (#17 audit round 1). See the `history` field.
 
         val container = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
-            // The reveal sits ABOVE the bubble at index 0; see showReveal.
-            // The snip button sits immediately BELOW the bubble — see the
-            // `snip` field for why below rather than above, and note that
-            // showCancel's "below" arm appends at childCount, so cancel lands
-            // after it rather than between it and the bubble. The two are never
-            // visible at once (cancel is RECORDING-only, snip is reveal-only,
-            // and the reveal opens in IDLE), so their order relative to each
-            // other is bookkeeping, not layout.
-            addView(recents)
+            // 🔴 NOTHING IS ABOVE THE BUBBLE ANY MORE. The chip row used to sit
+            // at index 0, which is what `showReveal`'s `y` compensation existed
+            // for and what made "above the bubble" a real position in this
+            // container. With it gone the bubble is the first child and all
+            // three optional controls hang BELOW it, in this order: history,
+            // snip, cancel.
+            //
+            // History before snip because history is nearest the bubble — see
+            // the `history` field. Cancel last because `showCancel`'s "below"
+            // arm appends at childCount.
+            //
+            // 🔴 Cancel's order relative to the other two is bookkeeping rather
+            // than layout, and the argument now has to cover THREE controls
+            // rather than two: cancel is RECORDING-only while history and snip
+            // are reveal-only, and the reveal opens only in IDLE, so cancel is
+            // never co-visible with either. The two reveal buttons ARE
+            // co-visible with each other, which is why both their blocks are in
+            // windowHeightPx.
             addView(bubbleBox)
+            addView(historyButton)
             addView(snipButton)
             addView(abort)
         }
@@ -670,8 +686,8 @@ class BubbleService : Service() {
         // we are entitled to act on and the touch still belongs to whatever is
         // underneath, so this observes the event and consumes nothing. The
         // dismissal itself is the machine's — `Event.TouchedOutside` has an
-        // empty arm and rides `on()`'s existing HideHistory prefix, so the
-        // "when does the row close" predicate stays in one place.
+        // empty arm and rides `on()`'s existing HideActions prefix, so the
+        // "when do the buttons close" predicate stays in one place.
         container.setOnTouchListener { _, event ->
             if (event.action == MotionEvent.ACTION_OUTSIDE) {
                 applyEffects(machine.on(BubbleDictation.Event.TouchedOutside))
@@ -684,9 +700,9 @@ class BubbleService : Service() {
         ring = pulse
         cancel = abort
         snip = snipButton
+        history = historyButton
         bubble = button
         halo = bubbleBox
-        historyRow = recents
     }
 
     /**
@@ -799,11 +815,11 @@ class BubbleService : Service() {
         ring = null
         cancel = null
         snip = null
+        history = null
         halo = null
-        historyRow = null
-        // shutdownNow, like SettingsActivity: a history read in flight is
-        // worth nothing once the window it was going to fill is gone, and the
-        // executor is non-daemon.
+        // shutdownNow, like SettingsActivity: a probe in flight is worth
+        // nothing once the window it belongs to is gone, and the executor is
+        // non-daemon.
         runCatching { worker.shutdownNow() }
         super.onDestroy()
     }
@@ -875,14 +891,21 @@ class BubbleService : Service() {
                 // inside the debounce window, which means they did not mean to
                 // make two. A toast here would announce their own slip.
                 BubbleDictation.Effect.IgnoredAsTooFast -> Unit
-                BubbleDictation.Effect.RevealHistory -> revealHistory()
-                BubbleDictation.Effect.HideHistory -> showReveal(false)
+                BubbleDictation.Effect.ShowActions -> showActions(true)
+                BubbleDictation.Effect.HideActions -> showActions(false)
                 // 🔴 Issue #38. Not a recording path: this starts an activity
                 // that reads the clipboard and writes it, and nothing else.
-                // The HideHistory the machine prefixes has already put the
+                // The HideActions the machine prefixes has already put the
                 // reveal away by the time this runs — ordering the machine
                 // owns, not this loop.
                 BubbleDictation.Effect.OpenSnipPicker -> openSnipPicker()
+                // 🔴 Also not a recording path. The picker it opens lists
+                // dictations that are already recorded, and the one activity it
+                // can start is the card through DictateLaunch.historyIntent —
+                // which carries EXTRA_HISTORY_ID, so DictateActivity populates
+                // from history instead of capturing. Same HideActions ordering
+                // as the snip arm above.
+                BubbleDictation.Effect.OpenHistoryPicker -> openHistoryPicker()
             }
         }
         // 🔴 `state == IDLE ⇒ session == null` is relied on by startRecording()
@@ -1060,7 +1083,7 @@ class BubbleService : Service() {
      * Opens the snippet picker (issue #38).
      *
      * 🔴 Through [SnipLaunch], never a hand-built `Intent` — the same mechanism
-     * as [requestMicPermission] and [openHistoryItem] above, and the same bug
+     * as [requestMicPermission] above, and the same bug
      * (#11) if it is skipped: a floating activity must land in its OWN task or
      * the translucent window renders over Dicta's own UI instead of over the
      * app the user is in. `SnipSeamLedgerTest`'s construction ledger is what
@@ -1075,6 +1098,32 @@ class BubbleService : Service() {
      */
     private fun openSnipPicker() {
         runCatching { startActivity(SnipLaunch.intent(this)) }
+    }
+
+    /**
+     * Opens the history picker.
+     *
+     * 🔴 Through [HistoryLaunch], never a hand-built `Intent`, and never
+     * through [SnipLaunch] either — the three floating surfaces hold three
+     * DIFFERENT `taskAffinity` values on purpose, and sharing one with
+     * `singleTop` on both would stack them so that Back walks through a surface
+     * the user never opened. [HistoryLaunch] owns that pairing with the
+     * manifest.
+     *
+     * 🔴 Deliberately NOT through [DictateLaunch]. That object builds
+     * `DictateActivity` intents, a plain one of which auto-starts a capture —
+     * which is why `DictateLaunchTest` keeps a one-file ledger of who may
+     * construct them and `StartSurfaceLedgerTest` counts the plain ones. This
+     * opens a picker, which has no microphone; the picker itself later calls
+     * `DictateLaunch.historyIntent`, which carries an extra and starts nothing.
+     *
+     * ⚠ This REPLACED `revealHistory()`, which read the store asynchronously
+     * and then showed a row. There is no load here at all, which is why
+     * `revealGeneration` and the async-race guard it armed are gone — see the
+     * [history] field.
+     */
+    private fun openHistoryPicker() {
+        runCatching { startActivity(HistoryLaunch.intent(this)) }
     }
 
     // --- what the session says back -----------------------------------------
@@ -1254,11 +1303,19 @@ class BubbleService : Service() {
                 screenHeightPx = resources.displayMetrics.heightPixels,
             )
             container.removeView(abort)
-            // 🔴 "Above the bubble" is the bubble's own index, not 0. It was 0
+            // 🔴 "Above the bubble" is the bubble's own index, not 0 — and the
+            // correction this comment used to carry is now HISTORY rather than
+            // a live constraint, so it is stated as history. It read: "it was 0
             // while the bubble was the first child; the history row is now
             // index 0, and an unchanged `0` here would have put cancel ABOVE
-            // the chips — a cancel button that is not adjacent to the control
-            // it cancels, and on the far side of four tappable items.
+            // the chips". That row is deleted, so the bubble IS the first child
+            // again and `indexOfChild(box)` evaluates to 0 today.
+            //
+            // The spelling is kept rather than simplified back to `0`, because
+            // `0` was correct until it silently was not: the failure mode is a
+            // cancel button that is not adjacent to the control it cancels, on
+            // the far side of whatever else got added above the bubble, and
+            // nothing goes red for it. `indexOfChild` cannot be wrong that way.
             val wanted = if (below) container.childCount else container.indexOfChild(box)
             container.addView(abort, wanted)
             abort.visibility = View.VISIBLE
@@ -1274,316 +1331,76 @@ class BubbleService : Service() {
         clampWindow()
     }
 
-    // --- the history reveal --------------------------------------------------
+    // --- the long-press action buttons ---------------------------------------
+
+    /*
+     * 🔴 WHAT WAS HERE AND IS DELETED, in one place so the next reader does not
+     * look for it: `revealHistory`, `loadRecentHistory`, `renderReveal`,
+     * `ChipModel`, `HistoryAdapter`, `newChip`, `bindChip`, `openHistoryItem`,
+     * `revealGeneration`, `revealBlockPx`, `revealWidthPx`, `chipBlockPx` and
+     * `revealRowMarginPx`. That was ~200 lines whose entire job was to put a
+     * bounded, scrollable, recycling list of history chips inside a dragged
+     * overlay window and keep `BubbleChrome.clampY` honest about its height.
+     *
+     * 🔴 THE `y` COMPENSATION WENT WITH IT, and that is the largest single
+     * simplification in this change rather than an incidental one. `showReveal`
+     * did `params.y -= revealBlockPx` on show and `+= revealBlockPx` on hide,
+     * because the chip row sat ABOVE the bubble and `Gravity.TOP` pins the
+     * window's TOP edge at `y` — so without it the bubble shifted down by the
+     * row's height, out from under the finger still holding it. Four audit
+     * rounds of #17 corrected the magnitudes in that argument, and round 1
+     * turned the hide side into a recorded post-clamp shift that teleported the
+     * bubble after a drag.
+     *
+     * None of it applies now: every optional child is BELOW the bubble, so the
+     * window is monotonically downward-growing and `y` never moves on a reveal.
+     * Three tests became UNNECESSARY rather than merely changed and are deleted
+     * with it — `revealingTheHistoryDoesNotShoveTheBubbleDownTheScreen`,
+     * `dismissingTheRowAfterADragLeavesTheBubbleWhereTheUserDraggedIt` and
+     * `aRevealNearTheTopEdgeDropsTheBubbleOnceAndThenStopsMoving`.
+     *
+     * 🔴 THE CLAMP IS STILL MANDATORY. Two 44 dp buttons with 6 dp gaps under
+     * an 84 dp halo is ~184 dp of window, and a bubble parked near the bottom
+     * edge still puts the lower button off-screen without [BubbleChrome.clampY]
+     * — the unreachable-control defect, unchanged, from a shorter window.
+     */
 
     /**
-     * Loads the newest items off the main thread and shows the row.
+     * Shows or hides the long-press action buttons — history and snip.
      *
-     * Off the main thread because [DictationHistoryStore.recent] reads
-     * `index.json` and, when an audio file has gone missing, rewrites it —
-     * file IO either way, on the gesture that is supposed to feel immediate.
-     * The row is shown when the items land, which is the same shape
-     * `SettingsActivity` uses for its usage line.
+     * 🔴 **One predicate, written here and read nowhere else.** [actionsShown]
+     * is this function's field; both buttons' visibilities are set in BOTH arms,
+     * together, every time. A second predicate elsewhere — in `renderState`, in
+     * a click handler — is how a reveal-only control becomes an always-on
+     * surface, which is the one thing issue #38 and this repo's "everything the
+     * user is shown derives from one predicate" discipline both forbid.
+     *
+     * 🔴 **No `y` compensation, and that is not an omission.** Both buttons are
+     * below the bubble and `Gravity.TOP` pins the window's top edge, so a child
+     * added below cannot move the bubble. What the reveal DOES change is the
+     * window's HEIGHT, which [windowHeightPx] reports and [clampWindow] acts
+     * on. See the deletion note above for the arithmetic this replaced.
+     *
+     * Idempotent, because the machine's own dismissal can arrive for a reveal
+     * that is already away: a button tap hides the buttons through the machine's
+     * [BubbleDictation.Effect.HideActions] prefix, and a later event emits that
+     * prefix again only if the flag is still set — but `showActions(false)` is
+     * reached from the effect loop either way.
      */
-    private fun revealHistory() {
-        // 🔴 The store read is ASYNC, so the reveal it belongs to can be
-        // dismissed before the items land. Without this the late callback
-        // shows a row nobody asked for any more — and that row is then
-        // PERMANENT: the machine cleared `historyRevealed` when it dismissed,
-        // so no later event emits HideHistory, `Event.TouchedOutside` returns
-        // an empty list, and the window keeps FLAG_WATCH_OUTSIDE_TOUCH armed
-        // device-wide. Found by audit round 1 of #17; it is the same "a row
-        // with no way to close it" defect this PR's outside-touch commit was
-        // written to fix, arriving by the async route that commit did not
-        // touch.
-        val generation = ++revealGeneration
-        loadRecentHistory { items ->
-            if (generation != revealGeneration) return@loadRecentHistory
-            renderReveal(items)
-            showReveal(true)
-        }
-    }
-
-    private fun loadRecentHistory(then: (List<DictationHistoryStore.Item>) -> Unit) {
-        val provider = historyProvider
-            ?: { limit -> DictationHistoryStore(this).recent(limit) }
-        val executor = historyExecutor ?: worker
-        runCatching {
-            executor.execute {
-                // An unreadable store is "no history", never a crash in a
-                // foreground service: the reveal degrades to its empty state,
-                // which already has copy for exactly this.
-                val items = runCatching { provider(REVEAL_MAX_ITEMS) }.getOrDefault(emptyList())
-                main.post { if (root != null) then(items) }
-            }
-        }
-    }
-
-    /**
-     * Fills the row with one chip per item, newest first, and records the
-     * height that creates for [clampWindow].
-     *
-     * The empty case is a chip-shaped label rather than an empty row: a
-     * gesture that produces a window the user cannot distinguish from "nothing
-     * happened" is indistinguishable from a broken gesture.
-     */
-    private fun renderReveal(items: List<DictationHistoryStore.Item>) {
-        val row = historyRow ?: return
-        val nowMs = System.currentTimeMillis()
-        val labelled = items.map { item ->
-            val label = HistoryLabel.shortLabel(item.text, item.createdAtMs, nowMs)
-            ChipModel(label, getString(R.string.bubble_history_chip, label), item.id)
-        }
-        // The empty case is a chip-shaped label rather than an empty row, for
-        // the reason in the kdoc above. It is one UNCLICKABLE row, so it also
-        // occupies exactly one slot of height.
-        val rows = labelled.ifEmpty {
-            listOf(ChipModel(getString(R.string.bubble_history_empty), null, null))
-        }
-        historyAdapter.submit(rows)
-        if (row.adapter == null) row.adapter = historyAdapter
-        // Scrolling is per-reveal, not sticky: a reveal always opens on the
-        // newest item, never wherever the last one was left.
-        row.setSelection(0)
-
-        // 🔴 ONLY the chips that are ON SCREEN count toward the window. This
-        // is the whole reason scrolling is a contained change: for four items
-        // or fewer this is identical to the pre-scroll `childCount *
-        // chipBlockPx`, so the clamp evidence carries over unchanged.
-        val onScreen = minOf(rows.size, REVEAL_SLOTS)
-        val listHeightPx = onScreen * chipBlockPx
-        row.layoutParams = (row.layoutParams as LinearLayout.LayoutParams).apply {
-            height = listHeightPx
-        }
-        // 🔴 Plus the ROW's own bottomMargin, which counts toward the
-        // container's height while the row is VISIBLE and is skipped when it
-        // is GONE — so it is part of the block the window grows by, exactly
-        // like each chip's topMargin. Omitting it understated the height by
-        // one CHIP_GAP (measured 318 vs 300), which both shoved the bubble
-        // down on every reveal and told clampY the window was shorter than it
-        // is. Audit round 1 of #17, F4.
-        revealBlockPx = listHeightPx + revealRowMarginPx
-    }
-
-    /** What one chip renders. Pure data so the adapter can rebind on recycle. */
-    private data class ChipModel(
-        val label: String,
-        val describedAs: String?,
-        val id: String?,
-    )
-
-    /**
-     * Recycling adapter for the reveal.
-     *
-     * 🔴 **Every field a chip carries is rebound on EVERY `getView`, including
-     * the ones being set to null.** A recycled convertView arrives carrying the
-     * PREVIOUS item's click listener, contentDescription and clickability; the
-     * bug that shape produces is a chip that opens the wrong dictation, which
-     * looks like a store bug and is not. `bindChip` sets all of them
-     * unconditionally for exactly that reason — see its own comment.
-     */
-    private inner class HistoryAdapter : android.widget.BaseAdapter() {
-        private var rows: List<ChipModel> = emptyList()
-
-        fun submit(next: List<ChipModel>) {
-            rows = next
-            notifyDataSetChanged()
-        }
-
-        override fun getCount(): Int = rows.size
-
-        override fun getItem(position: Int): ChipModel = rows[position]
-
-        override fun getItemId(position: Int): Long = position.toLong()
-
-        /** Chips are not uniformly enabled: the empty-state row is not tappable. */
-        override fun areAllItemsEnabled(): Boolean = false
-
-        override fun isEnabled(position: Int): Boolean = rows[position].id != null
-
-        override fun getView(
-            position: Int,
-            convertView: View?,
-            parent: android.view.ViewGroup?,
-        ): View {
-            val view = convertView ?: newChip()
-            bindChip(view, rows[position])
-            return view
-        }
-    }
-
-    /**
-     * One chip. A [android.widget.TextView] rather than a `Button` so the
-     * label is not force-uppercased and not lifted by the platform's
-     * `stateListAnimator`, both of which are the stock look the rest of the
-     * app is styled away from.
-     *
-     * @param id the history item to open, or `null` for the inert empty-state
-     *   label — which must not be clickable, because a control that accepts a
-     *   tap and does nothing is worse than a caption.
-     */
-    /**
-     * A chip with everything that does NOT vary per item.
-     *
-     * 🔴 Height is [CHIP_DP] plus [CHIP_GAP_DP] of TOP PADDING, not a margin.
-     * `AbsListView.LayoutParams` has no margins, so the gap a `LinearLayout`
-     * used to contribute has to live inside the row or the rendered pitch
-     * stops matching `chipBlockPx` — and `chipBlockPx` is what the window
-     * height and therefore `clampY` are computed from. The two must agree by
-     * construction; `aChipRowIsExactlyOneChipBlockTall` pins it.
-     */
-    private fun newChip(): View {
-        val density = resources.displayMetrics.density
-        val gapPx = (CHIP_GAP_DP * density).toInt()
-        val sidePx = (14 * density).toInt()
-        return android.widget.TextView(this).apply {
-            layoutParams = android.widget.AbsListView.LayoutParams(
-                android.widget.AbsListView.LayoutParams.MATCH_PARENT,
-                (CHIP_DP * density).toInt() + gapPx,
-            )
-            maxLines = 1
-            // A backstop only. The label is short BY CONSTRUCTION — see
-            // HistoryLabel, and the measured reason the JVM cannot assert
-            // anything about rendered width.
-            ellipsize = android.text.TextUtils.TruncateAt.END
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(sidePx, gapPx, sidePx, 0)
-            textSize = 13f
-            setTextColor(getColor(R.color.dicta_on_surface))
-            background = getDrawable(R.drawable.history_chip_bg)
-        }
-    }
-
-    /**
-     * Binds one item onto a chip that may be RECYCLED.
-     *
-     * 🔴 **Every per-item field is set on every call, including when the new
-     * value is null.** A recycled view arrives wearing the previous item's
-     * click listener, `contentDescription`, `tooltipText` and clickability. An
-     * `if (id != null)` that only ever SETS those leaves a scrolled-away chip's
-     * listener in place, so tapping the empty-state row — or any chip that
-     * reused its view — opens whatever dictation the old one pointed at. That
-     * reads as a history-store bug and is not one.
-     */
-    private fun bindChip(view: View, model: ChipModel) {
-        val chip = view as android.widget.TextView
-        chip.text = model.label
-        chip.contentDescription = model.describedAs
-        chip.tooltipText = model.describedAs
-        val id = model.id
-        if (id == null) {
-            chip.setOnClickListener(null)
-            chip.isClickable = false
-        } else {
-            chip.setOnClickListener { openHistoryItem(id) }
-        }
-    }
-
-    /**
-     * Opens the card on a stored dictation.
-     *
-     * 🔴 Through [DictateLaunch], never a hand-built `Intent`. Same mechanism
-     * as [requestMicPermission] above and the same bug (#11) if it is skipped:
-     * the overlay must land in its OWN task or the translucent card renders
-     * over Dicta's own UI. `DictateLaunchTest`'s construction ledger is what
-     * makes that a red test rather than a code review.
-     */
-    private fun openHistoryItem(id: String) {
-        showReveal(false)
-        runCatching { startActivity(DictateLaunch.historyIntent(this, id)) }
-    }
-
-    /**
-     * Shows or hides the chip row, compensating `y` so the **bubble** stays
-     * put while the window grows upward — the same arithmetic [showCancel]
-     * does, for the same reason: with `Gravity.TOP` the window's top edge is
-     * pinned at `y`, so a child added above the bubble would otherwise shove
-     * the bubble down by the row's height.
-     *
-     * ⚠ **"Stays put" is exact on the hide side and approximate on the reveal
-     * side, and the difference is the clamp, not a defect.** Hiding always
-     * gives back the full `revealBlockPx`, so the bubble returns to wherever
-     * it currently is — including after a drag. Revealing can move it: if the
-     * row would go off the top of the display, [clampWindow] pins the window
-     * and the bubble drops by whatever the clamp absorbed. That is visible at
-     * reveal time, is bounded by `revealBlockPx`, and happens once rather
-     * than cumulatively. Round 1 of #17 read it as a hide-side bug and
-     * "corrected" it into a teleport; see the hide arm.
-     *
-     * Idempotent. The machine clears its own reveal flag on the next event, so
-     * a chip tap (which hides the row directly, outside the machine) is
-     * followed by a [BubbleDictation.Effect.HideHistory] for a row that is
-     * already away. That is a no-op here rather than a second `y` shift.
-     */
-    private fun showReveal(show: Boolean) {
+    private fun showActions(show: Boolean) {
         if (root == null) return
-        val row = historyRow ?: return
-        // 🔴 BEFORE the idempotence check, and that ordering is the whole
-        // point: in the race this guards, the row is still GONE when the
-        // dismissal arrives, so a bump placed after the early return would
-        // never execute in exactly the case it exists for.
-        if (!show) revealGeneration++
-        if ((row.visibility == View.VISIBLE) == show) return
-        // 🔴 The snip button's visibility is tied to the row's HERE, in the one
-        // function that owns "is the reveal up", and tracked in both arms. A
-        // second predicate elsewhere — renderState, the click handler — is how
-        // the button becomes an always-on surface, which is the one thing issue
-        // #38 and this repo's "everything the user is shown derives from one
-        // predicate" discipline both forbid. It takes no `y` compensation: it
-        // is below the bubble. See the `snip` field.
-        snip?.visibility = if (show) View.VISIBLE else View.GONE
-        if (show) {
-            row.visibility = View.VISIBLE
-            params.y -= revealBlockPx
-        } else {
-            // 🔴 ALWAYS the full `revealBlockPx`, never "the shift the clamp
-            // left". The bubble sits `revealBlockPx` below the window top
-            // while the row is up and AT the top once it is away, so
-            // `y += revealBlockPx` is exactly what holds the BUBBLE still —
-            // the invariant the user can actually see.
-            //
-            // Round 1 of #17 changed this to a recorded post-clamp shift, and
-            // round 2 measured what that cost: reveal near the top edge, DRAG
-            // the bubble down, dismiss — and the bubble teleports back up,
-            // because a recorded number pins the window ORIGIN while the drag
-            // had since moved it.
-            //
-            // ⚠ The jump is `revealBlockPx - y_at_reveal`. It does NOT scale
-            // with how far the user drags — the drag makes the wrong
-            // position VISIBLE, it does not size it.
-            //
-            // 🔴 No magnitude is quoted here ON PURPOSE. A figure in this
-            // paragraph needed correcting in FOUR consecutive audit rounds
-            // of #17 (290 → 318 → naming the fixture for 608 vs 308 → the
-            // sweep that missed a second site), because every number here is
-            // a function of two fixture-dependent operands and reads as a
-            // property of the bug. The formula is the durable claim; the
-            // guard measures the rest. Round 1 justified the change with "290 px,
-            // repeatable, so successive reveals walk it down the screen";
-            // that was measured FALSE. The behaviour it replaced is a
-            // ONE-TIME bounded drop of `revealBlockPx - y`, stable from the
-            // second cycle on, and it is the clamp legitimately keeping the
-            // row on screen rather than a hide-side bug.
-            row.visibility = View.GONE
-            params.y += revealBlockPx
-            revealBlockPx = 0
-            // 🔴 Empty the ADAPTER; never `row.removeAllViews()`. An
-            // AdapterView throws `UnsupportedOperationException` on that, and it
-            // would throw from inside the HIDE path — i.e. while dismissing,
-            // which is the one moment the user cannot retry. The chips must
-            // still be dropped here: each holds a click listener closed over a
-            // history id, and a stale one opens a dictation nobody picked.
-            historyAdapter.submit(emptyList())
-            // The height goes with them, so a row shown again before its next
-            // load lands contributes no window height.
-            row.layoutParams = (row.layoutParams as LinearLayout.LayoutParams).apply {
-                height = 0
-            }
-        }
+        if (actionsShown == show) return
+        actionsShown = show
+        val visibility = if (show) View.VISIBLE else View.GONE
+        history?.visibility = visibility
+        snip?.visibility = visibility
         // 🔴 Scoped to the revealed state, NOT set once at window creation.
         // FLAG_WATCH_OUTSIDE_TOUCH delivers an ACTION_OUTSIDE for every touch
         // anywhere on the device, so leaving it on would wake this service on
-        // each tap for the ~100% of its life when there is no row to dismiss.
+        // each tap for the ~100% of its life when there is nothing to dismiss.
+        //
+        // Bitwise against the live flags, never an assignment: `visibilitySink`
+        // toggles FLAG_NOT_TOUCHABLE on this same field.
         params.flags = if (show) {
             params.flags or WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH
         } else {
@@ -1636,21 +1453,37 @@ class BubbleService : Service() {
     private fun windowHeightPx(): Int =
         haloSizePx +
             (if (cancel?.visibility == View.VISIBLE) cancelBlockPx else 0) +
-            // 🔴 The snip button grows the window DOWNWARD (it is below the
-            // bubble), so unlike `revealBlockPx` it never shifts `y` — but it
-            // is every bit as much part of the height clampY has to know
-            // about. Omitting it is the mutation that leaves the bottom-most
-            // control off-screen on a bubble parked near the bottom edge.
-            (if (snip?.visibility == View.VISIBLE) snipBlockPx else 0) +
-            (if (historyRow?.visibility == View.VISIBLE) revealBlockPx else 0)
+            // 🔴 Both reveal buttons grow the window DOWNWARD, so neither ever
+            // shifts `y` — but each is every bit as much part of the height
+            // clampY has to know about. Omitting EITHER is the mutation that
+            // leaves the bottom-most control off-screen on a bubble parked near
+            // the bottom edge: a button the user can see the top pixel of and
+            // cannot tap.
+            //
+            // 🔴 Read off each button's OWN visibility rather than off
+            // `actionsShown`, deliberately. The flag is what DECIDES the
+            // reveal; this is what the window actually CONTAINS, so a button
+            // left behind by a partial update is visible to the clamp rather
+            // than masked by the intention that it should not be there.
+            (if (history?.visibility == View.VISIBLE) historyBlockPx else 0) +
+            (if (snip?.visibility == View.VISIBLE) snipBlockPx else 0)
 
-    /** As [windowHeightPx]: the row is wider than the bubble when shown. */
-    private fun windowWidthPx(): Int =
-        if (historyRow?.visibility == View.VISIBLE) {
-            maxOf(haloSizePx, revealWidthPx)
-        } else {
-            haloSizePx
-        }
+    /**
+     * The window's width.
+     *
+     * 🔴 **Unconditionally the halo, and that is a SIMPLIFICATION the chip
+     * deletion bought.** This used to be
+     * `if (historyRow visible) maxOf(haloSizePx, revealWidthPx) else haloSizePx`
+     * because the chip row was a fixed 220 dp — far wider than the 84 dp halo —
+     * so revealing it widened the window and [BubbleChrome.clampX] had to know.
+     * Every optional child is now a 44 dp button, narrower than the halo, so
+     * the window's width never changes and there is nothing left to branch on.
+     *
+     * Kept as a function rather than inlined at the two `clampX` call sites:
+     * what is being named is "the width the clamp must use", and a future child
+     * wider than the halo then has one place to say so.
+     */
+    private fun windowWidthPx(): Int = haloSizePx
 
     /** The ring, scaled and faded from the live level. */
     private fun renderPulse(level: Double) {
@@ -2316,7 +2149,7 @@ class BubbleService : Service() {
          * numbers, on purpose.
          *
          * 44 dp is this project's tap-target floor (it is `CANCEL_DP` and
-         * `CHIP_DP` as well), and the two controls hang off the bubble in the
+         * `HISTORY_DP` as well), and the controls hang off the bubble in the
          * same place, so a different size would read as a different kind of
          * thing. Their sum is `snipBlockPx`, which is in the clamp.
          */
@@ -2324,50 +2157,44 @@ class BubbleService : Service() {
         private const val SNIP_GAP_DP = 6
 
         /**
-         * How many chips are **on screen at once**. The reveal SCROLLS, so this
-         * is the window's height in chips, not how many items it offers — that
-         * is [REVEAL_MAX_ITEMS].
+         * The history button's size and the gap above it — [SNIP_DP] and
+         * [SNIP_GAP_DP], for the reason given there.
          *
-         * 🔴 **Keeping this at 4 is what makes scrolling a contained change.**
-         * The window grows by `min(count, REVEAL_SLOTS) * chipBlockPx`, so for
-         * any history of 4 or fewer the geometry is identical to the
-         * pre-scroll build and every piece of clamp arithmetic — including
-         * `#17` audit round 1's F4 fix — keeps its existing evidence. Raising
-         * it re-opens all of that, so raise it deliberately or not at all.
+         * 🔴 Its OWN pair of constants rather than reusing the snip ones, and
+         * that is the same decision `historyBlockPx` records: the two buttons
+         * being the same size is a fact about today's design, not a rule, and
+         * spelling it as one shared constant would make a future change to
+         * either silently change both.
+         */
+        private const val HISTORY_DP = 44
+        private const val HISTORY_GAP_DP = 6
+
+        /*
+         * 🔴 `REVEAL_SLOTS`, `REVEAL_MAX_ITEMS`, `CHIP_DP`, `CHIP_GAP_DP` AND
+         * `REVEAL_WIDTH_DP` WERE HERE AND ARE DELETED.
          *
-         * ⚠ This kdoc used to read *"tying them would put fifty chips on
-         * screen. A full history screen is a separate feature and is not this
-         * one."* The first half is **retired**: fifty chips are now reachable
-         * precisely because only four are ever laid out. The second half
-         * stands — this is a quick-access affordance, not a browser.
-         */
-        private const val REVEAL_SLOTS = 4
-
-        /**
-         * How many recent dictations the reveal offers, scrollably.
+         * All five existed to serve a bounded, scrolling chip list inside this
+         * window. Two of their arguments are worth carrying forward because
+         * they were loudly stated and are now FALSE:
          *
-         * Still deliberately separate from `HistoryRetention.MAX_ITEMS` (1000):
-         * how much is *kept* and how much is worth scrolling from a thumb-sized
-         * gesture are different questions. 50 is the operator's call
-         * (2026-10-17) and is a one-line change — nothing depends on the value,
-         * only on it being finite. It is also what bounds the store read:
-         * [DictationHistoryStore.recent] stats only as many files as it
-         * returns, so this constant is the syscall budget per reveal.
+         *  * `REVEAL_SLOTS`'s kdoc said *"this is a quick-access affordance,
+         *    not a browser"*, and that was the design's own statement of
+         *    intent. 🔴 **The scope changed, knowingly, on 2026-11-03**: a
+         *    search field over a scrollable Activity IS the browser that
+         *    sentence says it is not. Retired here rather than deleted
+         *    silently, so the next reader does not think it still holds. See
+         *    `HistoryPickerActivity`.
+         *  * `REVEAL_MAX_ITEMS` was **50**, the operator's call of 2026-10-17,
+         *    and its argument was a syscall budget: `recent(limit)` stats one
+         *    file per item returned, and 50 was what a thumb gesture should
+         *    pay. 🔴 **That became a silent wrong answer the moment history got
+         *    a SEARCH FIELD** — searching the newest 50 of up to 1000 retained
+         *    items reports "nothing matches" for a dictation that is on disk,
+         *    and the operator's device already holds 94. The replacement is
+         *    `HistoryPickerActivity.MAX_ITEMS`, which is
+         *    `HistoryRetention.MAX_ITEMS` rather than a number of its own, so
+         *    no value of it can hide a retained item.
          */
-        private const val REVEAL_MAX_ITEMS = 50
-
-        /** One chip's height. 44 dp is the cancel button's, and the floor. */
-        private const val CHIP_DP = 44
-        private const val CHIP_GAP_DP = 6
-
-        /**
-         * The chip row's width. Wide enough for
-         * [HistoryLabel.MAX_CHARS] at the chip's text size with margin, narrow
-         * enough that the window still fits a short display in landscape —
-         * both of which are claims only a device can settle, which is why the
-         * reveal is on the device checklist rather than asserted here.
-         */
-        private const val REVEAL_WIDTH_DP = 220
 
         /**
          * The warning card's width, and the margin it keeps from the display
