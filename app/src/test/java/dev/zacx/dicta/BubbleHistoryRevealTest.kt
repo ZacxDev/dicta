@@ -793,6 +793,16 @@ class BubbleHistoryRevealTest {
         // 🔴 MEASURES the container both ways instead of trusting
         // revealBlockPx. The old guards reflected that field out and compared
         // it with itself, so an understated height was invisible to them.
+        //
+        // 🔴 WIDENED for issue #38, not loosened. The reveal now adds children
+        // on BOTH sides of the bubble: the chips above it, which `y` has to
+        // compensate for, and the snip button below it, which it must not —
+        // with Gravity.TOP a child below the bubble cannot move the bubble, so
+        // folding its height into the shift is what WOULD make the bubble jump.
+        // So the claim is now the sum: the container grew by exactly the `y`
+        // shift (the part above) plus `snipBlockPx` (the part below). An
+        // understated chip height still fails it — the F4 case this guard was
+        // written for measured 318 against a claimed 300, and 468 ≠ 300 + 150.
         val service = start()
         val root = rootOf(service)
         val spec = View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)
@@ -804,13 +814,15 @@ class BubbleHistoryRevealTest {
         longPress(service)
         root.measure(spec, spec)
         val expanded = root.measuredHeight
+        val snipBlock: Int = field(service, "snipBlockPx")
+        assertTrue("precondition: the snip button has a height", snipBlock > 0)
 
         assertEquals(
-            "the window moved by a different amount than the row actually " +
-                "added, so the bubble shifts on reveal and clampY is told " +
-                "the window is the wrong height",
+            "the window moved by a different amount than the row above the " +
+                "bubble actually added, so the bubble shifts on reveal and " +
+                "clampY is told the window is the wrong height",
             expanded - collapsed,
-            before - params(service).y,
+            (before - params(service).y) + snipBlock,
         )
     }
 

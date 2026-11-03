@@ -297,9 +297,10 @@ class SettingsThemingTest {
         // Positive control: a zero here would make the loop vacuous and
         // indistinguishable from a tree with no text-bearing controls at all.
         assertEquals(
-            "expected to examine the checkbox, both fields and both outlined " +
-                "buttons; examined $examined",
-            5,
+            "expected to examine the checkbox, both fields and all THREE " +
+                "outlined buttons (Save, Test, Import snippets); examined " +
+                "$examined",
+            6,
             examined.size
         )
     }
@@ -535,10 +536,13 @@ class SettingsThemingTest {
         val buttons = descendants(inflate())
             .filterIsInstance<Button>()
             .filter { it !is android.widget.CompoundButton }
+        // 🔴 Five since issue #38 added @id/stt_import_snippets. RE-DERIVED
+        // from what the screen holds, not loosened: the four are Save, Test,
+        // Clear token and Delete all history, and the fifth is the import.
         assertEquals(
-            "the screen no longer has the four buttons this guard was written " +
+            "the screen no longer has the five buttons this guard was written " +
                 "for; re-derive it rather than loosening it",
-            4,
+            5,
             buttons.size
         )
         for (button in buttons) {
