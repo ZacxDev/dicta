@@ -1,6 +1,7 @@
 package dev.zacx.dicta
 
 import android.content.ClipData
+import android.content.ClipDescription
 import android.content.ClipboardManager
 import android.view.View
 import android.widget.EditText
@@ -248,6 +249,100 @@ class SnipPickerActivityTest {
         val activity = stocked()
         pick(activity, 0)
         assertEquals("walk slowly", clipText())
+    }
+
+    @Test
+    fun theCopiedSnippetIsMarkedSensitiveSoThePlatformDoesNotDisplayIt() {
+        // 🔴 From Android 13 a copy raises a preview that renders the copied
+        // TEXT over whatever app the user is in, and keeps it in clipboard
+        // history. A snippet body is arbitrary operator text — SnipStore argues
+        // noBackupFilesDir on exactly that basis, and Snippet names `ssh` and
+        // `kubeconfig` among its categories — so this feature would otherwise
+        // put a kubeconfig on screen to confirm that it had been copied, while
+        // @string/snip_copied is worded to keep the body out of Dicta's OWN
+        // toast.
+        val activity = stocked()
+        pick(activity, 1)
+
+        val description = clipboard().primaryClip?.description
+        assertNotNull("nothing reached the clipboard at all", description)
+        assertTrue(
+            "the snip clipboard write is not flagged " +
+                "ClipDescription.EXTRA_IS_SENSITIVE, so the platform previews " +
+                "the snippet body and keeps it in clipboard history: " +
+                "extras=${description!!.extras}",
+            description.extras?.getBoolean(ClipDescription.EXTRA_IS_SENSITIVE) == true,
+        )
+    }
+
+    // --- re-entry into a surviving instance ----------------------------------
+
+    @Test
+    fun aSecondLaunchReloadsTheCatalogAndClearsTheQuery() {
+        // 🔴 The picker is launchMode="singleTop" with no noHistory, so HOME
+        // (rather than Back) leaves the instance alive. Import a different
+        // snippets.json, tap snip again, and the system delivers onNewIntent
+        // while onCreate — the only place a catalog was loaded — does not run.
+        // Without the override the picker lists rows the user has already
+        // replaced and tapping one copies a body that no longer exists, with
+        // nothing on screen saying so.
+        var catalog = SnipStore.Catalog(rows, 1L)
+        val c = Robolectric.buildActivity(SnipPickerActivity::class.java)
+        controller = c
+        c.get().source = SnipSource { catalog }
+        c.get().loadExecutor = Executor { it.run() }
+        val activity = c.setup().get()
+
+        assertEquals(
+            "precondition: the first open listed catalog A",
+            listOf("Zebra crossing", "Quince jam", "Paste it back"),
+            labels(activity),
+        )
+        search(activity).setText("stripes")
+        assertEquals(
+            "precondition: the query filtered the list",
+            listOf("Zebra crossing"),
+            labels(activity),
+        )
+
+        // Settings replaces the catalog while the picker sits stopped.
+        catalog = SnipStore.Catalog(
+            listOf(Snippet("Oyster fork", "shuck it", listOf("shellfish"), "path")),
+            2L,
+        )
+        c.newIntent(SnipLaunch.intent(activity))
+
+        assertEquals(
+            "the re-entered picker still lists the REPLACED catalog, so a tap " +
+                "copies a body the user already deleted",
+            listOf("Oyster fork"),
+            labels(activity),
+        )
+        assertEquals(
+            "the query from before HOME was pressed is still filtering the " +
+                "list, which reads as a short catalog rather than as a filter " +
+                "the user cannot see the origin of",
+            "",
+            search(activity).text.toString(),
+        )
+    }
+
+    @Test
+    fun theFirstOpenLoadsTheCatalogExactlyOnce() {
+        // The control for the test above: putting the reload in onResume would
+        // also satisfy it, and would read the catalog twice — a file read plus
+        // a JSON parse of the whole catalog — on every single launch.
+        var loads = 0
+        val c = Robolectric.buildActivity(SnipPickerActivity::class.java)
+        controller = c
+        c.get().source = SnipSource {
+            loads++
+            SnipStore.Catalog(rows, 1L)
+        }
+        c.get().loadExecutor = Executor { it.run() }
+        c.setup()
+
+        assertEquals("a fresh open read the catalog more than once", 1, loads)
     }
 
     // --- rendering -----------------------------------------------------------

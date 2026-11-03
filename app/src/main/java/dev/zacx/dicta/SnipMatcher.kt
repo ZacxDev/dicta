@@ -58,11 +58,29 @@ object SnipMatcher {
      *   what makes the "declared" group in [rank] a different question from
      *   plain membership.
      *
-     * Empty `search_terms` entries are skipped rather than treated as matching
-     * everything: `"".contains(token)` is false for a non-empty token but TRUE
-     * for an empty one, and an empty token is reachable from a query of pure
-     * punctuation. The explicit `isNotEmpty()` keeps one blank entry in a
-     * catalog from making its row match every search.
+     * ### The `isNotEmpty()` on a `search_terms` entry is a PORT-FIDELITY
+     * guard, and 🔴 **no production caller can reach it**
+     *
+     * It mirrors upstream's own defensive `st == ""` skip
+     * (`internal/matcher/matcher.go:72-77`), which upstream keeps while
+     * disclaiming it in the same breath: no reachable caller produces an empty
+     * token. The same is true here, for two independent reasons — [tokensOf]
+     * drops empty tokens, so no token reaching this function is ever `""`; and
+     * for a non-empty token `"".contains(token)` is already false. A
+     * whitespace-only query never arrives at all: [rank] answers it at the
+     * BROWSE branch.
+     *
+     * So this line is not load-bearing on a live path, and a maintainer must
+     * not read it as if it were. It is here because the port is faithful to
+     * upstream's semantics rather than improved on, which is this object's
+     * whole posture. `SnipMatcherTest` exercises it with a direct
+     * `tokenMatches("", …)` call, deliberately labelled as a port-fidelity
+     * check rather than as reachable regression coverage — and mutant
+     * `m-snip05` in `scripts/mutants/snip-picker.tsv` is recorded the same way.
+     *
+     * An earlier version of this paragraph claimed an empty token "is reachable
+     * from a query of pure punctuation". That is **false**: `"!!!"` tokenises
+     * to `["!!!"]`, one non-empty token.
      */
     fun tokenMatches(token: String, row: Snippet, useLabel: Boolean): Boolean {
         if (useLabel) {

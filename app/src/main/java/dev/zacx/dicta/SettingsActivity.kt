@@ -11,6 +11,7 @@ import android.widget.EditText
 import android.widget.Spinner
 import android.widget.TextView
 import android.widget.Toast
+import java.io.IOException
 import java.util.Locale
 import java.util.concurrent.Executors
 
@@ -451,13 +452,31 @@ class SettingsActivity : Activity() {
         // A cancelled picker is not a failure and must not report one: the
         // state line keeps saying whatever is actually stored.
         if (resultCode != RESULT_OK) return
-        val uri = data?.data ?: return
+        // 🔴 RESULT_OK with no URI, which is NOT a cancellation: the user went
+        // through the picker and chose something, and the provider handed back
+        // a result with no document in it. Returning silently here is the
+        // silent no-op this feature argues against everywhere else — the
+        // operator taps Import, watches nothing happen, and has no way to learn
+        // whether the file was rejected or the tap was lost. It is a read
+        // failure, so it gets the read-failure wording.
+        val uri = data?.data ?: run {
+            snippetsState.text = getString(
+                R.string.stt_snippets_import_unreadable,
+                getString(R.string.stt_snippets_import_no_file),
+            )
+            return
+        }
         val store = snippets ?: return
         worker.execute {
             val outcome = runCatching {
                 val text = contentResolver.openInputStream(uri)
                     ?.use { it.readBytes().toString(Charsets.UTF_8) }
-                    ?: throw SnipCatalog.Invalid("the file could not be opened")
+                    // 🔴 An IOException, NOT SnipCatalog.Invalid. A provider
+                    // that cannot open its own document says nothing about the
+                    // file's contents, and routing it through the "that file is
+                    // not a snippets.json" frame tells the operator to re-export
+                    // a file that is probably fine.
+                    ?: throw IOException("the provider returned no stream")
                 val parsed = SnipCatalog.parse(text)
                 store.save(parsed, System.currentTimeMillis())
                 parsed
@@ -472,18 +491,32 @@ class SettingsActivity : Activity() {
     }
 
     /**
-     * The one place an import failure is worded.
+     * The one place an import failure is worded — in **two** frames, because
+     * there are two different failures and they have different next steps.
      *
-     * [SnipCatalog.Invalid.reason] names what is wrong with the file — not an
-     * array, a row with no label, a duplicate label — and all three are things
-     * the operator can fix. Anything else (an IO fault, a provider that
-     * revoked the URI) has no such reason, so the exception's class name is
-     * the honest stand-in: it is at least distinguishable from the others.
+     * 🔴 A refusal must name what is actually wrong ([SnipCatalog]'s own
+     * doctrine). [SnipCatalog.Invalid] genuinely means "this is not a
+     * snippets.json", and [SnipCatalog.Invalid.reason] names which way — not an
+     * array, a row with no label, a duplicate label — all of them things the
+     * operator fixes by editing or re-exporting the file.
+     *
+     * Everything else is a READ failure over a file that may be perfectly
+     * valid: a `SecurityException` from a URI whose grant was revoked, an
+     * `IOException`, a timeout from a cloud provider's `DocumentsProvider`. One
+     * `runCatching` wraps the whole read, so these arrive here by the same
+     * path — and wording them as "that file is not a snippets.json" sends the
+     * operator off to re-export a good file when the right action is to try
+     * again. They get their own frame; the exception's class name is the honest
+     * stand-in for a reason, since there is none to quote.
      */
-    private fun importFailureText(t: Throwable): String = getString(
-        R.string.stt_snippets_import_failed,
-        (t as? SnipCatalog.Invalid)?.reason ?: t.javaClass.simpleName,
-    )
+    private fun importFailureText(t: Throwable): String {
+        val invalid = t as? SnipCatalog.Invalid
+        return if (invalid != null) {
+            getString(R.string.stt_snippets_import_failed, invalid.reason)
+        } else {
+            getString(R.string.stt_snippets_import_unreadable, t.javaClass.simpleName)
+        }
+    }
 
     /** Reads the stored catalog on [worker] and renders it. See [refreshHistoryUsage]. */
     private fun refreshSnippetsState() {

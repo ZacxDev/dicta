@@ -2,8 +2,12 @@ package dev.zacx.dicta
 
 import android.app.Activity
 import android.content.ClipData
+import android.content.ClipDescription
 import android.content.ClipboardManager
+import android.content.Intent
+import android.os.Build
 import android.os.Bundle
+import android.os.PersistableBundle
 import android.text.Editable
 import android.text.TextWatcher
 import android.view.View
@@ -113,6 +117,38 @@ class SnipPickerActivity : Activity() {
         load()
     }
 
+    /**
+     * Re-entry into an instance that was never destroyed: reload, and clear the
+     * query.
+     *
+     * 🔴 **Without this the picker serves a STALE catalog.** The manifest
+     * declares `launchMode="singleTop"` with the picker's own `taskAffinity`
+     * and no `noHistory`, so the activity survives being stopped: open it from
+     * the bubble, press HOME rather than Back (so nothing calls [finish]),
+     * import a different `snippets.json` from Settings, then tap snip again.
+     * The system delivers `onNewIntent` to the existing instance, [onCreate]
+     * does not run, and a catalog loaded only there would list rows the user
+     * has already replaced — tapping one copies a body that no longer exists,
+     * with nothing on screen saying so.
+     *
+     * `onNewIntent` rather than `onResume`: the resume callback also fires on
+     * the way up from [onCreate], so putting the reload there would load the
+     * catalog twice on every fresh open — two file reads and two JSON parses
+     * for one launch. `onNewIntent` fires only for re-entry, which is exactly
+     * the case that is stale.
+     *
+     * The query is reset because a filter the user cannot see the origin of
+     * reads as a short catalog: a re-opened picker showing one row out of
+     * forty, because of something typed before HOME was pressed, is the
+     * silent-empty failure again in a new shape.
+     */
+    override fun onNewIntent(intent: Intent?) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        search.setText("")
+        load()
+    }
+
     override fun onDestroy() {
         worker.shutdownNow()
         super.onDestroy()
@@ -182,7 +218,7 @@ class SnipPickerActivity : Activity() {
             snippet.body
         }
         runCatching {
-            clipboard?.setPrimaryClip(ClipData.newPlainText(snippet.label, body))
+            clipboard?.setPrimaryClip(sensitive(ClipData.newPlainText(snippet.label, body)))
         }
         runCatching {
             Toast.makeText(
@@ -192,6 +228,37 @@ class SnipPickerActivity : Activity() {
             ).show()
         }
         finish()
+    }
+
+    /**
+     * Marks [clip] as sensitive, so the platform does not display it.
+     *
+     * 🔴 The same argument [SnipStore] makes for `noBackupFilesDir`: a snippet
+     * body is arbitrary operator text — paths, hostnames, prompt templates —
+     * and [Snippet] names `ssh` and `kubeconfig` among its categories. From
+     * Android 13 a copy raises a preview toast that renders the copied TEXT
+     * over whatever app the user is in, and the text is kept in clipboard
+     * history; `EXTRA_IS_SENSITIVE` is what suppresses both. Without it, this
+     * feature would put a kubeconfig on screen to confirm that it had been
+     * copied — which is precisely what `@string/snip_copied` is worded to
+     * avoid for the toast Dicta raises itself.
+     *
+     * `minSdk` is 26 and the extra is API 33, so the write is guarded on the
+     * running version rather than on the compile one. Below 33 the platform has
+     * neither the preview nor the history, so there is nothing to suppress and
+     * nothing to fall back to.
+     *
+     * Scoped to the snip write deliberately: `DictateActivity`'s transcript
+     * copy has the same gap and is pre-existing, and widening this change to it
+     * would put a second, independently-arguable decision in #38's diff.
+     */
+    private fun sensitive(clip: ClipData): ClipData {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            clip.description.extras = PersistableBundle().apply {
+                putBoolean(ClipDescription.EXTRA_IS_SENSITIVE, true)
+            }
+        }
+        return clip
     }
 
     /**

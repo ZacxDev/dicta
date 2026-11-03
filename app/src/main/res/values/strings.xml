@@ -519,7 +519,22 @@
     <!-- 🔴 Carries the REASON. A bare "Import failed" leaves the
          operator with nothing to act on, and the reasons are all actionable and
          all different: not an array, a row with no label, a duplicate label.
-         SnipCatalog produces the text; this is the frame. -->
+         SnipCatalog produces the text; this is the frame.
+
+         🔴 And it is used ONLY for SnipCatalog.Invalid, because it is a claim
+         about the file's CONTENTS. See the next string. -->
     <string name="stt_snippets_import_failed">That file is not a snippets.json: %1$s</string>
+    <!-- 🔴 The SECOND frame: an unreadable file is a different failure with a
+         different next step. A revoked URI, an IOException, a cloud provider's
+         timeout — all reach the same handler, over a file that may be perfectly
+         valid. Telling the operator it "is not a snippets.json" sends them off
+         to re-export a good file when the right action is to retry. %1$s is the
+         exception's class name: there is no reason to quote here, and a class
+         name is at least distinguishable between faults. -->
+    <string name="stt_snippets_import_unreadable">That file could not be read: %1$s. Try again.</string>
+    <!-- The reason for the one read failure with no exception behind it:
+         RESULT_OK carrying no document. A silent return there is a no-op the
+         operator cannot tell apart from a lost tap. -->
+    <string name="stt_snippets_import_no_file">the picker returned no file</string>
     <string name="stt_snippets_no_picker">No app on this phone can open a document.</string>
 </resources>

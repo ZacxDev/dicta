@@ -178,16 +178,33 @@ class SnipMatcherTest {
     // --- search_terms --------------------------------------------------------
 
     @Test
-    fun emptySearchTermsEntriesAreSkippedRatherThanMatchingEverything() {
-        // `"".contains(token)` is false for a non-empty token and TRUE for an
-        // empty one, and an empty token is reachable from a query of pure
-        // punctuation. Without the explicit isNotEmpty() one blank entry in a
-        // catalog makes its row match every search.
+    fun aBlankSearchTermEntryIsSkippedAsAPortFidelityInvariantNotReachableCoverage() {
+        // 🔴 LABELLED, because what this asserts is narrower than it looks.
+        //
+        // The first assertion is the reachable claim: a row whose search_terms
+        // are blank must not answer an ordinary query. That holds with or
+        // without `SnipMatcher`'s `isNotEmpty()`, because `"".contains("anything")`
+        // is already false.
+        //
+        // The second is an INVARIANT GUARD on that `isNotEmpty()`, and the only
+        // thing that kills mutant m-snip05. It calls tokenMatches with an input
+        // NO PRODUCTION CALLER CAN PRODUCE: tokensOf drops empty tokens, and a
+        // whitespace-only query is answered at rank's BROWSE branch. So it is a
+        // port-fidelity check against upstream's own defensive `st == ""` skip
+        // (internal/matcher/matcher.go:72-77) — not evidence that a live path is
+        // covered. MEASURED: delete this one call and m-snip05 SURVIVES at 15
+        // tests / 0 failures with the rank-level assertion still in place.
+        //
+        // An earlier version of this comment claimed an empty token "is
+        // reachable from a query of pure punctuation". That is false: "!!!"
+        // tokenises to ["!!!"], one non-empty token.
         val blank = listOf(snip("Zebra crossing", terms = listOf("", "")))
         assertEquals(emptyList<String>(), labelsOf(SnipMatcher.rank(blank, "anything")))
         assertFalse(
-            "a blank search term matched an empty token, so a catalog row " +
-                "with one would answer every query",
+            "the port dropped upstream's defensive blank-entry skip: a blank " +
+                "search term matched an empty token. No production caller can " +
+                "hand one in, so this is a fidelity claim about the port, not " +
+                "a claim that any live query is affected",
             SnipMatcher.tokenMatches("", blank[0], useLabel = false),
         )
     }

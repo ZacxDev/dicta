@@ -32,7 +32,17 @@ m-snip01-word-class-keeps-hyphens	app/src/main/java/dev/zacx/dicta/SnipMatcher.k
 m-snip02-query-not-normalised	app/src/main/java/dev/zacx/dicta/SnipMatcher.kt	val norm = query.trim().lowercase()	val norm = query.trim()	dev.zacx.dicta.SnipMatcherTest
 m-snip03-multi-token-and-becomes-or	app/src/main/java/dev/zacx/dicta/SnipMatcher.kt	it.all { t -> tokenMatches(t, row, true) }	it.any { t -> tokenMatches(t, row, true) }	dev.zacx.dicta.SnipMatcherTest
 m-snip04-labeled-ranked-before-declared	app/src/main/java/dev/zacx/dicta/SnipMatcher.kt	return declared + labeled	return labeled + declared	dev.zacx.dicta.SnipMatcherTest
-m-snip05-blank-search-term-matches-all	app/src/main/java/dev/zacx/dicta/SnipMatcher.kt	if (term.isNotEmpty() && term.lowercase().contains(token))	if (term.lowercase().contains(token))	dev.zacx.dicta.SnipMatcherTest
+# 🔴 m-snip05 is an INVARIANT / PORT-FIDELITY mutant, NOT reachable regression
+# coverage, and its verdict must be read that way. `isNotEmpty()` is a faithful
+# copy of upstream's defensive `st == ""` skip
+# (internal/matcher/matcher.go:72-77) and NO production caller can reach it:
+# tokensOf drops empty tokens, and a whitespace-only query is answered at
+# rank's BROWSE branch. MEASURED: the kill rests entirely on one direct
+# `tokenMatches("", …)` call in SnipMatcherTest — remove that single call,
+# keeping the rank()-level assertion, and this mutant SURVIVES at 15 tests / 0
+# failures. A kill here says the port still matches upstream; it says nothing
+# about a live path being guarded.
+m-snip05-port-fidelity-blank-search-term-skip-dropped	app/src/main/java/dev/zacx/dicta/SnipMatcher.kt	if (term.isNotEmpty() && term.lowercase().contains(token))	if (term.lowercase().contains(token))	dev.zacx.dicta.SnipMatcherTest
 m-snip06-blank-query-is-not-browse	app/src/main/java/dev/zacx/dicta/SnipMatcher.kt	if (norm.isEmpty()) return rows	if (norm.isEmpty()) return emptyList()	dev.zacx.dicta.SnipMatcherTest
 m-snip07-clip-var-replaced-once	app/src/main/java/dev/zacx/dicta/SnipClip.kt	body.replace(CLIP_VAR, clipboard)	body.replaceFirst(CLIP_VAR, clipboard)	dev.zacx.dicta.SnipClipTest
 m-snip08-needsclip-only-at-the-start	app/src/main/java/dev/zacx/dicta/SnipClip.kt	body.contains(CLIP_VAR)	body.startsWith(CLIP_VAR)	dev.zacx.dicta.SnipClipTest

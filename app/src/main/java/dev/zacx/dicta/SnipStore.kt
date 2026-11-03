@@ -98,7 +98,6 @@ class SnipStore internal constructor(
     fun save(snippets: List<Snippet>, importedAtMs: Long) = synchronized(LOCK) {
         dir.mkdirs()
         val payload = JSONObject()
-            .put(KEY_VERSION, VERSION)
             .put(KEY_IMPORTED_AT, importedAtMs)
             .put(KEY_SNIPPETS, SnipCatalog.toJson(snippets))
             .toString()
@@ -131,7 +130,14 @@ class SnipStore internal constructor(
         private const val TMP_SUFFIX = ".tmp"
         private const val KEY_SNIPPETS = "snippets"
         private const val KEY_IMPORTED_AT = "importedAtMs"
-        private const val KEY_VERSION = "version"
-        private const val VERSION = 1
+
+        // 🔴 There is deliberately NO `version` field in the envelope. One was
+        // written here and read by nothing — a write-only field is not a
+        // migration path, it is a field a future reader would have to trust
+        // without ever having been checked. `catalog()` already tolerates any
+        // envelope it cannot understand by reporting "nothing imported", which
+        // is the behaviour a version mismatch would have to produce anyway. If
+        // a second format ever arrives, the version it needs is the one written
+        // BY that change, with a reader in the same commit.
     }
 }

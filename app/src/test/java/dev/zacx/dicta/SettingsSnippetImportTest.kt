@@ -7,7 +7,9 @@ import android.os.Looper
 import android.widget.Button
 import android.widget.TextView
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -20,6 +22,8 @@ import org.robolectric.Shadows.shadowOf
 import org.robolectric.android.controller.ActivityController
 import org.robolectric.annotation.Config
 import java.io.ByteArrayInputStream
+import java.io.IOException
+import java.io.InputStream
 
 /**
  * Importing a snip catalog from `SettingsActivity`, and the **seam** between
@@ -102,6 +106,27 @@ class SettingsSnippetImportTest {
     }
 
     private var counter = 0
+
+    /**
+     * A document whose stream FAILS, standing in for a read fault over a file
+     * that is otherwise fine — a revoked URI grant, a provider timeout, a cloud
+     * `DocumentsProvider` that cannot reach its backend. `readBytes` funnels
+     * through `read()`, so throwing there is the whole simulation.
+     */
+    private fun unreadableDocument(): Uri {
+        val uri = Uri.parse("content://dev.zacx.dicta.test/unreadable-${counter++}.json")
+        shadowOf(RuntimeEnvironment.getApplication().contentResolver)
+            .registerInputStream(
+                uri,
+                object : InputStream() {
+                    override fun read(): Int = throw IOException("the provider's read failed")
+                },
+            )
+        return uri
+    }
+
+    /** The literal prefix of a format string, before its first argument. */
+    private fun frame(id: Int) = string(id).substringBefore("%1\$s")
 
     /**
      * Drives the real import: taps the button, then hands back a result
@@ -242,6 +267,93 @@ class SettingsSnippetImportTest {
                 "snippets.json\", so it reads as the app being broken rather " +
                 "than the file: \"$failed\"",
             failed.startsWith(string(R.string.stt_snippets_import_failed).substringBefore("%1\$s")),
+        )
+    }
+
+    @Test
+    fun aFileThatCannotBeReadIsNotReportedAsAMalformedSnippetsJson() {
+        // 🔴 One runCatching wraps the whole read, so a SecurityException from
+        // a revoked URI, a provider timeout and an IOException over a PERFECTLY
+        // VALID file all arrive at the same handler. Wording those as "that
+        // file is not a snippets.json" tells the operator their good file is
+        // broken and sends them to re-export it, when the action that would
+        // work is to try again.
+        val store = SnipStore(temp.newFolder("store"))
+        val activity = start(store)
+        val pending = settled(activity)
+        deliver(activity, document(valid))
+        val good = settled(activity, from = pending)
+
+        deliver(activity, unreadableDocument())
+        val failed = settled(activity, from = good)
+
+        assertTrue(
+            "a read failure is worded as a malformed file: \"$failed\"",
+            failed.startsWith(frame(R.string.stt_snippets_import_unreadable)),
+        )
+        assertTrue(
+            "the read failure is framed as \"that file is not a " +
+                "snippets.json\", which is a claim about contents nothing here " +
+                "ever looked at: \"$failed\"",
+            !failed.startsWith(frame(R.string.stt_snippets_import_failed)),
+        )
+        assertNotEquals(
+            "the two import failures share a frame, so an IO fault and a " +
+                "malformed catalog are indistinguishable on screen",
+            frame(R.string.stt_snippets_import_failed),
+            frame(R.string.stt_snippets_import_unreadable),
+        )
+        assertEquals(
+            "a file that could not be read destroyed the stored catalog",
+            listOf("Zebra crossing", "Quince jam"),
+            store.catalog()?.snippets?.map { it.label },
+        )
+    }
+
+    @Test
+    fun aMalformedFileStillGetsTheNotASnippetsJsonFrame() {
+        // The other half of the split, and the control for the test above: an
+        // implementation that moved EVERY failure to the read-failure frame
+        // would pass that one and would then tell the operator to retry a file
+        // that will never parse.
+        val store = SnipStore(temp.newFolder("store"))
+        val activity = start(store)
+        val pending = settled(activity)
+
+        deliver(activity, document("not json at all"))
+        val failed = settled(activity, from = pending)
+
+        assertTrue(
+            "a malformed catalog is no longer framed as \"that file is not a " +
+                "snippets.json\": \"$failed\"",
+            failed.startsWith(frame(R.string.stt_snippets_import_failed)),
+        )
+    }
+
+    @Test
+    fun aResultCarryingNoDocumentSaysSoRatherThanDoingNothingAtAll() {
+        // 🔴 RESULT_OK with null data is NOT a cancellation: the operator went
+        // through the picker and chose something. A silent return leaves them
+        // watching nothing happen, unable to tell a refused file from a lost
+        // tap — the anti-silent-empty doctrine this whole feature is built on.
+        val store = SnipStore(temp.newFolder("store"))
+        val activity = start(store)
+        val pending = settled(activity)
+
+        deliver(activity, uri = null)
+        val said = settled(activity, from = pending)
+
+        assertTrue(
+            "RESULT_OK with no document changed nothing on screen: \"$said\"",
+            said.startsWith(frame(R.string.stt_snippets_import_unreadable)),
+        )
+        assertTrue(
+            "the message does not say what went wrong: \"$said\"",
+            said.contains(string(R.string.stt_snippets_import_no_file)),
+        )
+        assertNull(
+            "a result with no document wrote a catalog",
+            store.catalog(),
         )
     }
 

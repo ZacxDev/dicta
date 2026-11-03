@@ -14,9 +14,23 @@
   (NOT a RecyclerView — the app has zero runtime dependencies by decision; see
   app/build.gradle.kts).
 
-  The list's height is match_parent inside a weighted slot rather than
-  wrap_content: wrap_content asks a ListView to measure every row, which both
-  defeats recycling and unbounds the window.
+  🔴 The list's height is a FIXED 320dp, and that is what the file says
+  because it is what the file does. It is deliberately NOT wrap_content:
+  wrap_content asks a ListView to measure every row, which both defeats
+  recycling and unbounds the window — a 200-row catalog would grow the window
+  past the screen.
+
+  It is also not `0dp` + layout_weight="1", which an earlier version of this
+  comment described and the file never implemented. The weighted design needs a
+  parent with a bounded height to divide up, and this root is wrap_content
+  inside @style/Theme.Dicta.Overlay — a FLOATING dialog window that sizes
+  itself to its content. A weighted child in a wrap_content parent resolves to
+  zero height, i.e. an invisible list. Making the weighted version work means
+  choosing a window height, and there is no device in this loop to measure one
+  on; a fixed cap is the honest version of the same bound.
+
+  The cost, stated: at a large font scale 320dp shows fewer rows rather than
+  growing. The list scrolls, so nothing is unreachable.
 -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"

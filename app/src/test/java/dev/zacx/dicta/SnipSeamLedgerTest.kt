@@ -169,15 +169,31 @@ class SnipSeamLedgerTest {
     // --- the microphone, which the snip flow must never reach ---------------
 
     /**
-     * Every production file this feature adds.
+     * Every production file of the snip flow itself.
      *
      * 🔴 A LEDGER, so the microphone scan below cannot quietly stop covering a
-     * file. A set of names that is merely *checked against what exists* would
-     * grow silently with the next snip source file, and the one thing this
-     * guard must not do is read as coverage while providing none for the newest
-     * file. `BubbleService.kt`, `BubbleDictation.kt` and `SettingsActivity.kt`
-     * are deliberately NOT in it: they legitimately own microphone paths of
-     * their own, and the claim being made is about the snip flow's own files.
+     * file — and the set it is checked against is derived **structurally**, not
+     * from a name.
+     *
+     * The first version of that check compared this list to
+     * `mainSources().filter { it.startsWith("Snip") }`, which made membership a
+     * matter of SPELLING. MEASURED: a snip-flow file named `CatalogFetcher.kt`
+     * — the file the tailnet-catalog follow-up named on [SnipStore] will add —
+     * that named `DictationSession` was absent from BOTH sides of that
+     * comparison, so it escaped the microphone scan entirely and this class
+     * stayed at 10 tests / 0 failures. That is the one thing this guard must
+     * not do: read as coverage while providing none for the newest file.
+     *
+     * Two guards replace it, closing the hole from either side:
+     * [everyFileReferencingASnipSymbolIsLedgeredAsFlowOrAsAMicOwningHost]
+     * derives snip-flow membership from an actual reference to a snip symbol,
+     * and [onlyLedgeredMicOwningFilesNameAMicrophoneSymbol] scans the WHOLE
+     * production tree instead of this list — so a new file that reaches capture
+     * is red whatever it is called.
+     *
+     * `BubbleService.kt`, `BubbleDictation.kt` and `SettingsActivity.kt` are
+     * deliberately NOT in it: they legitimately own microphone paths of their
+     * own, and the claim being made is about the snip flow's own files.
      */
     private val snipSources = listOf(
         "SnipCatalog.kt",
@@ -190,16 +206,77 @@ class SnipSeamLedgerTest {
         "Snippet.kt",
     )
 
+    /**
+     * The files that touch the snip flow **and** legitimately own a microphone
+     * path of their own: the service that carries the effect out, the state
+     * machine that emits it, and the settings screen that imports the catalog.
+     *
+     * Ledgered separately from [snipSources] because the two are held to
+     * opposite claims — these three may name a capture symbol, the snip flow's
+     * own files may not — and because a new file put in the WRONG one is the
+     * failure mode that would restore the blind spot. A snip-aware file can
+     * only be classified by editing one of these two lists, deliberately.
+     */
+    private val snipAwareMicOwningHosts = listOf(
+        "BubbleDictation.kt",
+        "BubbleService.kt",
+        "SettingsActivity.kt",
+    )
+
+    /**
+     * Every production file permitted to name a microphone or capture symbol.
+     *
+     * 🔴 The scan over this is INVERTED relative to the one over [snipSources]:
+     * instead of asking "do the snip files reach capture", it asks "does any
+     * file outside this ledger reach capture". That is what makes a new,
+     * arbitrarily-named snip file visible — it has to be ledgered here before
+     * it may touch the microphone, and it cannot be ledgered here and in
+     * [snipSources] both without the scan below going red.
+     *
+     * Measured from the tree, not from intent: these are the files that name a
+     * [MIC_SYMBOLS] entry outside comments today.
+     */
+    private val micOwningSources = listOf(
+        "BubbleDictation.kt",
+        "BubbleService.kt",
+        "BubbleSessionBus.kt",
+        "DictateActivity.kt",
+        "DictateLaunch.kt",
+        "DictationSession.kt",
+        "MainActivity.kt",
+        "MicCapture.kt",
+        "MicrophoneOwner.kt",
+        "ProjectionService.kt",
+    )
+
     @Test
-    fun theSnipFlowsOwnFilesAreTheLedgeredSet() {
+    fun everyFileReferencingASnipSymbolIsLedgeredAsFlowOrAsAMicOwningHost() {
         assertEquals(
-            "the set of Snip* production files changed. Add it to " +
-                "`snipSources` so the microphone scan below actually covers " +
-                "it — a scan over a stale list reads as coverage while " +
-                "providing none for the newest file, which is worse than no " +
-                "scan at all.",
-            snipSources,
-            mainSources().map { it.first }.filter { it.startsWith("Snip") }.sorted(),
+            "the set of production files referencing a snip symbol changed. " +
+                "Put the new file in `snipSources` if it is part of the snip " +
+                "flow, or in `snipAwareMicOwningHosts` if it is a surface that " +
+                "legitimately owns the microphone too — and note that the " +
+                "second choice puts it under " +
+                "`onlyLedgeredMicOwningFilesNameAMicrophoneSymbol` instead. " +
+                "Membership here is a REFERENCE to a snip symbol, not a `Snip` " +
+                "name prefix: the prefix version of this guard was blind to a " +
+                "snip-flow file called anything else.",
+            (snipSources + snipAwareMicOwningHosts).sorted(),
+            filesReferencing(SNIP_SYMBOLS),
+        )
+    }
+
+    @Test
+    fun onlyLedgeredMicOwningFilesNameAMicrophoneSymbol() {
+        assertEquals(
+            "the set of production files naming a microphone or capture " +
+                "symbol changed. A file reaching capture is a decision, not an " +
+                "import: ledger it in `micOwningSources` deliberately — and if " +
+                "it is part of the snip flow, it must not be reaching capture " +
+                "at all, because issue #38 is explicit that opening the picker " +
+                "is not a dictation start.",
+            micOwningSources.sorted(),
+            filesReferencing(MIC_SYMBOLS),
         )
     }
 
@@ -336,9 +413,92 @@ class SnipSeamLedgerTest {
                     .containsMatchIn(stripAndNormalise("val body = SnipClip.resolve(b, c)"))
             },
         )
+
+        // And the snip-membership scan that replaced the `Snip` name prefix.
+        assertTrue(
+            "the snip-symbol scan cannot see a snip reference, so the file-set " +
+                "ledgers above are facts about their own lists",
+            SNIP_SYMBOLS.any {
+                Regex(Regex.escape(it) + """\b""")
+                    .containsMatchIn(stripAndNormalise("val store = SnipStore(this)"))
+            },
+        )
+        assertTrue(
+            "the snip-symbol scan is blind to a file that reaches the flow " +
+                "through the EFFECT alone — which is BubbleDictation, so the " +
+                "ledger would be wrong about the file that decides the picker " +
+                "opens",
+            SNIP_SYMBOLS.any {
+                Regex(Regex.escape(it) + """\b""")
+                    .containsMatchIn(stripAndNormalise("fun d() = listOf(Effect.OpenSnipPicker)"))
+            },
+        )
+        assertFalse(
+            "the snip-symbol scan fires on a file naming no snip symbol, so " +
+                "every unrelated file in the tree would be demanded of the " +
+                "ledger",
+            SNIP_SYMBOLS.any {
+                Regex(Regex.escape(it) + """\b""")
+                    .containsMatchIn(stripAndNormalise("val s = DictationSession(this)"))
+            },
+        )
+    }
+
+    @Test
+    fun theFileSetLedgersSeeASnipFlowFileThatIsNotNamedSnip() {
+        // 🔴 The control the `Snip`-prefix version of these ledgers FAILED, and
+        // the reason they are structural now. `CatalogFetcher.kt` — the tailnet
+        // follow-up's own name — was invisible to a `startsWith("Snip")`
+        // selection on both sides of the comparison AND to the microphone scan.
+        // Here both replacement scans are shown to see it: as a snip-flow file,
+        // and as a file reaching capture.
+        val fetcher = stripAndNormalise(
+            """
+            class CatalogFetcher(private val session: DictationSession) {
+                fun fetch(): SnipStore.Catalog? = null
+            }
+            """.trimIndent()
+        )
+        assertTrue(
+            "a snip-flow file not named Snip* is invisible to the " +
+                "snip-membership scan, so it would never be demanded of " +
+                "`snipSources` and would escape the microphone scan — exactly " +
+                "the measured hole the prefix version had",
+            SNIP_SYMBOLS.any {
+                Regex(Regex.escape(it) + """\b""").containsMatchIn(fetcher)
+            },
+        )
+        assertTrue(
+            "a file reaching capture is invisible to the whole-tree microphone " +
+                "scan unless it is called Snip*, which is the half that made " +
+                "the prefix version read as coverage while providing none",
+            MIC_SYMBOLS.any {
+                Regex(Regex.escape(it) + """\b""").containsMatchIn(fetcher)
+            },
+        )
     }
 
     // --- reading the tree ----------------------------------------------------
+
+    /**
+     * The production files naming any of [symbols], comments excluded.
+     *
+     * Word-bounded and comment-stripped for the class kdoc's two reasons: prose
+     * naming a symbol must not satisfy a scan — `SnipPickerActivity`'s own kdoc
+     * says "there is no `DictationSession` here", and a scan that counted that
+     * would report the opposite of the truth — and a bare substring check
+     * matches unrelated live spellings.
+     */
+    private fun filesReferencing(symbols: List<String>): List<String> =
+        mainSources()
+            .filter { (_, src) ->
+                val normalised = stripAndNormalise(src)
+                symbols.any {
+                    Regex(Regex.escape(it) + """\b""").containsMatchIn(normalised)
+                }
+            }
+            .map { it.first }
+            .sorted()
 
     private fun sitesOf(pattern: Regex, skip: Set<String>): List<String> =
         mainSources()
@@ -441,6 +601,28 @@ class SnipSeamLedgerTest {
          * check matches live, unrelated spellings and would fail on sources
          * that are entirely correct.
          */
+        /**
+         * Symbols that mean "this file participates in the snip flow".
+         *
+         * The structural stand-in for the `Snip` name prefix the ledger used to
+         * select on. The effect and the event are in here as well as the types:
+         * `BubbleDictation` reaches the flow without naming one single snip
+         * TYPE in code — it emits `Effect.OpenSnipPicker` — so a list of type
+         * names alone would miss the file that decides the picker opens.
+         */
+        val SNIP_SYMBOLS = listOf(
+            "SnipCatalog",
+            "SnipClip",
+            "SnipLaunch",
+            "SnipMatcher",
+            "SnipPickerActivity",
+            "SnipRow",
+            "SnipStore",
+            "Snippet",
+            "Effect.OpenSnipPicker",
+            "Event.SnipTapped",
+        )
+
         val MIC_SYMBOLS = listOf(
             "MicCapture",
             "AudioRecord",

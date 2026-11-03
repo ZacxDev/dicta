@@ -6,13 +6,24 @@ package dev.zacx.dicta
  * ## 🔴 There is no `trigger` field, and issue #38 says there is
  *
  * The issue's body describes entries as `{trigger, label?, body}` and asks for
- * "search by trigger and label". That schema is **stale**: `trigger` was
- * removed from snip outright on 2026-10-31 and identity moved to the label.
- * Measured from `ZacxDev/snip`'s `internal/artifact/artifact.go` and confirmed
- * against a live `snippets.json`, the shape is the four fields below — so the
- * faithful reading of the acceptance line is **search_terms + label words**,
- * which is what `internal/picker/picker.go`'s `Rank` actually does and what
- * [SnipMatcher] ports.
+ * "search by trigger and label". That schema is **stale**.
+ *
+ * What is MEASURED is the shape: `ZacxDev/snip`'s
+ * `internal/artifact/artifact.go`, confirmed against a live `snippets.json`,
+ * carries exactly the four fields below and no `trigger`. So the faithful
+ * reading of the acceptance line is **search_terms + label words**, which is
+ * what `internal/picker/picker.go`'s `Rank` does and what [SnipMatcher] ports.
+ *
+ * 🔴 The removal itself is **snip's own account of its history, not a commit
+ * this repo has seen**. Five files there (`internal/matcher/matcher.go:6`,
+ * `internal/picker/picker.go`, `internal/recent/recent.go:6`,
+ * `matcher_test.go:14,214`, `render_test.go:156`) state that `trigger` was
+ * dropped on 2026-10-31 and identity moved to the label — but snip's git
+ * history begins with an already-four-field import, so no commit in that
+ * repository removes the field. The change predates its git history (the
+ * matcher descends from an espanso-era detector, which is where a trigger
+ * lived). Treat the four-field shape as fact and the removal date as snip's
+ * in-source claim about itself.
  *
  * @param label REQUIRED, non-empty and UNIQUE — the row's identity. Upstream's
  *   `Find` is byte-exact on it, so two rows sharing a label make one of them
