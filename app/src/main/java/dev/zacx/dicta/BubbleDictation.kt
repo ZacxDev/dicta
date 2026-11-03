@@ -124,33 +124,61 @@ class BubbleDictation(
         object BubbleLongPressed : Event
 
         /**
-         * A touch landed OUTSIDE the overlay window while the history row was
-         * showing — the user tapping away to dismiss it.
+         * A touch landed OUTSIDE the overlay window while the action buttons
+         * were showing — the user tapping away to dismiss them.
          *
          * 🔴 It carries no effects of its own ON PURPOSE. [on] already
-         * prefixes [Effect.HideHistory] to every event that is not
-         * [BubbleLongPressed], so "dismiss the row and do nothing else" is
+         * prefixes [Effect.HideActions] to every event that is not
+         * [BubbleLongPressed], so "dismiss the buttons and do nothing else" is
          * expressed by adding an event with an empty arm rather than by a
          * second dismissal path in the shell. That keeps the hide predicate in
-         * ONE place; a shell that hid the row itself would be the N-sites
+         * ONE place; a shell that hid them itself would be the N-sites
          * duplicate this class exists to avoid.
          *
-         * Delivered only while the row is up: the shell adds
+         * Delivered only while they are up: the shell adds
          * `FLAG_WATCH_OUTSIDE_TOUCH` on reveal and removes it on hide, so an
          * idle bubble is not woken by every touch on the device.
          */
         object TouchedOutside : Event
 
         /**
+         * The **history** button inside the long-press reveal.
+         *
+         * 🔴 Routed through the machine rather than wired straight from the
+         * view to `startActivity`, for [SnipTapped]'s reason exactly: `on()`
+         * already prefixes [Effect.HideActions] to every event that is not a
+         * long press, so "the buttons go away, then the picker opens" is
+         * expressed by adding an event with a one-effect arm instead of by a
+         * second dismissal path in the shell.
+         *
+         * 🔴 It can reach **no** microphone path. The arm emits
+         * [Effect.OpenHistoryPicker] and nothing else: no
+         * [Effect.StartRecording], no [Event.BubbleTapped], no session. The
+         * picker it opens lists dictations that are already recorded and opens
+         * one through `DictateLaunch.historyIntent`, which carries
+         * `EXTRA_HISTORY_ID` — so `DictateActivity` populates the card from
+         * history instead of capturing. That is why `StartSurfaceLedgerTest`'s
+         * ledger does not grow for it, exactly as it did not grow for the chip
+         * reveal this replaces.
+         *
+         * Reachable only from IDLE in practice, because the reveal that carries
+         * the button only opens in IDLE ([onLongPress]) — but the arm refuses
+         * the other two states anyway rather than relying on that, since "the
+         * only caller cannot reach it" is a claim about today's wiring and this
+         * is a claim about the machine.
+         */
+        object HistoryTapped : Event
+
+        /**
          * The **snip** button inside the long-press reveal (issue #38).
          *
          * 🔴 Routed through the machine rather than wired straight from the
          * view to `startActivity`, for the reason [Event.TouchedOutside]
-         * records: `on()` already prefixes [Effect.HideHistory] to every event
+         * records: `on()` already prefixes [Effect.HideActions] to every event
          * that is not a long press, so "the reveal goes away, then the picker
          * opens" is expressed by adding an event with a one-effect arm instead
          * of by a second dismissal path in the shell. A view that called
-         * `startActivity` itself would leave the chips floating behind the
+         * `startActivity` itself would leave the buttons floating behind the
          * picker, and would need its own copy of the hide predicate — the
          * N-sites duplicate this class exists to avoid.
          *
@@ -237,28 +265,53 @@ class BubbleDictation(
         object IgnoredAsTooFast : Effect
 
         /**
-         * Show the recent-dictations row attached to the bubble.
+         * Show the action buttons attached to the bubble — history and snip.
          *
-         * 🔴 **Not a state.** There is deliberately no `HISTORY_REVEALED`
-         * member in [State]: the reveal is a surface, not a phase of a
-         * dictation, and adding a member would force every existing transition
-         * to decide about it *and* would drag the reveal inside the
-         * `state == IDLE ⇒ session == null` invariant that
-         * `BubbleService.applyEffects` enforces — an invariant about the
-         * microphone, which the reveal has nothing to do with.
+         * 🔴 **RENAMED from `RevealHistory`, because that name became a lie.**
+         * The long press used to reveal a scrolling list of history *chips*,
+         * and this effect meant "show that list". The reveal is now two icon
+         * buttons and no list: one opens [HistoryPickerActivity], one opens
+         * [SnipPickerActivity], and neither shows any history by itself. A name
+         * that still said "history" would make the snip button look like a
+         * passenger on somebody else's effect.
+         *
+         * 🔴 **Not a state.** There is deliberately no `ACTIONS_SHOWN` member
+         * in [State]: the reveal is a surface, not a phase of a dictation, and
+         * adding a member would force every existing transition to decide about
+         * it *and* would drag it inside the `state == IDLE ⇒ session == null`
+         * invariant that `BubbleService.applyEffects` enforces — an invariant
+         * about the microphone, which the reveal has nothing to do with.
          */
-        object RevealHistory : Effect
+        object ShowActions : Effect
 
         /**
-         * Put the recent-dictations row away.
+         * Put the action buttons away. **Renamed from `HideHistory`** — see
+         * [ShowActions] for why that name stopped being true.
          *
          * Emitted **before** whatever else the triggering event produces, so a
-         * tap on a revealed bubble reads as "the row goes away, then recording
-         * starts" rather than leaving a row of history chips floating over a
+         * tap on a revealed bubble reads as "the buttons go away, then
+         * recording starts" rather than leaving two controls floating over a
          * live recording. The ordering is the assertion; membership alone
-         * would pass with the row still on screen.
+         * would pass with them still on screen.
          */
-        object HideHistory : Effect
+        object HideActions : Effect
+
+        /**
+         * Open the history picker.
+         *
+         * 🔴 **Not** a recording effect and not reached from any tap path. The
+         * shell carries it out by starting [HistoryPickerActivity] through
+         * [HistoryLaunch]; it opens no microphone, holds no session and asks
+         * for no permission. The picker can start the transcription card, but
+         * only through `DictateLaunch.historyIntent`, which carries
+         * `EXTRA_HISTORY_ID` and therefore does not capture.
+         *
+         * 🔴 Emitted **after** the [HideActions] that `on()` prefixes, so the
+         * reveal is down before the picker is on screen. Ordering is the
+         * assertion — membership alone would pass with two buttons left
+         * floating over the picker's own window.
+         */
+        object OpenHistoryPicker : Effect
 
         /**
          * Open the snippet picker (issue #38).
@@ -268,9 +321,9 @@ class BubbleDictation(
          * [SnipLaunch]; it opens no microphone, holds no session and asks for
          * no permission.
          *
-         * 🔴 Emitted **after** the [HideHistory] that `on()` prefixes, so the
+         * 🔴 Emitted **after** the [HideActions] that `on()` prefixes, so the
          * reveal is down before the picker is on screen. Ordering is the
-         * assertion — membership alone would pass with a row of chips left
+         * assertion — membership alone would pass with two buttons left
          * floating over the picker's own window.
          */
         object OpenSnipPicker : Effect
@@ -289,41 +342,46 @@ class BubbleDictation(
         get() = if (state == State.RECORDING) now() - startedAtMs else 0L
 
     /**
-     * Whether the history row is currently on screen.
+     * Whether the bubble's action buttons are currently on screen.
+     *
+     * 🔴 **Renamed from `historyRevealed`.** It never tracked history; it
+     * tracked whether the long-press reveal was up, and the reveal now holds
+     * two buttons and no history at all. See [Effect.ShowActions].
      *
      * 🔴 A private flag rather than a [State] member, and the distinction is
-     * the whole of the design decision recorded on [Effect.RevealHistory]. It
-     * exists only so that the *next* event can emit [Effect.HideHistory] —
+     * the whole of the design decision recorded on [Effect.ShowActions]. It
+     * exists only so that the *next* event can emit [Effect.HideActions] —
      * which has to be decided here, in the one place that sees every event, or
-     * the shell ends up spelling "hide the row unless this was a long press"
-     * at each call site, which is the N-sites predicate this repo has already
-     * been bitten by twice.
+     * the shell ends up spelling "hide the buttons unless this was a long
+     * press" at each call site, which is the N-sites predicate this repo has
+     * already been bitten by twice.
      */
-    private var historyRevealed = false
+    private var actionsShown = false
 
     /**
      * Applies [event] and returns the effects the shell must carry out, in
      * order. Pure with respect to the platform: nothing here touches Android.
      *
-     * Every event other than [Event.BubbleLongPressed] dismisses an open
-     * history row, and the [Effect.HideHistory] that does so is **prefixed**
-     * to that event's own effects — see [Effect.HideHistory].
+     * Every event other than [Event.BubbleLongPressed] dismisses open action
+     * buttons, and the [Effect.HideActions] that does so is **prefixed**
+     * to that event's own effects — see [Effect.HideActions].
      */
     fun on(event: Event): List<Effect> {
         if (event is Event.BubbleLongPressed) return onLongPress()
-        val dismiss = if (historyRevealed) listOf(Effect.HideHistory) else emptyList()
-        historyRevealed = false
+        val dismiss = if (actionsShown) listOf(Effect.HideActions) else emptyList()
+        actionsShown = false
         return dismiss + when (event) {
             is Event.BubbleTapped -> onTap(event.micGranted)
             Event.CancelTapped -> onCancel()
             Event.SnipTapped -> onSnipTapped()
+            Event.HistoryTapped -> onHistoryTapped()
             is Event.CaptureFailed -> onCaptureFailed(event.failure)
             Event.MaxDurationReached -> onMaxDuration()
             Event.TranscriptSettled -> toIdle()
             // Dismiss-only: the `dismiss` prefix above IS this event's whole
             // behaviour. See Event.TouchedOutside.
             Event.TouchedOutside -> emptyList()
-            // Unreachable: handled above, before `historyRevealed` is cleared.
+            // Unreachable: handled above, before `actionsShown` is cleared.
             Event.BubbleLongPressed -> emptyList()
         }
     }
@@ -347,11 +405,32 @@ class BubbleDictation(
      * The state is left exactly as it was in all three cases.
      */
     private fun onLongPress(): List<Effect> = if (state == State.IDLE) {
-        historyRevealed = true
-        listOf(Effect.RevealHistory)
+        actionsShown = true
+        listOf(Effect.ShowActions)
     } else {
         emptyList()
     }
+
+    /**
+     * The history button, honoured **only while idle** — and the state is left
+     * exactly as it was in all three cases.
+     *
+     * [onSnipTapped]'s arm, verbatim in shape and for the same inherited
+     * reasons: the button only exists inside the reveal, the reveal only opens
+     * in IDLE, so a RECORDING or TRANSCRIBING machine seeing this event means
+     * something has gone wrong upstream and the right answer is to do nothing
+     * rather than to open a window over a live recording.
+     *
+     * 🔴 Two arms with the same shape and NOT one arm taking a picker
+     * parameter, deliberately. Collapsing them would put a value in the event —
+     * "which picker" — that the machine would then carry and the shell would
+     * switch on, i.e. a second place that decides what a button does. Each
+     * button's decision is its own, and `BubbleHistoryStateTest` and
+     * `BubbleSnipStateTest` each pin one of them; the thing that is genuinely
+     * one rule, the [Effect.HideActions] prefix, is already in one place.
+     */
+    private fun onHistoryTapped(): List<Effect> =
+        if (state == State.IDLE) listOf(Effect.OpenHistoryPicker) else emptyList()
 
     /**
      * The snip button, honoured **only while idle** — and the state is left

@@ -110,6 +110,45 @@ class FloatingWindowSizeTest {
     @Config(qualifiers = "sw600dp-w1280dp-h800dp-land-xhdpi")
     fun snipPickerTabletLandscape() = assertCappedAt(SnipPickerActivity::class.java, 0.50f)
 
+    // --- the history picker: the surface that INHERITS the sizing ------------
+    //
+    // 🔴 Added because FloatingOverlaySeamLedgerTest's OWN failure message
+    // demands it — "Ledger the new activity here AND give it a case in
+    // FloatingWindowSizeTest" — and nothing enforced the second half. The
+    // history picker had been ledgered WITHOUT these four, so the ledger read
+    // as coverage while the only behavioural check on the new activity's
+    // window was its absence.
+    //
+    // 🔴 INVARIANT GUARDS, not regression coverage, and the distinction is
+    // sharper here than for the snip cases above: HistoryPickerActivity
+    // arrives with this change, so there is no tree on which these could be
+    // watched going red — a run at the base commit is a compile error.
+    //
+    // What makes them worth having anyway is that this activity does NOT make
+    // the sizing call itself — it INHERITS it from FloatingPickerActivity.
+    // That is a different claim from the snip cases, which were written when
+    // the call sat in each activity's own onCreate, and it is the claim a
+    // structural ledger cannot make: a check on the superclass type-checks
+    // past a shell that stopped sizing. The mutant that deletes the shell's
+    // one call is what shows both halves can see it.
+
+    @Test
+    @Config(qualifiers = "w411dp-h914dp-port-xxhdpi")
+    fun historyPickerPhonePortrait() = assertCappedAt(HistoryPickerActivity::class.java, 0.92f)
+
+    @Test
+    @Config(qualifiers = "w914dp-h411dp-land-xxhdpi")
+    fun historyPickerPhoneLandscape() = assertCappedAt(HistoryPickerActivity::class.java, 0.62f)
+
+    @Test
+    @Config(qualifiers = "sw600dp-w800dp-h1200dp-port-xhdpi")
+    fun historyPickerTabletPortrait() = assertCappedAt(HistoryPickerActivity::class.java, 0.70f)
+
+    @Test
+    @Config(qualifiers = "sw600dp-w1280dp-h800dp-land-xhdpi")
+    fun historyPickerTabletLandscape() =
+        assertCappedAt(HistoryPickerActivity::class.java, 0.50f)
+
     private fun <A : Activity> assertCappedAt(clazz: Class<A>, expectedFraction: Float) {
         val controller = Robolectric.buildActivity(clazz).setup()
         try {

@@ -154,19 +154,24 @@
          toggle in the dictation card. -->
     <string name="bubble_cancel">Cancel recording — discard it, send nothing</string>
 
-    <!-- The long-press reveal.
+    <!-- The history button in the long-press reveal.
 
-         The chip shows a short label built by HistoryLabel (an age plus the
-         opening words); this is its contentDescription AND its tooltipText,
-         and it has to say what tapping DOES, because "2h · the quick brown
-         fox" announces the item and not the action. A chip whose label is the
-         transcript reads to a screen reader as a piece of text rather than as
-         a button. -->
-    <string name="bubble_history_chip">%1$s — open and re-transcribe</string>
-    <!-- The reveal with nothing to reveal. Deliberately a chip-shaped label
-         rather than an empty row: a gesture whose result is indistinguishable
-         from "nothing happened" is indistinguishable from a broken gesture. -->
-    <string name="bubble_history_empty">No saved dictations yet</string>
+         🔴 @string/bubble_history_chip AND @string/bubble_history_empty WERE
+         HERE AND ARE DELETED. They belonged to the chip ListView that used to
+         live inside the bubble's overlay window: the first was a chip's
+         contentDescription ("%1$s — open and re-transcribe"), the second the
+         "nothing to reveal" chip-shaped label. The reveal is now two icon
+         buttons and no list, so both described a surface that no longer exists.
+         Their replacements are @string/history_row_desc and the THREE distinct
+         empty states in the history-picker block below — three, because a
+         picker can also be unreadable and can also hold a query that matches
+         nothing, neither of which one chip label could say.
+
+         This is the button's contentDescription AND its tooltipText, following
+         @string/bubble_snip's template exactly: it says what tapping DOES, not
+         what the glyph is. An unlabelled ImageButton on an overlay is all a
+         screen-reader user would otherwise meet. -->
+    <string name="bubble_history">Past dictations — search and reopen one</string>
 
     <!-- The pre-recording reachability warning (SttReachability / BubbleService).
 
@@ -493,6 +498,53 @@
          arbitrary operator text (paths, hostnames, prompt templates) and has no
          business being flashed on screen to confirm a copy. -->
     <string name="snip_copied">Copied “%1$s”</string>
+
+    <!-- ===================== the history picker ============================
+
+         The long-press reveal's FIRST affordance, and the screen it opens.
+         Deliberately the snippet block above's shape, string for string, since
+         both pickers are FloatingPickerActivity subclasses and a user meeting
+         one should recognise the other.
+
+         The button string is @string/bubble_history, up next to
+         @string/bubble_snip rather than here, because the two buttons sit
+         adjacent and their wordings have to be read together. -->
+
+    <string name="history_title">Past dictations</string>
+    <string name="history_search_hint">Search transcripts</string>
+
+    <!-- 🔴 THREE distinct empty states, never one — @string/snip_empty_*'s
+         discipline, and the chip reveal had only ONE ("No saved dictations
+         yet"), which is a thing the search field made insufficient.
+
+         "The store could not be read", "you have no saved dictations" and
+         "nothing matches what you typed" are different problems with different
+         fixes: the first is a fault, the second is a new install, the third is
+         a query. One message for all three is the silent-empty failure that
+         reads as "the feature is broken" — and the WORST collapse is the third
+         into the second, which would tell a user holding 94 dictations that
+         they have none. -->
+    <string name="history_empty_unreadable">Dicta could not read its saved dictations.</string>
+    <string name="history_empty_none">No saved dictations yet. Tap the bubble to record one.</string>
+    <string name="history_empty_no_matches">No saved dictations match that.</string>
+
+    <!-- The row's contentDescription, @string/snip_row_desc's twin. The row's
+         own text is an age, an engine name and a truncated transcript, which a
+         screen reader announces as pieces of text rather than as a button, so
+         this says what tapping does.
+
+         🔴 %1$s is the TRUNCATED preview, not the whole transcript: a
+         contentDescription is read aloud, and a screen-reader user scanning a
+         list must not have a whole dictation spoken at them per row. -->
+    <string name="history_row_desc">%1$s — open and re-transcribe</string>
+
+    <!-- A saved dictation whose transcript is empty: the remote and local
+         engines both returned nothing, or the entry predates one of them. The
+         row must still be visible and tappable — the AUDIO is still there and
+         still re-transcribable, so a row the user cannot see is an item they
+         cannot reach. Parenthesised because it is Dicta speaking, not the
+         transcript. -->
+    <string name="history_no_transcript">(no transcript)</string>
 
     <!-- ===================== snippet import (Settings) ====================
 

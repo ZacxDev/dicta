@@ -32,7 +32,16 @@ import java.io.File
  * `BubbleService.kt`.
  *
  *  * `BubbleService.kt` — **two** windows. (1) the bubble, which shares its
- *    window with the cancel button and the history row; (2) the
+ *    window with the cancel button and the long-press reveal's two icon
+ *    buttons, history and snip. 🔴 That used to read *"the cancel button and
+ *    the history row"*, naming the chip `ListView` the reveal held. The list is
+ *    deleted and history is now a floating Activity
+ *    ([HistoryPickerActivity]); **the count did not change, and that is the
+ *    point** — a picker Activity is not a `WindowManager` view, so removing a
+ *    child from this window and adding a second button to it both leave the
+ *    ledger at two. The prose is corrected because a comment is a claim: a
+ *    reader looking for "the history row" in that window would not find it and
+ *    would reasonably conclude the ledger itself was stale. (2) the
  *    unreachable-server warning dialog, which cannot be a child of (1) because
  *    that window is dragged, `WRAP_CONTENT` and positioned at `Gravity.TOP|END`
  *    — see the field kdoc on `BubbleService.warning`. One

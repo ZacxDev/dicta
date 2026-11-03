@@ -98,9 +98,19 @@ object BubbleChrome {
      * scale. Hence the explicit branch rather than a one-liner.
      *
      * @param windowHeightPx the window's height **including whatever is
-     *   currently shown inside it** — the cancel button, the history reveal, or
-     *   neither. Passing only the bubble's own height is the mutation that
-     *   re-opens the unreachable-control defect for the bottom-most control.
+     *   currently shown inside it** — the cancel button, the long-press action
+     *   buttons (history and snip), or neither. Passing only the bubble's own
+     *   height is the mutation that re-opens the unreachable-control defect for
+     *   the bottom-most control.
+     *
+     *   ⚠ This parameter used to say *"the history reveal"*, when that reveal
+     *   was a scrolling chip list whose height varied with the data. It does
+     *   not any more: every optional child is a fixed-dp button, so the
+     *   window's height is now one of a handful of constants rather than a
+     *   function of how much history exists. The clamp is unchanged and is
+     *   still mandatory — two 44 dp buttons under an 84 dp halo is ~184 dp, and
+     *   a bubble parked near the bottom edge still puts the lower one
+     *   off-screen.
      */
     fun clampY(wantedY: Int, windowHeightPx: Int, screenHeightPx: Int): Int {
         val maxY = screenHeightPx - windowHeightPx

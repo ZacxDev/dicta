@@ -27,20 +27,20 @@ class BubbleSnipStateTest {
 
     @Test
     fun snipTappedPutsTheRevealAwayBeforeOpeningThePicker() {
-        // 🔴 ORDER is the assertion, and membership alone would pass with a
-        // row of chips left floating over the picker's own window. The prefix
-        // comes from `on()`'s one HideHistory rule rather than from a second
-        // dismissal path in the shell — which is the whole reason this event
-        // exists instead of a view that calls startActivity itself.
+        // 🔴 ORDER is the assertion, and membership alone would pass with the
+        // two action buttons left floating over the picker's own window. The
+        // prefix comes from `on()`'s one HideActions rule rather than from a
+        // second dismissal path in the shell — which is the whole reason this
+        // event exists instead of a view that calls startActivity itself.
         val machine = idleMachine()
         assertEquals(
-            "precondition: the long press is what reveals the row",
-            listOf(BubbleDictation.Effect.RevealHistory),
+            "precondition: the long press is what reveals the buttons",
+            listOf(BubbleDictation.Effect.ShowActions),
             machine.on(BubbleDictation.Event.BubbleLongPressed),
         )
         assertEquals(
             listOf(
-                BubbleDictation.Effect.HideHistory,
+                BubbleDictation.Effect.HideActions,
                 BubbleDictation.Effect.OpenSnipPicker,
             ),
             machine.on(BubbleDictation.Event.SnipTapped),

@@ -26,8 +26,8 @@ import java.time.Duration
 
 /**
  * The snip button inside the long-press reveal, driven through the real
- * [BubbleService] with real `MotionEvent`s — [BubbleHistoryRevealTest]'s
- * harness, applied to issue #38's addition.
+ * [BubbleService] with real `MotionEvent`s — the harness that used to live in
+ * `BubbleHistoryRevealTest`, applied to issue #38's addition.
  *
  * ## What this file is evidence for
  *
@@ -35,6 +35,18 @@ import java.time.Duration
  * picker **through [SnipLaunch]** and puts the reveal away first, that it
  * starts no recording, and that the window's height accounting includes it so
  * [BubbleChrome.clampY] cannot leave it off-screen.
+ *
+ * ## 🔴 The reveal's "is it up?" witness CHANGED, and these tests moved with it
+ *
+ * Every assertion below used to read the reveal's state off `historyRow`, the
+ * chip `ListView` — the list WAS the source of truth. That list is deleted, so
+ * the witness here is the **sibling control**: the history button, which
+ * [BubbleService.showActions] raises and lowers in the same call as this one.
+ * That is deliberately not [BubbleService.actionsShown], the private flag:
+ * reading the flag would assert that the service believes the reveal is up,
+ * where a sibling view's `visibility` asserts that something is actually on
+ * screen. `BubbleHistoryButtonRevealTest` is this file's mirror and uses the
+ * snip button as ITS witness, so the pair cross-checks in both directions.
  *
  * 🔴 It is **not** evidence that the reveal stays out of screenshots — that is
  * `OverlayVisibility`'s effect on `params.alpha` during a MediaProjection
@@ -77,31 +89,11 @@ class BubbleSnipRevealTest {
         val c = Robolectric.buildService(BubbleService::class.java)
         controller = c
         c.get().sessionFactory = { fake }
-        c.get().historyProvider = { limit -> twoItems().take(limit) }
-        c.get().historyExecutor = java.util.concurrent.Executor { it.run() }
+        // 🔴 No history seams and no history fixture. The reveal reads nothing
+        // — it shows two buttons — so `historyProvider`/`historyExecutor` are
+        // deleted from the service along with the chip list they fed.
         return c.create().get()
     }
-
-    private fun twoItems() = listOf(
-        DictationHistoryStore.Item(
-            id = "alpha",
-            createdAtMs = System.currentTimeMillis() - 7_200_000L,
-            audioBytes = 1234L,
-            audioFile = "alpha.ogg",
-            text = "the quick brown fox",
-            fromRemote = true,
-            audioSeconds = 2.5,
-        ),
-        DictationHistoryStore.Item(
-            id = "bravo",
-            createdAtMs = System.currentTimeMillis() - 259_200_000L,
-            audioBytes = 2345L,
-            audioFile = "bravo.ogg",
-            text = "another saved dictation",
-            fromRemote = true,
-            audioSeconds = 3.5,
-        ),
-    )
 
     private fun <T> field(service: BubbleService, name: String): T {
         val f = BubbleService::class.java.getDeclaredField(name)
@@ -119,8 +111,8 @@ class BubbleSnipRevealTest {
     private fun cancel(service: BubbleService): ImageButton =
         requireNotNull(field<ImageButton?>(service, "cancel")) { "no cancel button" }
 
-    private fun row(service: BubbleService): android.widget.ListView =
-        requireNotNull(field<android.widget.ListView?>(service, "historyRow")) { "no history row" }
+    private fun history(service: BubbleService): ImageButton =
+        requireNotNull(field<ImageButton?>(service, "history")) { "no history button" }
 
     private fun params(service: BubbleService): WindowManager.LayoutParams =
         field(service, "params")
@@ -167,9 +159,9 @@ class BubbleSnipRevealTest {
 
         assertEquals(View.VISIBLE, snip(service).visibility)
         assertEquals(
-            "precondition: the reveal itself came up",
+            "precondition: the reveal itself came up, i.e. both buttons",
             View.VISIBLE,
-            row(service).visibility,
+            history(service).visibility,
         )
     }
 
@@ -180,16 +172,16 @@ class BubbleSnipRevealTest {
         assertEquals(View.VISIBLE, snip(service).visibility)
 
         // An outside touch — the reveal's own dismissal, which goes through the
-        // machine's one HideHistory rule rather than a second hide path.
+        // machine's one HideActions rule rather than a second hide path.
         val t = SystemClock.uptimeMillis()
         requireNotNull(field<View?>(service, "root"))
             .dispatchTouchEvent(MotionEvent.obtain(t, t, MotionEvent.ACTION_OUTSIDE, 0f, 0f, 0))
         idle(0)
 
-        assertEquals(View.GONE, row(service).visibility)
+        assertEquals(View.GONE, history(service).visibility)
         assertEquals(
-            "the chips went away and the snip button stayed, so its " +
-                "visibility is owned by something other than showReveal",
+            "the history button went away and the snip button stayed, so its " +
+                "visibility is owned by something other than showActions",
             View.GONE,
             snip(service).visibility,
         )
@@ -201,6 +193,15 @@ class BubbleSnipRevealTest {
         // so the two controls below the bubble are mutually exclusive. If they
         // ever are not, the window is taller than either arm of the clamp
         // arithmetic was written for.
+        //
+        // 🔴 PAIRWISE, AND THAT IS NO LONGER SUFFICIENT ON ITS OWN. The reveal
+        // used to add ONE control below the bubble and now adds TWO, so this
+        // assertion can be satisfied while all THREE are up. Its third-control
+        // sibling is
+        // `BubbleHistoryButtonRevealTest.theThreeControlsBelowTheBubbleAreNeverAllOnScreenTogether`,
+        // which is the one that closes the gap; this one is kept because it is
+        // the snip-side half and because deleting it would leave the pair
+        // asymmetric.
         val service = start()
         longPress(service)
         assertEquals(View.VISIBLE, snip(service).visibility)
@@ -256,9 +257,10 @@ class BubbleSnipRevealTest {
         idle(0)
 
         assertEquals(
-            "the chips stayed on screen behind the picker they opened",
+            "the reveal stayed on screen behind the picker it opened — the " +
+                "history button is still up",
             View.GONE,
-            row(service).visibility,
+            history(service).visibility,
         )
         assertEquals(View.GONE, snip(service).visibility)
         assertEquals(
@@ -313,56 +315,77 @@ class BubbleSnipRevealTest {
 
     @Test
     fun theWindowHeightAccountsForTheSnipButtonSoTheClampKeepsItOnScreen() {
-        // 🔴 The assertion that kills "windowHeightPx forgot the snip
-        // button". With the reveal up the window is one 50 dp block taller
-        // than the chips and the bubble, and a clamp that was not told would
-        // leave the bottom-most control below the display: a button the user
-        // can see the top pixel of and cannot tap. Same defect
-        // `aDragWithTheHistoryOpenKeepsTheBOTTOMMOSTChipOnScreen` closes from
-        // the other end.
+        // 🔴 The assertion that kills "windowHeightPx forgot the snip button".
+        //
+        // 🔴 REWRITTEN for the chip deletion, and the operand it used to read
+        // is GONE: this used to sum `haloSizePx + revealBlockPx + snipBlockPx`,
+        // where `revealBlockPx` was the chip list's own height. With the list
+        // deleted the reveal's two terms are `historyBlockPx` and
+        // `snipBlockPx`, so a test still reading `revealBlockPx` would throw
+        // NoSuchFieldException rather than fail — which is why it is restated
+        // here rather than patched.
+        //
+        // The sum is built from the service's OWN dp fields rather than from a
+        // literal, so it stays a cross-check of two independently-computed
+        // sides (`windowHeightPx` vs this) rather than a restatement of one.
         val service = start()
         longPress(service)
         val halo: Int = field(service, "haloSizePx")
-        val reveal: Int = field(service, "revealBlockPx")
+        val historyBlock: Int = field(service, "historyBlockPx")
         val snipBlock: Int = field(service, "snipBlockPx")
-        assertTrue("precondition: the reveal has a height", reveal > 0)
+        assertTrue("precondition: the history block has a height", historyBlock > 0)
         assertTrue("precondition: the snip block has a height", snipBlock > 0)
 
-        // Deliberately WAY past the bottom edge rather than near it: a bound
-        // that happens to land on a multiple of the block would pass against
-        // the wrong operand.
+        // Deliberately WAY past the bottom edge rather than near it, and NOT a
+        // multiple of any block: a bound that happens to land on a multiple of
+        // the step would pass against the wrong operand.
         dragTo(service, 9000f)
 
         assertTrue(
-            "with the reveal open the window is ${halo + reveal + snipBlock}px " +
-                "tall on a ${screenHeight}px display, but it was clamped to " +
+            "with the reveal open the window is " +
+                "${halo + historyBlock + snipBlock}px tall on a " +
+                "${screenHeight}px display, but it was clamped to " +
                 "y=${params(service).y} — which is where it would land if the " +
                 "clamp had never been told about the snip button",
-            params(service).y + halo + reveal + snipBlock <= screenHeight,
+            params(service).y + halo + historyBlock + snipBlock <= screenHeight,
         )
         assertTrue("the window was clamped above the display", params(service).y >= 0)
     }
 
     @Test
     fun revealingTheSnipButtonDoesNotMoveTheBubbleAtAll() {
-        // 🔴 The button is BELOW the bubble, so it contributes exactly zero to
-        // the `y` compensation and the reveal's shift stays exactly
-        // revealBlockPx — which is what lets every existing piece of that
-        // arithmetic, and the device evidence behind it, carry over unchanged.
-        // Move the button above the bubble without folding its block into the
-        // shift and this goes red.
+        // 🔴 REWRITTEN, and the change is the headline simplification of the
+        // chip deletion. This used to assert the bubble moved UP by exactly
+        // `revealBlockPx`, because the chip row sat ABOVE the bubble and
+        // `Gravity.TOP` pins the window's TOP edge — so growing upward meant
+        // compensating `params.y` by hand, a ~30-line argument that accumulated
+        // four audit rounds of corrected magnitudes plus a drag-then-dismiss
+        // teleport regression.
+        //
+        // Nothing sits above the bubble any more. The window is monotonically
+        // downward-growing, so the correct compensation is ZERO and the whole
+        // of that arithmetic is deleted rather than adjusted. The expectation
+        // is therefore exact equality, which is a STRICTLY stronger claim than
+        // the old one: any surviving `y` adjustment in either direction, of any
+        // magnitude, fails here.
         val service = start()
         val before = params(service).y
 
         longPress(service)
-        val reveal: Int = field(service, "revealBlockPx")
-        assertTrue("precondition: the reveal has a height", reveal > 0)
         assertEquals(
-            "the reveal moved the bubble by ${before - params(service).y}px " +
-                "rather than the chips' own ${reveal}px, so the snip button is " +
-                "shifting the window and the bubble jumps under the finger",
-            before - reveal,
+            "the reveal moved the bubble by ${before - params(service).y}px. " +
+                "Nothing in the reveal is above the bubble any more, so the " +
+                "window grows downward only and `y` must not move at all — a " +
+                "shift here means a reintroduced compensation term and the " +
+                "bubble jumps under the finger.",
+            before,
             params(service).y,
+        )
+        assertEquals(
+            "precondition: the reveal actually came up, so the zero above is " +
+                "a measurement and not a no-op",
+            View.VISIBLE,
+            snip(service).visibility,
         )
     }
 

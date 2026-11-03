@@ -401,7 +401,7 @@ class BubbleDictationTest {
     @Test
     fun aLongPressWhileIdleRevealsTheHistoryAndChangesNoState() {
         assertEquals(
-            listOf(BubbleDictation.Effect.RevealHistory),
+            listOf(BubbleDictation.Effect.ShowActions),
             longPress(),
         )
         assertEquals(
@@ -461,14 +461,14 @@ class BubbleDictationTest {
     }
 
     @Test
-    fun aTapAfterARevealHidesTheRowBeforeItStartsRecording() {
-        // 🔴 ORDER, not membership. The reverse order leaves a row of history
-        // chips on screen over a live recording, and `containsAll` would be
+    fun aTapAfterARevealHidesTheButtonsBeforeItStartsRecording() {
+        // 🔴 ORDER, not membership. The reverse order leaves the two action
+        // buttons on screen over a live recording, and `containsAll` would be
         // green for it.
         longPress()
         assertEquals(
             listOf(
-                BubbleDictation.Effect.HideHistory,
+                BubbleDictation.Effect.HideActions,
                 BubbleDictation.Effect.StartRecording,
             ),
             tap(),
@@ -485,13 +485,23 @@ class BubbleDictationTest {
             BubbleDictation.Event.MaxDurationReached,
             BubbleDictation.Event.TranscriptSettled,
             BubbleDictation.Event.CaptureFailed(BubbleDictation.Failure.MIC_IN_USE),
+            // 🔴 The two reveal BUTTONS are in this list too, and they are the
+            // arms the rule is easiest to forget for: each one's own handler
+            // produces an Open*Picker effect, so an arm that returned it
+            // without riding `on()`'s prefix would open a picker with two
+            // buttons left floating over it. The ORDER half of that claim is
+            // BubbleHistoryStateTest's and BubbleSnipStateTest's; what is
+            // asserted here is that the rule covers EVERY event, which is the
+            // thing that silently stops being true when an event is added.
+            BubbleDictation.Event.HistoryTapped,
+            BubbleDictation.Event.SnipTapped,
         )) {
             val fresh = BubbleDictation(now = { clock })
             fresh.on(BubbleDictation.Event.BubbleLongPressed)
             assertEquals(
-                "$event did not dismiss the open history row, so the chips " +
-                    "stay on screen over whatever happens next",
-                BubbleDictation.Effect.HideHistory,
+                "$event did not dismiss the open action buttons, so they stay " +
+                    "on screen over whatever happens next",
+                BubbleDictation.Effect.HideActions,
                 fresh.on(event).firstOrNull(),
             )
         }
@@ -501,7 +511,7 @@ class BubbleDictationTest {
     fun aTapWithNoRevealOpenEmitsNoHide() {
         // 🔴 The other direction, and the one that makes the test above about
         // the FLAG rather than about the event type: an unconditional
-        // `HideHistory` prefix would satisfy every assertion above and would
+        // `HideActions` prefix would satisfy every assertion above and would
         // put a spurious effect in front of every single tap.
         assertEquals(
             listOf(BubbleDictation.Effect.StartRecording),
@@ -513,9 +523,9 @@ class BubbleDictationTest {
     fun anOutsideTouchDismissesAnOpenRevealAndDoesNothingElse() {
         longPress()
         assertEquals(
-            "an outside touch must close the row and emit NOTHING else — it is " +
+            "an outside touch must close the buttons and emit NOTHING else — it is " +
                 "a dismissal, not a command",
-            listOf(BubbleDictation.Effect.HideHistory),
+            listOf(BubbleDictation.Effect.HideActions),
             machine.on(BubbleDictation.Event.TouchedOutside),
         )
     }
@@ -525,7 +535,7 @@ class BubbleDictationTest {
         // 🔴 The direction that makes the test above about the FLAG and not
         // about the event type. FLAG_WATCH_OUTSIDE_TOUCH is scoped to the
         // revealed state, but the machine must not depend on the shell getting
-        // that right: an unconditional HideHistory here would fire on every
+        // that right: an unconditional HideActions here would fire on every
         // stray touch and would still pass the test above.
         assertEquals(
             emptyList<BubbleDictation.Effect>(),
@@ -551,12 +561,12 @@ class BubbleDictationTest {
     fun theRevealIsDismissedOnceAndNotAgain() {
         longPress()
         assertEquals(
-            BubbleDictation.Effect.HideHistory,
+            BubbleDictation.Effect.HideActions,
             machine.on(BubbleDictation.Event.CancelTapped).firstOrNull(),
         )
         assertEquals(
             "the reveal flag survived the event that dismissed it, so every " +
-                "later event hides a row that is already away",
+                "later event hides buttons that are already away",
             emptyList<BubbleDictation.Effect>(),
             machine.on(BubbleDictation.Event.CancelTapped),
         )
@@ -564,13 +574,13 @@ class BubbleDictationTest {
 
     @Test
     fun aSecondLongPressDoesNotStackHides() {
-        // Two long presses in IDLE are two reveals of the same row; the next
+        // Two long presses in IDLE are two reveals of the same buttons; the next
         // event dismisses it exactly once.
         longPress()
-        assertEquals(listOf(BubbleDictation.Effect.RevealHistory), longPress())
+        assertEquals(listOf(BubbleDictation.Effect.ShowActions), longPress())
         assertEquals(
             listOf(
-                BubbleDictation.Effect.HideHistory,
+                BubbleDictation.Effect.HideActions,
                 BubbleDictation.Effect.StartRecording,
             ),
             tap(),

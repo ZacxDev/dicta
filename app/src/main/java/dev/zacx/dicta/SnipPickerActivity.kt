@@ -1,43 +1,40 @@
 package dev.zacx.dicta
 
-import android.app.Activity
 import android.content.ClipData
 import android.content.ClipDescription
 import android.content.ClipboardManager
-import android.content.Intent
 import android.os.Build
-import android.os.Bundle
 import android.os.PersistableBundle
-import android.text.Editable
-import android.text.TextWatcher
 import android.view.View
-import android.widget.BaseAdapter
-import android.widget.EditText
-import android.widget.ListView
 import android.widget.TextView
 import android.widget.Toast
-import java.util.concurrent.Executor
-import java.util.concurrent.Executors
 
 /**
  * The snippet picker: search the imported catalog, tap a row, the body lands on
  * the clipboard.
  *
+ * ## 🔴 What moved OUT of this file, and why
+ *
+ * The window sizing, the search field, the filter-on-type loop, the three-way
+ * empty state and the `finish()` are now [FloatingPickerActivity]'s. They are
+ * the rules a picker must obey, and this file's own history is the argument:
+ * `FloatingWindow.applySize` was the one obligation an activity had to
+ * *remember*, and in 0.4.0 this activity did not — it rendered at roughly a
+ * fifth of the screen width on a real Galaxy S21. A second picker is four more
+ * such obligations. The shell owns them; this class says only WHAT it lists.
+ *
+ * 🔴 **The behaviour here did not change.** Every test in
+ * `SnipPickerActivityTest` passes unmodified except for the three view ids,
+ * which genuinely moved into the shared layout — and that is the assertion the
+ * refactor rests on.
+ *
  * ## 🔴 An Activity, and NOT a view inside the bubble's overlay window
  *
- * Two independent reasons, either of which is sufficient:
- *
- *  1. **Input focus.** The bubble's window is created with
- *     `FLAG_NOT_FOCUSABLE` (`BubbleService.buildWindow`), and this repo argues
- *     the reason explicitly on `BubbleService.showUnreachableWarning`: a
- *     focusable overlay takes input focus from whatever app is underneath,
- *     which closes its IME and can lose a half-typed message. A search field
- *     needs IME focus, so it cannot live in that window — and making that
- *     window focusable to host it would trade the bubble's whole posture for a
- *     picker.
- *  2. **The clipboard.** From Android 10 the clipboard can only be READ by the
- *     app holding input focus (or the default IME), so a `Service` cannot
- *     resolve [SnipClip.CLIP_VAR] at all. See [SnipClip].
+ * The general reasons are on [FloatingPickerActivity]. One is specific to this
+ * picker and is on its own sufficient: **the clipboard.** From Android 10 the
+ * clipboard can only be READ by the app holding input focus (or the default
+ * IME), so a `Service` cannot resolve [SnipClip.CLIP_VAR] at all. See
+ * [SnipClip].
  *
  * Launching it from `BubbleService` is the same background-activity start the
  * existing bubble → `DictateActivity` path already relies on
@@ -50,161 +47,60 @@ import java.util.concurrent.Executors
  * and no `BubbleDictation` event raised. The only side effects are a clipboard
  * write and a toast. `SnipSeamLedgerTest` asserts that as a property of the
  * source rather than leaving it to review.
- *
- * ## No androidx
- *
- * `app/build.gradle.kts` has an empty runtime `dependencies {}` block by
- * explicit decision, so this is a platform `Activity` with a framework
- * `ListView` and a hand-rolled `BaseAdapter` — exactly what the bubble's own
- * reveal uses, and for the reason written there.
  */
-class SnipPickerActivity : Activity() {
-
-    private lateinit var search: EditText
-    private lateinit var list: ListView
-    private lateinit var empty: TextView
+class SnipPickerActivity : FloatingPickerActivity<Snippet>() {
 
     /**
      * Where the catalog comes from. `null` means [SnipStore].
      *
      * The seam the tailnet-fetch follow-up drops into, and the seam a test uses
      * so that "type a query, then assert" is not also a test of the filesystem.
-     * Mirrors `BubbleService.historyProvider`'s shape deliberately.
      */
     internal var source: SnipSource? = null
 
+    override val titleRes: Int = R.string.snip_title
+    override val searchHintRes: Int = R.string.snip_search_hint
+    override val emptyUnreadableRes: Int = R.string.snip_empty_no_catalog
+    override val emptyNothingStoredRes: Int = R.string.snip_empty_catalog_empty
+    override val emptyNoMatchesRes: Int = R.string.snip_empty_no_matches
+    override val rowLayoutRes: Int = R.layout.snip_row
+
     /**
-     * Where [source] is read. `null` means [worker].
+     * The catalog's rows, or `null` when nothing has been imported.
      *
-     * Separate from [source] for `BubbleService.historyExecutor`'s reason: a
-     * test wants a *synchronous* executor so the assertion has no race in it,
-     * and that is an orthogonal choice from where the rows come from.
+     * 🔴 `null` is load-bearing and is not "empty": it is the difference
+     * between `@string/snip_empty_no_catalog` ("import one") and
+     * `@string/snip_empty_catalog_empty` ("the one you imported has none"),
+     * which are different problems with different fixes. An unreadable catalog
+     * reads as "nothing imported" — [SnipStore]'s failure posture — and the
+     * shell turns a throw into the same `null`, so this needs no wrapping of
+     * its own.
      */
-    internal var loadExecutor: Executor? = null
-
-    private val worker = Executors.newSingleThreadExecutor()
-
-    /** Every row the catalog holds, or empty. See [loaded]. */
-    private var all: List<Snippet> = emptyList()
+    override fun readRows(): List<Snippet>? =
+        (source ?: SnipStore(this)).catalog()?.snippets
 
     /**
-     * Whether a catalog was found at all.
-     *
-     * 🔴 Distinct from `all.isEmpty()`, and the distinction is the whole of the
-     * empty-state copy: "no snippets imported yet" and "nothing matches that"
-     * are different problems with different fixes, and one message for both is
-     * the silent-empty failure [SnipCatalog] exists to prevent, moved into the
-     * UI.
-     */
-    private var loaded = false
-
-    private val adapter = SnippetAdapter()
-
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-        setContentView(R.layout.activity_snip_picker)
-        // 🔴 AFTER setContentView, never before — and that constraint, the
-        // defect it closes and why there is one owner are all in
-        // FloatingWindow's kdoc. Deliberately not restated here: the mechanism
-        // had been copied into six tracked files, and the copy nobody reads is
-        // the copy that goes stale.
-        FloatingWindow.applySize(this)
-        search = findViewById(R.id.snip_search)
-        list = findViewById(R.id.snip_list)
-        empty = findViewById(R.id.snip_empty)
-        list.adapter = adapter
-        list.setOnItemClickListener { _, _, position, _ -> copy(adapter.getItem(position)) }
-        search.addTextChangedListener(object : TextWatcher {
-            override fun afterTextChanged(s: Editable?) = render()
-            override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) = Unit
-            override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) = Unit
-        })
-        render()
-        load()
-    }
-
-    /**
-     * Re-entry into an instance that was never destroyed: reload, and clear the
-     * query.
-     *
-     * 🔴 **Without this the picker serves a STALE catalog.** The manifest
-     * declares `launchMode="singleTop"` with the picker's own `taskAffinity`
-     * and no `noHistory`, so the activity survives being stopped: open it from
-     * the bubble, press HOME rather than Back (so nothing calls [finish]),
-     * import a different `snippets.json` from Settings, then tap snip again.
-     * The system delivers `onNewIntent` to the existing instance, [onCreate]
-     * does not run, and a catalog loaded only there would list rows the user
-     * has already replaced — tapping one copies a body that no longer exists,
-     * with nothing on screen saying so.
-     *
-     * `onNewIntent` rather than `onResume`: the resume callback also fires on
-     * the way up from [onCreate], so putting the reload there would load the
-     * catalog twice on every fresh open — two file reads and two JSON parses
-     * for one launch. `onNewIntent` fires only for re-entry, which is exactly
-     * the case that is stale.
-     *
-     * The query is reset because a filter the user cannot see the origin of
-     * reads as a short catalog: a re-opened picker showing one row out of
-     * forty, because of something typed before HOME was pressed, is the
-     * silent-empty failure again in a new shape.
-     */
-    override fun onNewIntent(intent: Intent?) {
-        super.onNewIntent(intent)
-        setIntent(intent)
-        search.setText("")
-        load()
-    }
-
-    override fun onDestroy() {
-        worker.shutdownNow()
-        super.onDestroy()
-    }
-
-    /**
-     * Reads the catalog off the main thread and renders it.
-     *
-     * Off the main thread because the read is file IO plus a JSON parse of the
-     * whole catalog — the same reason the bubble's reveal and the settings
-     * screen's usage line are both async. An unreadable catalog is "nothing
-     * imported", never a crash: see [SnipStore]'s failure posture.
-     */
-    private fun load() {
-        val from = source ?: SnipStore(this)
-        val executor = loadExecutor ?: worker
-        runCatching {
-            executor.execute {
-                val catalog = runCatching { from.catalog() }.getOrNull()
-                runOnUiThread {
-                    all = catalog?.snippets ?: emptyList()
-                    loaded = catalog != null
-                    render()
-                }
-            }
-        }
-    }
-
-    /**
-     * Applies the query and shows either the rows or the reason there are none.
-     *
      * The ranking is [SnipMatcher.rank] and nothing else — including for a
      * blank query, which is its BROWSE case and is how the picker opens.
      */
-    private fun render() {
-        adapter.submit(SnipMatcher.rank(all, search.text?.toString() ?: ""))
-        val hasRows = adapter.count > 0
-        list.visibility = if (hasRows) View.VISIBLE else View.GONE
-        empty.visibility = if (hasRows) View.GONE else View.VISIBLE
-        empty.text = getString(
-            when {
-                !loaded -> R.string.snip_empty_no_catalog
-                all.isEmpty() -> R.string.snip_empty_catalog_empty
-                else -> R.string.snip_empty_no_matches
-            }
-        )
+    override fun filterRows(rows: List<Snippet>, query: String): List<Snippet> =
+        SnipMatcher.rank(rows, query)
+
+    /**
+     * 🔴 Every per-item field is set on every call, including the
+     * `contentDescription`. A recycled `convertView` arrives wearing the
+     * previous row's values, and the bug that shape produces — a row announcing
+     * a snippet it no longer shows — is the hazard
+     * [FloatingPickerActivity]'s kdoc names.
+     */
+    override fun bindRow(view: View, row: Snippet) {
+        view.findViewById<TextView>(R.id.snip_row_title).text = SnipRow.title(row)
+        view.findViewById<TextView>(R.id.snip_row_preview).text = SnipRow.preview(row.body)
+        view.contentDescription = getString(R.string.snip_row_desc, SnipRow.title(row))
     }
 
     /**
-     * Puts [snippet]'s **resolved** body on the clipboard and says so.
+     * Puts [row]'s **resolved** body on the clipboard and says so.
      *
      * 🔴 Resolved, not verbatim — see [SnipClip] for why a verbatim copy puts
      * the literal characters `{{clip}}` into the user's next message. The
@@ -212,28 +108,30 @@ class SnipPickerActivity : Activity() {
      * the common row costs no clipboard access at all.
      *
      * The label is the clip's own label, which is what a clipboard-history UI
-     * shows; the body is the text. `finish()` because the picker's whole job is
-     * done — leaving it up would put a search field over the app the user is
-     * trying to paste into.
+     * shows; the body is the text.
+     *
+     * 🔴 No `finish()` here any more, and that is not an omission: the shell
+     * finishes after every pick, for both pickers, from one place. The reason
+     * is unchanged — leaving the picker up would put a search field over the
+     * app the user is trying to paste into.
      */
-    private fun copy(snippet: Snippet) {
+    override fun onRowPicked(row: Snippet) {
         val clipboard = getSystemService(ClipboardManager::class.java)
-        val body = if (SnipClip.needsClip(snippet.body)) {
-            SnipClip.resolve(snippet.body, currentClipText(clipboard))
+        val body = if (SnipClip.needsClip(row.body)) {
+            SnipClip.resolve(row.body, currentClipText(clipboard))
         } else {
-            snippet.body
+            row.body
         }
         runCatching {
-            clipboard?.setPrimaryClip(sensitive(ClipData.newPlainText(snippet.label, body)))
+            clipboard?.setPrimaryClip(sensitive(ClipData.newPlainText(row.label, body)))
         }
         runCatching {
             Toast.makeText(
                 this,
-                getString(R.string.snip_copied, snippet.label),
+                getString(R.string.snip_copied, row.label),
                 Toast.LENGTH_SHORT,
             ).show()
         }
-        finish()
     }
 
     /**
@@ -280,40 +178,4 @@ class SnipPickerActivity : Activity() {
             val clip = clipboard?.primaryClip ?: return@runCatching ""
             if (clip.itemCount == 0) "" else clip.getItemAt(0).coerceToText(this).toString()
         }.getOrDefault("")
-
-    /**
-     * One row per snippet.
-     *
-     * 🔴 Every per-item field is set on every `getView`, including the
-     * `contentDescription`. A recycled `convertView` arrives wearing the
-     * previous row's values, and the bug that shape produces — a row announcing
-     * a snippet it no longer shows — is the same one `BubbleService.bindChip`
-     * documents at length.
-     */
-    private inner class SnippetAdapter : BaseAdapter() {
-        private var rows: List<Snippet> = emptyList()
-
-        fun submit(next: List<Snippet>) {
-            rows = next
-            notifyDataSetChanged()
-        }
-
-        override fun getCount(): Int = rows.size
-
-        override fun getItem(position: Int): Snippet = rows[position]
-
-        override fun getItemId(position: Int): Long = position.toLong()
-
-        override fun getView(position: Int, convertView: View?, parent: android.view.ViewGroup?): View {
-            val view = convertView ?: layoutInflater.inflate(R.layout.snip_row, parent, false)
-            val snippet = rows[position]
-            val title = view.findViewById<TextView>(R.id.snip_row_title)
-            val preview = view.findViewById<TextView>(R.id.snip_row_preview)
-            title.text = SnipRow.title(snippet)
-            preview.text = SnipRow.preview(snippet.body)
-            view.contentDescription =
-                getString(R.string.snip_row_desc, SnipRow.title(snippet))
-            return view
-        }
-    }
 }

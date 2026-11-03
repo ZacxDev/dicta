@@ -36,8 +36,61 @@ jobs:
       # measured nothing is worse than no gate — so the count is asserted, not
       # inferred from the task's exit status.
       #
-      # BASELINE: 717 against a suite of 825 tests / 78 classes, read from the
-      # JUnit XML of a full run on `fix/snip-picker-width` — the floating-window
+      # BASELINE: 757 against a suite of 871 tests / 83 classes, read from the
+      # JUnit XML of a full run on `feat/history-picker` — the change that moves
+      # dictation history from a chip ListView inside the bubble's overlay
+      # window to an icon button plus a searchable floating picker Activity.
+      #
+      # 🔴 THE COUNT WENT UP, AND IT WAS NOT OBVIOUS THAT IT WOULD. This change
+      # DELETES tests as well as adding them: BubbleHistoryRevealTest — 893
+      # lines, 26 tests — went entirely, because it pinned a surface that no
+      # longer exists. The net is still +46, accounted for PER CLASS rather
+      # than asserted:
+      #   -26  BubbleHistoryRevealTest (deleted with the chip list)
+      #   +10  BubbleHistoryButtonRevealTest    +7  BubbleHistoryStateTest
+      #   +12  BubbleRevealGestureTest         +23  HistoryPickerActivityTest
+      #   +12  HistoryRowTest                   +8  PickerShellSeamLedgerTest
+      #    +4  FloatingWindowSizeTest (the new activity's four width cases)
+      #    +1  FloatingOverlaySeamLedgerTest    +1  SnipSeamLedgerTest
+      #    -6  HistoryLabelTest (shortLabel/MAX_CHARS died with the 220dp chip)
+      #   = +46 tests and +5 classes against 825 / 78.
+      #
+      # 871/83 was measured directly (83 TEST-*.xml files summing to tests=871
+      # failures=0 errors=0 skipped=0), agrees with
+      # scripts/assert-tests-ran.py's own TOTAL line on the same run, and was
+      # additionally reconciled PER CLASS against TestCountFloorTest's source
+      # counter — 83 classes, ZERO mismatches, both totals 871. That per-class
+      # reconciliation is what TestCountFloorTest's kdoc asks for and is the
+      # check that once found a counter inflating itself from its own fixtures.
+      # (An unstripped @Test count over the same tree returns 883 — 16 phantoms
+      # — which is the direct evidence that the comment-and-literal stripping
+      # is load-bearing. Scoped to this tree; do not check it against HEAD.)
+      #
+      # The same counter independently reproduces the PREVIOUS entry's own
+      # claim of 825 / 78 at 97c3466. That is a check on the INSTRUMENT and not
+      # only on the tree, and it is cheap: without it, "871" is a number from
+      # one tool about one tree.
+      # 871 * 500 / 575 = 757.39 -> 757, which is 13.09% slack.
+      #
+      # 🔴 COMMIT COUNTED ON, since a branch is not a tree: 168e78c, the commit
+      # that adds HistoryPickerActivity's four FloatingWindowSizeTest cases. It
+      # is the LAST commit on this branch that moves the count, and it is the
+      # tree the 871/83 run above was made on. It is NOT 1e8ceb2 — that earlier
+      # tree had 867, four fewer, so quoting it here would be the exact error
+      # the correction note below is about. This comment block and the --min
+      # argument are in the FOLLOWING commit, which touches only this file and
+      # therefore cannot move the count.
+      #
+      # 🔴 LEFT AT 717 THIS GATE WOULD NOT HAVE GONE RED, which is why it is
+      # raised here rather than discovered later: 717 against 871 is 17.7%
+      # slack, still inside TestCountFloorTest's 20% ceiling. Nothing would
+      # have complained. It would simply have stopped being able to notice a
+      # sixth of the suite disappearing — which is exactly the silent drift the
+      # correction note below is about, caught one entry earlier this time.
+      #
+      # PREVIOUS ENTRY: 717 against a suite of 825 tests / 78 classes, read from
+      # the JUnit XML of a full run on `fix/snip-picker-width` — the
+      # floating-window
       # width fix for issue #38's snippet picker. It adds ten tests and one
       # class: six in the new FloatingOverlaySeamLedgerTest (the theme-derived
       # ledger of floating overlay activities) and four picker width cases in
@@ -141,8 +194,9 @@ jobs:
       # 🔴 THE HEADROOM IS THE CONSTANT, NOT THE FLOOR — re-derive it, do not
       # pick a round number:
       #     floor = floor(current_total * 500 / 575)      # 0.86957, 13.04% slack
-      # 825 * 500 / 575 = 717.39 -> 717, which is 13.09% slack.
-      # (Previous entries: 826 * 500 / 575 = 718.26 -> 718, 13.08% slack; 815 * 500 / 575 = 708.69 -> 708, 13.13% slack;
+      # 871 * 500 / 575 = 757.39 -> 757, which is 13.09% slack.
+      # (Previous entries: 825 * 500 / 575 = 717.39 -> 717, 13.09% slack;
+      #  826 * 500 / 575 = 718.26 -> 718, 13.08% slack; 815 * 500 / 575 = 708.69 -> 708, 13.13% slack;
       #  807 * 500 / 575 = 701.7 -> 701, 13.14% slack;
       #  696 * 500 / 575 = 605.22 -> 605, 13.07% slack;
       #  691 * 500 / 575 = 600.87 -> 600, 13.17% slack;
@@ -175,7 +229,7 @@ jobs:
       # one place.
       - name: Assert tests actually ran
         if: always()
-        run: python3 scripts/assert-tests-ran.py --min 717
+        run: python3 scripts/assert-tests-ran.py --min 757
 
       - name: Upload test reports
         if: always()

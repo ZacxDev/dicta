@@ -221,7 +221,7 @@ class SettingsSnippetImportTest {
             picker.get().source = SnipStore(dir)
             picker.get().loadExecutor = java.util.concurrent.Executor { it.run() }
             val list = picker.setup().get()
-                .findViewById<android.widget.ListView>(R.id.snip_list)
+                .findViewById<android.widget.ListView>(R.id.picker_list)
             val adapter = requireNotNull(list.adapter) { "the picker has no adapter" }
             assertEquals(
                 "the picker lists something other than what Settings just " +

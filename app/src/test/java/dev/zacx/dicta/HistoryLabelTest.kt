@@ -6,186 +6,137 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * [HistoryLabel]: the text on a history chip.
+ * [HistoryLabel.age]: how long ago a stored dictation was recorded.
  *
- * 🔴 **Length only. Never "does it fit".** This repo has measured that
- * Robolectric's `TextPaint.measureText` returns a flat 1.0 px per character
- * and that `Layout.getEllipsisCount` returns 0 for a 4000-character string, so
- * every assertion about rendered width in this project is an assertion about
- * Robolectric. The budget is enforced here, where the subject is a returned
- * `String` and the measurement is `.length`; whether 34 characters actually
- * fit a 220 dp chip at the device's font scale is a screenshot.
+ * ## 🔴 THIS FILE LOST MOST OF ITSELF, AND THE SUBJECT IS WHY
+ *
+ * It used to be nine tests about `HistoryLabel.shortLabel` — a whole chip
+ * label, `"2h · the quick brown fox"`, cut to a `MAX_CHARS = 34` budget. Both
+ * the function and the constant are DELETED with the chip they were sized for:
+ * `MAX_CHARS` was the budget of a 220 dp chip inside the bubble's overlay
+ * window, and the long-press reveal no longer holds a list at all.
+ *
+ * The tests that went with them, and where each one's claim went:
+ *
+ *  - `everyLabelFitsTheBudget`, `aSingleEnormousWordIsCutHard`,
+ *    `aLongTranscriptIsCutAtAWordBoundary`, `theLabelUsesTheRoomTheShorterAgeLeaves`
+ *    — the character-budget family. The ARGUMENT survives and the number did
+ *    not; it is now [HistoryRowTest]'s, over [HistoryRow.PREVIEW_MAX].
+ *  - `aLabelIsOneLineWithNoSurroundingSpace`, `aShortTranscriptIsNotTouched`,
+ *    `aBlankTranscriptStillProducesAChipTheUserCanSee`,
+ *    `twoDifferentTranscriptsProduceTwoDifferentLabels` — the transcript's
+ *    shape. Also [HistoryRowTest]'s, over `HistoryRow.preview`.
+ *  - `anAbsurdAgeIsCappedRatherThanWidening` — about the age, so it STAYED,
+ *    minus the `MAX_CHARS` half of its assertion, which no longer exists.
+ *
+ * 🔴 Nothing here was watched failing on pre-change code, and nothing could be:
+ * [HistoryLabel.age] is untouched by this change. These are **invariant
+ * guards**, carried over verbatim in claim if not in spelling.
+ *
+ * 🔴 **Length and value only. Never "does it fit".** This repo has measured
+ * that Robolectric's `TextPaint.measureText` returns a flat 1.0 px per
+ * character and that `Layout.getEllipsisCount` returns 0 for a 4000-character
+ * string, so every assertion about rendered width in this project is an
+ * assertion about Robolectric. Whether `"99d+"` actually fits the row at the
+ * device's font scale is a screenshot.
  */
 class HistoryLabelTest {
 
     private val t0 = 1_700_000_000_000L
 
-    private fun label(text: String, agoMs: Long = 0L): String =
-        HistoryLabel.shortLabel(text, t0, t0 + agoMs)
-
-    // --- the budget, which is the whole point -------------------------------
-
-    @Test
-    fun everyLabelFitsTheBudget() {
-        // The inputs that break a naive implementation, each for a different
-        // reason: a long ordinary transcript, a single enormous token with no
-        // word boundary to cut at, one that is all whitespace, an empty one,
-        // and an age large enough to need its own cap.
-        val cases = mapOf(
-            "an ordinary long transcript" to LOREM,
-            "one 4000-character word" to "x".repeat(4000),
-            "a newline-ridden transcript" to "first line\n\nsecond line\tthird",
-            "whitespace only" to "   \n\t  ",
-            "empty" to "",
-            "exactly at the budget" to "y".repeat(HistoryLabel.MAX_CHARS),
-        )
-        for ((name, text) in cases) {
-            for (agoMs in listOf(0L, MINUTE, HOUR, DAY, 400L * DAY)) {
-                val out = HistoryLabel.shortLabel(text, t0, t0 + agoMs)
-                assertTrue(
-                    "<$name> at ${agoMs}ms ago produced a ${out.length}-character " +
-                        "label, over the ${HistoryLabel.MAX_CHARS} budget: \"$out\"",
-                    out.length <= HistoryLabel.MAX_CHARS,
-                )
-            }
-        }
-    }
-
-    @Test
-    fun aLabelIsOneLineWithNoSurroundingSpace() {
-        // A transcript is free text. Pasted raw, a chip is as tall as the
-        // paragraph it holds and the row stops being a row.
-        val out = label("first line\n\n  second   line\t third ", HOUR)
-        assertFalse("the label contains a newline: \"$out\"", out.contains('\n'))
-        assertFalse("the label contains a tab: \"$out\"", out.contains('\t'))
-        assertEquals("the label has surrounding space: \"$out\"", out.trim(), out)
-        assertFalse(
-            "the label has a run of repeated spaces: \"$out\"",
-            out.contains("  "),
-        )
-    }
-
-    // --- the age ------------------------------------------------------------
+    private fun age(agoMs: Long): String = HistoryLabel.age(t0, t0 + agoMs)
 
     @Test
     fun theAgeUnitFollowsHowLongAgoItWas() {
-        assertEquals("now · hi", label("hi", 0L))
-        assertEquals("now · hi", label("hi", MINUTE - 1))
-        assertEquals("1m · hi", label("hi", MINUTE))
-        assertEquals("59m · hi", label("hi", 59 * MINUTE))
-        assertEquals("1h · hi", label("hi", HOUR))
-        assertEquals("23h · hi", label("hi", 23 * HOUR))
-        assertEquals("1d · hi", label("hi", DAY))
-        assertEquals("13d · hi", label("hi", 13 * DAY))
+        // Every boundary and one value inside each band, so a `<` that became
+        // a `<=` — or a band dropped outright — is visible. The pairs at
+        // MINUTE-1/MINUTE and 59m/1h are the ones that catch an off-by-one.
+        assertEquals("now", age(0L))
+        assertEquals("now", age(MINUTE - 1))
+        assertEquals("1m", age(MINUTE))
+        assertEquals("9m", age(9 * MINUTE))
+        assertEquals("59m", age(59 * MINUTE))
+        assertEquals("1h", age(HOUR))
+        assertEquals("3h", age(3 * HOUR))
+        assertEquals("23h", age(23 * HOUR))
+        assertEquals("1d", age(DAY))
+        assertEquals("12d", age(12 * DAY))
+        assertEquals("13d", age(13 * DAY))
     }
 
     @Test
     fun aClockThatMovedBackwardsReadsAsNow() {
         // NTP corrections and time-zone changes are real; "-3h" is a bug
         // report where "now" is a rounding error.
-        assertEquals("now · hi", HistoryLabel.shortLabel("hi", t0, t0 - 5 * HOUR))
+        assertEquals("now", HistoryLabel.age(t0, t0 - 5 * HOUR))
+        assertEquals("now", HistoryLabel.age(t0, t0 - 4000L * DAY))
     }
 
     @Test
     fun anAbsurdAgeIsCappedRatherThanWidening() {
         // 🔴 INVARIANT GUARD, NOT REGRESSION COVERAGE — and the claim that it
         // was the latter is RETRACTED (round 0 of #17's audit, measured).
-        // It used to say this guard makes the budget a guarantee, because a
-        // decade-long clock jump would yield a six-character age and drive the
-        // words budget negative. Both halves are false: a decade is "3652d"
-        // (five chars), and `room` needs a 31-character age to reach zero
-        // while the longest age representable is "106751991167d" (13 chars,
-        // from Long.MAX_VALUE ms). `everyLabelFitsTheBudget` cannot be broken
-        // by removing the cap, so this test has never protected it.
+        // It used to say this guard makes a length budget a guarantee, because
+        // a decade-long clock jump would yield a six-character age and drive
+        // the deleted `shortLabel`'s words budget negative. Both halves were
+        // false: a decade is "3652d" (five chars), and that budget needed a
+        // 31-character age to reach zero while the longest age representable is
+        // "106751991167d" (13 chars, from Long.MAX_VALUE ms).
         //
-        // What it does pin is the COSMETIC choice: an absurd age renders
-        // "99d+" rather than widening.
+        // ⚠ That retraction's own measurement — "removing the cap fails
+        // exactly two assertions, and `everyLabelFitsTheBudget` is not one of
+        // them" — was taken against a tree where `shortLabel` still existed,
+        // and both named assertions went with it. It is kept as the evidence
+        // for the sentence above; it is NOT re-runnable on this tree, and the
+        // assertion below is now the ONLY thing pinning the cap.
         //
-        // 🔴 Scope, MEASURED by removing the cap and running the whole suite
-        // (556 tests at the time it was measured; it has grown since) —
-        // an earlier draft of this comment said "deleting the cap fails THIS
-        // assertion and nothing else" and that was FALSE. It fails TWO:
-        // this one, and `theLabelUsesTheRoomTheShorterAgeLeaves`, which uses
-        // "99d+" only as a fixture. `everyLabelFitsTheBudget` stays GREEN,
-        // which is the direct evidence that the cap does not protect the
-        // length guarantee.
-        val out = label("hi", 4000L * DAY)
-        assertTrue("an absurd age was not capped: \"$out\"", out.startsWith("99d+"))
-        assertTrue(out.length <= HistoryLabel.MAX_CHARS)
-    }
-
-    // --- the words ----------------------------------------------------------
-
-    @Test
-    fun aShortTranscriptIsNotTouched() {
-        assertEquals("2h · the quick brown fox", label("the quick brown fox", 2 * HOUR))
+        // What it pins is the COSMETIC choice: an absurd age renders "99d+"
+        // rather than widening, because "99d+ · Server" reads better than
+        // "3652d · Server". There is no safety argument underneath it.
+        assertEquals("99d+", age(4000L * DAY))
+        assertEquals("99d+", age(100L * DAY))
+        // The boundary itself, from the inside: 99 days is not capped.
+        assertEquals("99d", age(99L * DAY))
     }
 
     @Test
-    fun aBlankTranscriptStillProducesAChipTheUserCanSee() {
-        // The item still has audio and is still re-transcribable, so a chip
-        // that renders as nothing is an item the user cannot reach.
-        assertEquals("3h", label("", 3 * HOUR))
-        assertEquals("3h", label("   \n ", 3 * HOUR))
-    }
-
-    @Test
-    fun aLongTranscriptIsCutAtAWordBoundary() {
-        val out = label(LOREM, 2 * HOUR)
-        assertTrue("\"$out\" does not start with the age", out.startsWith("2h · "))
-        val words = out.removePrefix("2h · ")
-        assertTrue(
-            "\"$words\" is not a prefix of the transcript at all",
-            LOREM.startsWith(words),
+    fun theAgeIsShortEnoughToPrefixARowWithoutDominatingIt() {
+        // The reason `age` exists at all rather than a formatted date: it is
+        // the fixed-width-ish prefix that makes a column of rows scannable
+        // (HistoryRow.title's argument). Four characters is the most it can
+        // emit, which is the claim worth pinning — a "weeks" or "months" unit
+        // added later would break it and should be a deliberate decision.
+        //
+        // Swept across every band plus the cap, so this is not satisfied by
+        // one lucky value.
+        val probes = listOf(
+            0L, MINUTE - 1, MINUTE, 59 * MINUTE, HOUR, 23 * HOUR,
+            DAY, 13 * DAY, 99L * DAY, 4000L * DAY, Long.MAX_VALUE / 2,
         )
-        assertTrue(
-            "the cut landed mid-word: the transcript continues \"" +
-                LOREM.substring(words.length).take(12) + "\" after \"$words\"",
-            words.length == LOREM.length || LOREM[words.length] == ' ',
-        )
-        assertEquals("the cut left surrounding space", words.trim(), words)
+        for (ago in probes) {
+            val out = age(ago)
+            assertTrue(
+                "the age at ${ago}ms ago is ${out.length} characters (\"$out\"), " +
+                    "over the four \"99d+\" needs",
+                out.length <= 4,
+            )
+            assertFalse("the age at ${ago}ms ago is blank", out.isBlank())
+        }
     }
 
     @Test
-    fun aSingleEnormousWordIsCutHard() {
-        // 🔴 The case a word-boundary-only implementation returns whole: a
-        // dictation of a URL, or a recogniser that emitted no spaces at all.
-        val out = label("x".repeat(4000), 2 * HOUR)
-        assertEquals(HistoryLabel.MAX_CHARS, out.length)
-        assertTrue(out.startsWith("2h · xxx"))
-    }
-
-    @Test
-    fun theLabelUsesTheRoomTheShorterAgeLeaves() {
-        // 🔴 Isolates the "room = budget - age - separator" arithmetic, and it
-        // needs a transcript with NO word boundaries: with ordinary prose the
-        // word-boundary cut lands on the same space for both ages, so the two
-        // labels come out identical and a version ignoring the age's length
-        // survives. A single long token makes the cut exact.
-        val token = "x".repeat(4000)
-        val shortAge = label(token, 2 * HOUR).removePrefix("2h · ")
-        val longAge = label(token, 4000L * DAY).removePrefix("99d+ · ")
-        assertEquals(
-            "the two-character age did not leave the budget minus \"2h · \"",
-            HistoryLabel.MAX_CHARS - "2h · ".length,
-            shortAge.length,
-        )
-        assertTrue(
-            "the \"99d+\" label carries ${longAge.length} characters of " +
-                "transcript and the \"2h\" one carries ${shortAge.length}, so " +
-                "the age's own length is not being subtracted from the budget",
-            longAge.length < shortAge.length,
-        )
-    }
-
-    @Test
-    fun twoDifferentTranscriptsProduceTwoDifferentLabels() {
+    fun twoDifferentAgesProduceTwoDifferentStrings() {
         // Positive control against an implementation that returns a constant:
-        // every assertion above is satisfied by `fun shortLabel(...) = "now"`.
-        assertFalse(
-            "two different transcripts at two different ages produced the " +
-                "same label",
-            label("alpha bravo", HOUR) == label("charlie delta", 2 * HOUR),
+        // every assertion above about blankness and length is satisfied by
+        // `fun age(a: Long, b: Long) = "now"`, and most of this file would
+        // still be green. Three distinct values, pairwise, so a function that
+        // collapsed two bands is caught too.
+        val distinct = setOf(age(0L), age(9 * MINUTE), age(3 * HOUR), age(12 * DAY))
+        assertEquals(
+            "two of \"now\"/9m/3h/12d came out the same, so the age is not a " +
+                "function of the elapsed time",
+            4,
+            distinct.size,
         )
     }
 
@@ -193,9 +144,5 @@ class HistoryLabelTest {
         const val MINUTE = 60_000L
         const val HOUR = 60 * MINUTE
         const val DAY = 24 * HOUR
-
-        const val LOREM =
-            "the quick brown fox jumps over the lazy dog and keeps on going " +
-                "for considerably longer than any chip could hold"
     }
 }
