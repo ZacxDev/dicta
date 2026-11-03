@@ -459,9 +459,17 @@
 
          🔴 The button string is used as BOTH contentDescription and
          tooltipText, following @string/bubble_cancel. It says what tapping
-         DOES, because the glyph is a clipboard and a clipboard could as easily
-         mean "paste into the recording" — which this control pointedly does
-         not do. -->
+         DOES, because the glyph alone cannot: a pair of braces reads as
+         "a snippet" at best, and is silent about search, about copying, and
+         about the fact that this control does NOT paste into the recording.
+
+         🔴 THE OLD JUSTIFICATION HERE WAS "because the glyph is a clipboard",
+         and it is no longer true — @drawable/ic_snip is braces now, for the
+         reasons its own comment records (the clipboard was both wrong about
+         what the button does and near-identical to @drawable/ic_copy). The
+         conclusion survives the correction: the string still has to say what
+         tapping does. -->
+
     <string name="bubble_snip">Snippets — search and copy one to the clipboard</string>
 
     <string name="snip_title">Snippets</string>
