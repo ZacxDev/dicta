@@ -452,4 +452,74 @@
          status string; OverlayMinimalLayoutTest pins both properties. -->
     <string name="engine_badge_remote">Server</string>
     <string name="engine_badge_local">Phone</string>
+
+    <!-- ===================== the snippet picker (issue #38) ================
+
+         The long-press reveal's second affordance, and the screen it opens.
+
+         🔴 The button string is used as BOTH contentDescription and
+         tooltipText, following @string/bubble_cancel. It says what tapping
+         DOES, because the glyph is a clipboard and a clipboard could as easily
+         mean "paste into the recording" — which this control pointedly does
+         not do. -->
+    <string name="bubble_snip">Snippets — search and copy one to the clipboard</string>
+
+    <string name="snip_title">Snippets</string>
+    <string name="snip_search_hint">Search snippets</string>
+
+    <!-- 🔴 THREE distinct empty states, never one.
+
+         "Nothing imported", "an imported catalog with no rows in it" and
+         "nothing matches what you typed" are different problems with different
+         fixes, and one message for all of them is exactly the silent-empty
+         failure SnipCatalog refuses a broken file to avoid, relocated into the
+         UI: a picker showing an empty list is indistinguishable from a broken
+         feature. -->
+    <string name="snip_empty_no_catalog">No snippets imported yet. Import a snip snippets.json from Settings.</string>
+    <string name="snip_empty_catalog_empty">The imported snippets.json has no snippets in it.</string>
+    <string name="snip_empty_no_matches">No snippets match that.</string>
+
+    <!-- The row's contentDescription. The row's own text is a label plus a
+         truncated body preview, which a screen reader announces as two pieces
+         of text rather than as a button, so this says what tapping does. -->
+    <string name="snip_row_desc">%1$s — copy this snippet to the clipboard</string>
+    <!-- 🔴 Names the snippet, never its BODY. A toast is drawn over
+         whatever app the user is in and is screenshot-able; a snippet body is
+         arbitrary operator text (paths, hostnames, prompt templates) and has no
+         business being flashed on screen to confirm a copy. -->
+    <string name="snip_copied">Copied “%1$s”</string>
+
+    <!-- ===================== snippet import (Settings) ====================
+
+         🔴 An in-app document picker, and deliberately NO
+         <intent-filter>. The issue's wording suggested receiving the catalog
+         through the share sheet; that was decided against, because an exported
+         receiver is an entry point any installed app could invoke on a PUBLIC
+         app. The import is therefore something the operator starts from this
+         screen, and nothing else can start at all.
+
+         The CONTENT is validated, never the filename and never the claimed
+         MIME type — a provider's type is a claim about a file, not a fact. -->
+    <string name="stt_section_snippets">Snippets</string>
+    <string name="stt_import_snippets">Import snippets…</string>
+    <string name="stt_import_snippets_desc">Import snippets. Opens the document picker to choose a snip snippets.json; it replaces the snippets already on this phone and nothing else.</string>
+    <!-- Shown until the first read of the stored catalog comes back, for
+         @string/stt_history_usage_pending's reason: the read is file IO on a
+         worker thread, and a hard-coded "0 snippets" would be a wrong number
+         rather than a pending one. -->
+    <string name="stt_snippets_pending">Snippets: checking…</string>
+    <string name="stt_snippets_none">No snippets imported yet</string>
+    <!-- A plural for @plurals/stt_history_usage's reason: the count is
+         routinely 1, and "1 snippets" reads as carelessness. %2$s is the
+         import date. -->
+    <plurals name="stt_snippets_count">
+        <item quantity="one">%1$d snippet, imported %2$s</item>
+        <item quantity="other">%1$d snippets, imported %2$s</item>
+    </plurals>
+    <!-- 🔴 Carries the REASON. A bare "Import failed" leaves the
+         operator with nothing to act on, and the reasons are all actionable and
+         all different: not an array, a row with no label, a duplicate label.
+         SnipCatalog produces the text; this is the frame. -->
+    <string name="stt_snippets_import_failed">That file is not a snippets.json: %1$s</string>
+    <string name="stt_snippets_no_picker">No app on this phone can open a document.</string>
 </resources>

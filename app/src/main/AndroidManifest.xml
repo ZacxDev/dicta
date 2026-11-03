@@ -106,6 +106,41 @@
             android:taskAffinity="dev.zacx.dicta.overlay"
             android:launchMode="singleTop" />
 
+        <!--
+          The snippet picker (issue #38): search the imported snip catalog and
+          copy a snippet to the clipboard.
+
+          🔴 exported="false", and NO <intent-filter> anywhere in this change.
+          The operator's decision over the issue's share-sheet wording: this is
+          a PUBLIC app, and an exported surface is an entry point any installed
+          app could invoke. The import is an in-app ACTION_OPEN_DOCUMENT from
+          SettingsActivity, which no other app can trigger.
+
+          🔴 taskAffinity is LOAD-BEARING here for exactly DictateActivity's
+          reason above, reached by a new route: the bubble starts this with
+          FLAG_ACTIVITY_NEW_TASK, and that flag means "use the task matching
+          this activity's taskAffinity". With no affinity it would inherit the
+          application default — MainActivity's task — and the translucent
+          picker would render over Dicta's own UI instead of over the app the
+          user is in. That was issue #11.
+
+          The value must stay in sync with SnipLaunch.PICKER_TASK_AFFINITY, and
+          must stay DIFFERENT from DictateActivity's: two floating surfaces
+          sharing one task with singleTop on both would stack, and Back would
+          walk through a surface the user never opened. SnipSeamLedgerTest pins
+          both halves.
+
+          It starts no recording and touches no microphone — see
+          SnipPickerActivity's kdoc and SnipSeamLedgerTest.
+        -->
+        <activity
+            android:name=".SnipPickerActivity"
+            android:exported="false"
+            android:theme="@style/Theme.Dicta.Overlay"
+            android:excludeFromRecents="true"
+            android:taskAffinity="dev.zacx.dicta.snip"
+            android:launchMode="singleTop" />
+
         <!-- Transcription settings: the base URL and the bearer token. Not
              exported — the token field must not be reachable by another app's
              intent. -->

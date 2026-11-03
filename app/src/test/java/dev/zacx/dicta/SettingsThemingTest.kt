@@ -108,6 +108,12 @@ class SettingsThemingTest {
         "stt_test" to "@drawable/outline_button_bg",
         "stt_clear_token" to "@drawable/destructive_button_bg",
         "stt_clear_history" to "@drawable/destructive_button_bg",
+        // Issue #38's import button. Outline, not destructive: an import
+        // replaces a re-importable cache, and spending the error colour on it
+        // would devalue that cue on the two controls that destroy the user's
+        // own voice. The ledger GREW deliberately, which is exactly what its
+        // failure message asks a new control to do.
+        "stt_import_snippets" to "@drawable/outline_button_bg",
     )
 
     /**
@@ -127,6 +133,10 @@ class SettingsThemingTest {
         R.string.stt_section_language,
         R.string.stt_section_connection,
         R.string.stt_section_history,
+        // Issue #38's group. Added here rather than left out: the whole point
+        // of this list is that the rule is a property of EVERY group, so a new
+        // heading that is not in it is a heading nothing checks.
+        R.string.stt_section_snippets,
     )
 
     private val controlTags = setOf("Button", "Spinner", "CheckBox", "EditText")
