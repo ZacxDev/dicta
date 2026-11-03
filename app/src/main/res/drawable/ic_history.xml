@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The history button's glyph: a clock with a counter-clockwise arrow — "the
+  things you said before".
+
+  🔴 STROKED, and matching @drawable/ic_snip's 2.2-ish stroke language ON
+  PURPOSE, because these two glyphs sit ADJACENT. The long-press reveal is a
+  vertical stack of exactly two icon buttons, so they are read together and a
+  filled glyph beside a stroked one reads as two different kinds of control.
+  Material's `history` icon is a fill and was rejected for that reason, not
+  because it is unclear.
+
+  🔴 JUDGED AT THE SIZE IT IS DRAWN — 24dp inside the 44dp button, i.e. 72px on
+  the 3x target handset — never in a large preview. That is the measurement
+  that rejected scissors for ic_snip, and the same render was run here across
+  four candidates: Material's filled `history`, a plain stroked clock, three
+  stacked lines, and this. The plain clock is the most legible of the four but
+  says "time", not "past" — it could read as a timer. The stacked lines say
+  "list" and are the generic shape ic_snip already rejected.
+
+  strokeWidth 2.1 rather than ic_snip's 2.2: the arc carries more ink per unit
+  length than a brace, so the same number renders visually heavier.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <!-- The dial, opened at the upper left so the rewind arrow can enter it. -->
+    <path
+        android:pathData="M3.9,12 A8.1,8.1 0 1 1 6.3,17.7"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="2.1"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+    <!-- The arrowhead: a corner, not a filled triangle — a solid head at 72px
+         closes up into a blob against the dial. -->
+    <path
+        android:pathData="M3.3,7.6 V12.2 H7.9"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="2.1"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+    <!-- The hands. -->
+    <path
+        android:pathData="M12,7.6 V12 l3.3,2"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="2.1"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+</vector>
