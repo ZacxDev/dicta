@@ -65,9 +65,38 @@ class FloatingOverlaySeamLedgerTest {
      * Measured from `AndroidManifest.xml`, not from intent. Adding a floating
      * surface means editing this list, which is the point: the edit is where the
      * sizing obligation gets read.
+     *
+     * 🔴 `.HistoryPickerActivity` was added here by the history-picker change,
+     * and this is the guard WORKING rather than an obstacle: a third activity
+     * wearing `@style/Theme.Dicta.Overlay` grew the theme-derived set and the
+     * ledger went red until the obligation had been read. It meets it through
+     * [FloatingPickerActivity], which calls `FloatingWindow.applySize` once for
+     * every picker — so the obligation is inherited rather than remembered,
+     * which is the whole argument for that shell.
+     *
+     * ⚠ **KNOWN OPEN DEFECT, filed as #45, deliberately not fixed here.**
+     * [everyFloatingOverlayActivityAppliesTheSharedWindowSizing] iterates THIS
+     * hardcoded list rather than the theme-derived set
+     * [activitiesWithTheme] returns, so its docstring reads wider than its
+     * body: an unledgered floating activity is caught by
+     * [theSetOfFloatingOverlayActivitiesIsLedgered] (which does compare against
+     * the manifest) but is invisible to the sizing check itself. The history
+     * picker is in BOTH, so the gap is not widened here.
+     *
+     * 🔴 And the sizing call it is checked for lives in the SUPERCLASS, not in
+     * either picker's own file — which is a SECOND manifestation of #45, in the
+     * opposite direction. `sourceFileFor(".HistoryPickerActivity")` reads
+     * `HistoryPickerActivity.kt`, where there is no `FloatingWindow.applySize`
+     * to find, so [SHELL_SOURCES] redirects a shell subclass's obligation to
+     * the file that actually discharges it. Resolving it through the DECLARED
+     * SUPERCLASS rather than through a second hardcoded map is the right fix
+     * and belongs with #45; `PickerShellSeamLedgerTest` is what makes the
+     * redirect safe in the meantime, because it fails if either picker leaves
+     * the shell.
      */
     private val overlayThemedActivities = listOf(
         ".DictateActivity",
+        ".HistoryPickerActivity",
         ".SnipPickerActivity",
     )
 
@@ -95,7 +124,7 @@ class FloatingOverlaySeamLedgerTest {
     fun everyFloatingOverlayActivityAppliesTheSharedWindowSizing() {
         val missing = overlayThemedActivities
             .map { sourceFileFor(it) }
-            .filterNot { (_, src) -> APPLIES_SHARED_SIZE.containsMatchIn(stripComments(src)) }
+            .filterNot { (_, src) -> dischargesTheSizingObligation(src) }
             .map { it.first }
             .sorted()
 
@@ -250,6 +279,73 @@ class FloatingOverlaySeamLedgerTest {
     }
 
     @Test
+    fun theSizingGuardExcusesAShellSubclassAndNothingElse() {
+        // 🔴 CONTROLS FOR THE INHERITANCE ARM. Without them, the fact that both
+        // pickers pass without naming the call themselves is indistinguishable
+        // from a guard that excuses everything.
+
+        // NEGATIVE: an activity that sizes nothing and extends nothing must
+        // still be reported. This is the exact pre-change state of
+        // SnipPickerActivity.
+        assertFalse(
+            "the obligation is discharged by an activity that neither calls " +
+                "the sizing nor extends a shell, so the guard excuses " +
+                "everything",
+            dischargesTheSizingObligation(
+                """
+                class QuickReplyActivity : Activity() {
+                    override fun onCreate(b: Bundle?) {
+                        super.onCreate(b)
+                        setContentView(R.layout.activity_quick_reply)
+                    }
+                }
+                """.trimIndent()
+            ),
+        )
+
+        // NEGATIVE: extending an UNLEDGERED base class must not excuse it
+        // either, or any name ending in "Activity" becomes a free pass.
+        assertFalse(
+            "extending an unledgered base class discharged the obligation",
+            dischargesTheSizingObligation(
+                "class QuickReplyActivity : SomeOtherBase<String>() { }"
+            ),
+        )
+
+        // NEGATIVE: naming the shell without extending it — a reference, a
+        // prose mention — must not excuse it.
+        assertFalse(
+            "a mere mention of FloatingPickerActivity discharged the obligation",
+            dischargesTheSizingObligation(
+                "class QuickReplyActivity : Activity() { " +
+                    "val x = FloatingPickerActivity::class }"
+            ),
+        )
+
+        // POSITIVE: a subclass of the ledgered shell IS excused, because the
+        // shell makes the call. A red here means the shell stopped sizing the
+        // window and the two real pickers below are only passing by habit.
+        assertTrue(
+            "a FloatingPickerActivity subclass is NOT excused, so either the " +
+                "shell no longer calls FloatingWindow.applySize — in which " +
+                "case BOTH pickers render at a fifth of the screen width — or " +
+                "the inheritance arm is dead code",
+            dischargesTheSizingObligation(
+                "class QuickReplyActivity : FloatingPickerActivity<String>() { }"
+            ),
+        )
+
+        // And the real shell's own file is the thing that satisfies it, read
+        // directly — so the positive control above is not a fact about a regex.
+        val shell = mainSources().firstOrNull { it.first == "FloatingPickerActivity.kt" }
+        assertTrue("FloatingPickerActivity.kt was not read at all", shell != null)
+        assertTrue(
+            "FloatingPickerActivity.kt does not call FloatingWindow.applySize",
+            APPLIES_SHARED_SIZE.containsMatchIn(stripComments(shell!!.second)),
+        )
+    }
+
+    @Test
     fun theWindowSizingOwnerScanSeesACopyPasteAndIgnoresMereMentions() {
         val sizings = listOf(
             "window.setLayout(width, WindowManager.LayoutParams.WRAP_CONTENT)",
@@ -284,6 +380,43 @@ class FloatingOverlaySeamLedgerTest {
     }
 
     // --- reading the tree ----------------------------------------------------
+
+    /**
+     * Whether [src] calls `FloatingWindow.applySize` **itself or through the
+     * base class it declares**.
+     *
+     * 🔴 The inheritance arm is not a loophole, it is the point of
+     * [FloatingPickerActivity]: the shell calls the sizing once, in `onCreate`
+     * after `setContentView`, so a third picker INHERITS the obligation instead
+     * of having to remember it — which is exactly the remembering that failed
+     * in 0.4.0. Without this arm the two pickers would report as missing while
+     * being correct, and the only way to green the ledger would be to copy the
+     * call back into each of them: the duplication
+     * [onlyFloatingWindowSizesAWindow] exists to refuse.
+     *
+     * 🔴 It is narrow on purpose. Only a superclass that is ITSELF ledgered in
+     * [SHELL_SOURCES] discharges the obligation, and the shell's own source is
+     * then read and required to contain the call — so an empty or renamed shell
+     * cannot silently satisfy anything. `PickerShellSeamLedgerTest` is the
+     * other half: it fails if a picker leaves the shell, which is the case this
+     * arm would otherwise stay quiet about.
+     */
+    private fun dischargesTheSizingObligation(src: String): Boolean {
+        val code = stripComments(src)
+        if (APPLIES_SHARED_SIZE.containsMatchIn(code)) return true
+        val base = SHELL_SOURCES.keys.firstOrNull { shell ->
+            Regex(""":\s*${Regex.escape(shell)}\s*<[^>]*>\s*\(""", RegexOption.DOT_MATCHES_ALL)
+                .containsMatchIn(code)
+        } ?: return false
+        val shellSource = mainSources().firstOrNull { it.first == SHELL_SOURCES[base] }
+        assertTrue(
+            "a floating activity declares $base as its base class but " +
+                "${SHELL_SOURCES[base]} is not in the production sources — " +
+                "refusing to report a pass on a file that was never read",
+            shellSource != null,
+        )
+        return APPLIES_SHARED_SIZE.containsMatchIn(stripComments(shellSource!!.second))
+    }
 
     /** Names of every `<activity>` declaring `android:theme="[theme]"`. */
     private fun activitiesWithTheme(theme: String): List<String> =
@@ -352,6 +485,20 @@ class FloatingOverlaySeamLedgerTest {
     private companion object {
 
         const val OVERLAY_THEME = "@style/Theme.Dicta.Overlay"
+
+        /**
+         * Base classes that discharge the sizing obligation for their
+         * subclasses, as `simple name -> the file that must contain the call`.
+         *
+         * 🔴 A LEDGER, not a search. A subclass is excused only by a base class
+         * named here, and that base class's own source is then read and
+         * required to contain `FloatingWindow.applySize` — so "it inherits it"
+         * is a checked claim rather than an assumption. Adding an entry means
+         * asserting that one file sizes the window for everything under it.
+         */
+        val SHELL_SOURCES = mapOf(
+            "FloatingPickerActivity" to "FloatingPickerActivity.kt",
+        )
 
         /**
          * An `<activity …>` element, self-closing or not. `[^>]*` is safe

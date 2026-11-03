@@ -1,0 +1,73 @@
+# Mutant batch for the history-picker change — history moves from a chip
+# ListView in the bubble's overlay window to an icon button plus a searchable
+# floating picker Activity.
+#
+#   scripts/mutate.sh batch scripts/mutants/history-picker.tsv
+#
+# Tab-separated: NAME <TAB> FILE <TAB> FROM <TAB> TO [<TAB> TEST_FILTER]
+# FROM must occur EXACTLY ONCE in FILE or the mutant is refused. Every FROM
+# below was checked for single occurrence before the row was written.
+#
+# 🔴 DEFINITIONS ONLY, NEVER RESULTS. A verdict is void the moment the tree
+# moves — see scripts/MUTATION-TESTING.md. The verdicts these produced live in
+# the pull request for this change, stamped with the commit they were measured
+# on.
+#
+# 🔴 WHY THIS BATCH EXISTS AT ALL. Exactly ONE test in this change is
+# regression coverage —
+# HistoryPickerActivityTest.tappingARowOpensTheCardOnThatDictationThroughDictateLaunch,
+# re-homed from the deleted BubbleHistoryRevealTest, which pinned behaviour the
+# operator kept. Everything else is an INVARIANT GUARD: the activity, the
+# shell, the launcher, the row and the button all arrive with the change, so
+# "red at the base commit" would be a compile error rather than a guard watched
+# failing. This batch is what stands in for red-at-base.
+#
+# 🔴 EACH ROW BREAKS ONE EXPRESSION AND NAMES THE CLASS WHOSE OWN ASSERTION
+# MUST GO RED, so a kill is attributable to that expression and is credited to
+# a guard that actually executed. Where one mutation is the subject of two
+# different classes' claims it is listed TWICE with two filters (m-hist02 /
+# m-hist03, m-hist12 / m-hist13, m-hist16 / m-hist17) rather than filtered
+# loosely — a kill by "something noticed" is not a statement about either
+# guard.
+#
+# 🔴 ISOLATION. Every mutant leaves the branch structure intact. m-hist05 and
+# m-hist18/19 replace a sub-expression INSIDE a conditional rather than
+# deleting the conditional, which is what scripts/MUTATION-TESTING.md requires:
+# a mutant that removes a guard together with its enclosing condition proves
+# nothing about the guard and dies for the wrong reason. m-hist12/13 insert a
+# `return` AFTER the subclass hook so only the shell's finish() is removed —
+# the hook still runs, so the clipboard write and the card launch are
+# unaffected and the kill is attributable to finish() alone.
+#
+# 🔴 WHAT THIS BATCH CANNOT VALIDATE, stated so a clean sweep is not
+# over-read:
+#
+#  * PickerShellSeamLedgerTest's growth/shrink arms. Taking a picker off the
+#    shell is not a narrow expression — it is a compile error, because the
+#    shell's abstract members become unimplemented. Those arms carry their own
+#    in-test controls instead (theSuperclassScanSeesAThirdPickerHoweverItIs...,
+#    theLedgerWouldGoRedOnBothAThirdPickerAndADepartedOne), which mutate the
+#    scan's INPUT rather than the tree.
+#  * Anything about appearance, layout or IME focus. Robolectric lays nothing
+#    out and has no input method; the two-button reveal's look and the picker's
+#    real search-field focus are device claims.
+m-hist01-search-cap-back-to-fifty	app/src/main/java/dev/zacx/dicta/HistoryPickerActivity.kt	internal const val MAX_ITEMS: Int = HistoryRetention.MAX_ITEMS	internal const val MAX_ITEMS: Int = 50	dev.zacx.dicta.HistoryPickerActivityTest
+m-hist02-plain-launch-instead-of-history	app/src/main/java/dev/zacx/dicta/HistoryPickerActivity.kt	DictateLaunch.historyIntent(this, row.id)	DictateLaunch.intent(this)	dev.zacx.dicta.HistoryPickerActivityTest
+m-hist03-plain-launch-seen-by-the-snip-ledger	app/src/main/java/dev/zacx/dicta/HistoryPickerActivity.kt	DictateLaunch.historyIntent(this, row.id)	DictateLaunch.intent(this)	dev.zacx.dicta.SnipSeamLedgerTest
+m-hist04-row-announces-a-constant	app/src/main/java/dev/zacx/dicta/HistoryPickerActivity.kt	view.contentDescription = getString(R.string.history_row_desc, preview)	view.contentDescription = "Past dictation"	dev.zacx.dicta.HistoryPickerActivityTest
+m-hist05-engine-badge-always-local	app/src/main/java/dev/zacx/dicta/HistoryPickerActivity.kt	if (row.fromRemote) R.string.engine_badge_remote	if (false) R.string.engine_badge_remote	dev.zacx.dicta.HistoryPickerActivityTest
+m-hist06-a-second-matcher-by-substring	app/src/main/java/dev/zacx/dicta/HistoryPickerActivity.kt	SnipMatcher.rank(listOf(searchViewOf(it)), query).isNotEmpty()	it.text.contains(query)	dev.zacx.dicta.HistoryPickerActivityTest
+m-hist07-transcript-is-not-the-matchers-label	app/src/main/java/dev/zacx/dicta/HistoryPickerActivity.kt	Snippet(label = row.text, body = "", searchTerms = emptyList(), category = "")	Snippet(label = "", body = "", searchTerms = emptyList(), category = "")	dev.zacx.dicta.HistoryPickerActivityTest
+m-hist08-preview-budget-doubled	app/src/main/java/dev/zacx/dicta/HistoryRow.kt	oneLine.length <= PREVIEW_MAX	oneLine.length <= PREVIEW_MAX * 2	dev.zacx.dicta.HistoryRowTest
+m-hist09-space-left-before-the-ellipsis	app/src/main/java/dev/zacx/dicta/HistoryRow.kt	oneLine.take(PREVIEW_MAX).trimEnd() + "…"	oneLine.take(PREVIEW_MAX) + "…"	dev.zacx.dicta.HistoryRowTest
+m-hist10-newlines-survive-the-collapse	app/src/main/java/dev/zacx/dicta/HistoryRow.kt	Regex("\\s+")	Regex("\\t+")	dev.zacx.dicta.HistoryRowTest
+m-hist11-title-reads-engine-first	app/src/main/java/dev/zacx/dicta/HistoryRow.kt	fun title(age: String, engine: String): String = age + SEPARATOR + engine	fun title(age: String, engine: String): String = engine + SEPARATOR + age	dev.zacx.dicta.HistoryRowTest
+m-hist12-shell-never-finishes-after-a-pick	app/src/main/java/dev/zacx/dicta/FloatingPickerActivity.kt	onRowPicked(row)	onRowPicked(row); return	dev.zacx.dicta.HistoryPickerActivityTest
+m-hist13-shell-never-finishes-snip-side	app/src/main/java/dev/zacx/dicta/FloatingPickerActivity.kt	onRowPicked(row)	onRowPicked(row); return	dev.zacx.dicta.SnipPickerActivityTest
+m-hist14-nothing-stored-reads-as-unreadable	app/src/main/java/dev/zacx/dicta/FloatingPickerActivity.kt	all.isEmpty() -> emptyNothingStoredRes	all.isEmpty() -> emptyUnreadableRes	dev.zacx.dicta.HistoryPickerActivityTest
+m-hist15-unreadable-reads-as-no-matches	app/src/main/java/dev/zacx/dicta/FloatingPickerActivity.kt	!loaded -> emptyUnreadableRes	!loaded -> emptyNoMatchesRes	dev.zacx.dicta.HistoryPickerActivityTest
+m-hist16-shell-stops-sizing-its-window	app/src/main/java/dev/zacx/dicta/FloatingPickerActivity.kt	FloatingWindow.applySize(this)	Unit	dev.zacx.dicta.FloatingOverlaySeamLedgerTest
+m-hist17-shell-stops-sizing-behaviourally	app/src/main/java/dev/zacx/dicta/FloatingPickerActivity.kt	FloatingWindow.applySize(this)	Unit	dev.zacx.dicta.FloatingWindowSizeTest
+m-hist18-clamp-forgets-the-history-button	app/src/main/java/dev/zacx/dicta/BubbleService.kt	historyBlockPx else 0	0 else 0	dev.zacx.dicta.BubbleHistoryButtonRevealTest
+m-hist19-clamp-forgets-the-snip-button	app/src/main/java/dev/zacx/dicta/BubbleService.kt	snipBlockPx else 0	0 else 0	dev.zacx.dicta.BubbleSnipRevealTest
+m-hist20-picker-intent-loses-new-task	app/src/main/java/dev/zacx/dicta/HistoryLaunch.kt	.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)	.addFlags(0)	dev.zacx.dicta.BubbleHistoryButtonRevealTest

@@ -207,19 +207,50 @@ class SnipSeamLedgerTest {
     )
 
     /**
-     * The files that touch the snip flow **and** legitimately own a microphone
-     * path of their own: the service that carries the effect out, the state
-     * machine that emits it, and the settings screen that imports the catalog.
+     * The files that touch the snip flow **and** name a [MIC_SYMBOLS] entry:
+     * the service that carries the effect out, the state machine that emits it,
+     * the settings screen that imports the catalog, and the history picker.
      *
      * Ledgered separately from [snipSources] because the two are held to
-     * opposite claims — these three may name a capture symbol, the snip flow's
-     * own files may not — and because a new file put in the WRONG one is the
+     * opposite claims — these may name a capture symbol, the snip flow's own
+     * files may not — and because a new file put in the WRONG one is the
      * failure mode that would restore the blind spot. A snip-aware file can
      * only be classified by editing one of these two lists, deliberately.
+     *
+     * ## 🔴 `HistoryPickerActivity.kt` IS HERE, AND IT OWNS NO MICROPHONE PATH
+     *
+     * It is the one entry whose membership is NOT "this file legitimately
+     * captures audio", and saying so is load-bearing because the list's name
+     * would otherwise be a lie about it.
+     *
+     * Why it is in a snip ledger at all: the operator's decision #3 is that the
+     * history picker's search REUSES [SnipMatcher] rather than growing a second
+     * matcher, so one matching rule governs both pickers. That reference puts
+     * it in `filesReferencing(SNIP_SYMBOLS)` — which is the structural ledger
+     * working, not a surprise.
+     *
+     * Why it cannot go in [snipSources] instead: it names `DictateLaunch`,
+     * which is in [MIC_SYMBOLS], so
+     * [noFileInTheSnipFlowNamesAMicrophoneOrCaptureSymbol] would be red. That
+     * entry in `MIC_SYMBOLS` is a deliberately COARSE proxy — it catches any
+     * file that can launch the card at all, including the plain launch that
+     * auto-starts a capture — and narrowing it to
+     * `DictateLaunch.intent`/`pendingIntent` so that this one file could pass
+     * would weaken a guard across the whole tree to accommodate it.
+     *
+     * 🔴 So the mic-free claim for this file is made EXACTLY rather than
+     * waived: [theHistoryPickerReachesTheCardOnlyThroughHistoryIntent] asserts
+     * that the only `MIC_SYMBOLS` entry it names is `DictateLaunch`, and that
+     * the only `DictateLaunch` member it names is `historyIntent` — which
+     * carries `EXTRA_HISTORY_ID`, so `DictateActivity` populates from history
+     * and does not capture. That is a TIGHTER claim about this file than the
+     * blanket one it is excused from, and it is why `StartSurfaceLedgerTest`'s
+     * ledger of recording surfaces does not grow.
      */
     private val snipAwareMicOwningHosts = listOf(
         "BubbleDictation.kt",
         "BubbleService.kt",
+        "HistoryPickerActivity.kt",
         "SettingsActivity.kt",
     )
 
@@ -243,6 +274,12 @@ class SnipSeamLedgerTest {
         "DictateActivity.kt",
         "DictateLaunch.kt",
         "DictationSession.kt",
+        // 🔴 Here because it names `DictateLaunch`, which MIC_SYMBOLS carries
+        // as a coarse proxy for "can launch the card". It owns NO capture path:
+        // see snipAwareMicOwningHosts' kdoc, and
+        // theHistoryPickerReachesTheCardOnlyThroughHistoryIntent for the exact
+        // claim that replaces the blanket one.
+        "HistoryPickerActivity.kt",
         "MainActivity.kt",
         "MicCapture.kt",
         "MicrophoneOwner.kt",
@@ -303,6 +340,68 @@ class SnipSeamLedgerTest {
             "the scan read no files at all, so its empty result is a fact " +
                 "about the file filter rather than about the sources",
             mainSources().count { it.first in snipSources } == snipSources.size,
+        )
+    }
+
+    @Test
+    fun theHistoryPickerReachesTheCardOnlyThroughHistoryIntent() {
+        // 🔴 THE EXACT CLAIM THAT REPLACES THE BLANKET MIC-FREE ONE for
+        // HistoryPickerActivity.kt — the one file in `snipAwareMicOwningHosts`
+        // that owns no capture path. See that list's kdoc for why it is there
+        // and why MIC_SYMBOLS was not narrowed to let it into `snipSources`.
+        //
+        // Two assertions, and they close the hole from both sides:
+        //  1. `DictateLaunch` is the ONLY MIC_SYMBOLS entry it names — so the
+        //     exemption cannot quietly widen to MicCapture, DictationSession,
+        //     RECORD_AUDIO or Effect.StartRecording.
+        //  2. `historyIntent` is the only `DictateLaunch` MEMBER it names — so
+        //     it cannot reach the plain launch, which auto-starts a capture and
+        //     is what StartSurfaceLedgerTest counts.
+        val source = requireNotNull(
+            mainSources().firstOrNull { it.first == HISTORY_PICKER }
+        ) { "$HISTORY_PICKER is not in the production sources" }
+        val code = stripAndNormalise(source.second)
+
+        val named = MIC_SYMBOLS.filter {
+            Regex(Regex.escape(it) + """\b""").containsMatchIn(code)
+        }
+        assertEquals(
+            "$HISTORY_PICKER names a microphone or capture symbol beyond " +
+                "`DictateLaunch`. It is excused from " +
+                "noFileInTheSnipFlowNamesAMicrophoneOrCaptureSymbol ONLY " +
+                "because the single symbol it names is the card launcher, used " +
+                "for a stored dictation. Anything else here is a real capture " +
+                "path in the history flow, which is the thing this change " +
+                "promised not to add.",
+            listOf("DictateLaunch"),
+            named,
+        )
+
+        val members = Regex("""DictateLaunch\s*\.\s*([A-Za-z0-9_]+)""")
+            .findAll(code)
+            .map { it.groupValues[1] }
+            .toSortedSet()
+            .toList()
+        assertEquals(
+            "$HISTORY_PICKER reaches a DictateLaunch member other than " +
+                "historyIntent: $members. A plain `DictateLaunch.intent(...)` " +
+                "auto-starts a capture — opening a stored dictation must carry " +
+                "EXTRA_HISTORY_ID, which only historyIntent does, and " +
+                "StartSurfaceLedgerTest's PLAIN_OVERLAY_LAUNCH pattern " +
+                "deliberately does not match historyIntent for exactly that " +
+                "reason.",
+            listOf("historyIntent"),
+            members,
+        )
+
+        // POSITIVE CONTROL: both results above are empty-set-shaped, so prove
+        // the scan is reading real code rather than a stripped-to-nothing
+        // string. A zero and a dead regex are the same observation.
+        assertTrue(
+            "the normalised source names neither DictateLaunch nor " +
+                "SnipMatcher, so this file's assertions are facts about a " +
+                "regex rather than about $HISTORY_PICKER",
+            code.contains("DictateLaunch") && code.contains("SnipMatcher"),
         )
     }
 
@@ -622,6 +721,9 @@ class SnipSeamLedgerTest {
             "Effect.OpenSnipPicker",
             "Event.SnipTapped",
         )
+
+        /** @see theHistoryPickerReachesTheCardOnlyThroughHistoryIntent */
+        const val HISTORY_PICKER = "HistoryPickerActivity.kt"
 
         val MIC_SYMBOLS = listOf(
             "MicCapture",
