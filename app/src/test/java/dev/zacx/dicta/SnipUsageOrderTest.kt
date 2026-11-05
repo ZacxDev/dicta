@@ -103,6 +103,28 @@ class SnipUsageOrderTest {
     }
 
     @Test
+    fun aNeverUsedRowSortsBelowEvenAZeroStamp() {
+        // 🔴 Added because mutant m-mru07 SURVIVED: it replaces the never-used
+        // sentinel `Long.MIN_VALUE` with `0L`, and every other fixture here
+        // uses stamps of 1000 or more, so both values sort last and the two are
+        // indistinguishable. A fixture that cannot produce a value at or below
+        // the sentinel cannot see a mutant that moves the sentinel.
+        //
+        // 🔴 This is a contract, not a redundant check. `order` is a public
+        // function taking an arbitrary map, so its behaviour must not depend on
+        // SnipUsageStore.read() happening to filter non-positive stamps out
+        // first — two guards, and only one of them is in this function.
+        val ordered = SnipUsageStore.order(catalog, mapOf("b" to 0L))
+        assertEquals(
+            "a row with a zero stamp has still been USED and must lead the " +
+                "never-used rows; if the sentinel collides with it, all three " +
+                "compare equal and the input order survives instead",
+            listOf("b", "a", "c"),
+            labels(ordered),
+        )
+    }
+
+    @Test
     fun everyRowSurvivesTheOrderingRegardlessOfUsage() {
         // 🔴 The property a sort must never break, pinned separately from the
         // order itself: a `filter` written where a `sortedBy` belongs would

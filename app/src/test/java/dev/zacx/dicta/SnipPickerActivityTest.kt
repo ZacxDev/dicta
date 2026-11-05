@@ -569,6 +569,50 @@ class SnipPickerActivityTest {
     }
 
     @Test
+    fun aTypedQueryMatchingSeveralRowsKeepsRankOrderAndIgnoresUsage() {
+        // 🔴 THE DISCRIMINATING TEST, added because mutant m-mru03 SURVIVED
+        // without it — and m-mru03 deletes the browse gate, i.e. it makes
+        // most-recently-used ordering apply to TYPED queries too, which is the
+        // one thing this change promises not to do.
+        //
+        // aTypedQueryKeepsTheRankedOrderAndIsNotReorderedByUsage could not see
+        // it: its query matches ONE row, and a one-row list is in the same
+        // order under every sort. The leak is only observable when a filtered
+        // result holds at least two rows whose usage order DISAGREES with their
+        // rank order — so this fixture is built to make those two orders
+        // opposite, and asserts both in the same test.
+        val catalog = listOf(
+            Snippet("Alpha one", "A", listOf("shared"), "t"),
+            Snippet("Bravo two", "B", listOf("shared"), "t"),
+        )
+        val live = catalog.map { it.label }.toSet()
+        val dir = tmp.newFolder()
+        // Bravo is the MORE recently used, so usage order is Bravo, Alpha —
+        // the reverse of the catalog order rank must preserve.
+        SnipUsageStore(dir) { 1_000L }.recordAndPrune("Alpha one", live)
+        SnipUsageStore(dir) { 9_000L }.recordAndPrune("Bravo two", live)
+        usageStore = SnipUsageStore(dir) { 10_000L }
+
+        val activity = start(SnipStore.Catalog(catalog, 1L))
+
+        assertEquals(
+            "precondition — BROWSE is ordered by use, so Bravo leads",
+            listOf("Bravo two", "Alpha one"),
+            labels(activity),
+        )
+
+        search(activity).setText("shared")
+        assertEquals(
+            "both rows declare `shared`, so rank keeps them in CATALOG order " +
+                "and usage must not touch them. If this reads [Bravo two, " +
+                "Alpha one] the browse ordering has leaked into the filtered " +
+                "path — the exact decision this change was asked to preserve.",
+            listOf("Alpha one", "Bravo two"),
+            labels(activity),
+        )
+    }
+
+    @Test
     fun pickingOneSnippetKeepsTheStampsOfTheOthersStillInTheCatalog() {
         // 🔴 Written because a MUTANT exposed that nothing covered it: if
         // `liveLabels` were never captured from readRows, it would stay empty,

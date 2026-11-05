@@ -190,12 +190,18 @@ class SnipPickerActivity : FloatingPickerActivity<Snippet>() {
         // above is the feature. A usage file that cannot be written must cost
         // the operator their row order, never their paste.
         //
-        // 🔴 `ifEmpty` is a guard against wiping the file, not defensiveness
-        // for its own sake: recordAndPrune drops every label absent from the
-        // set it is given, so an empty set means "nothing in the catalog still
-        // exists". A picked row proves the catalog was read, so this should be
-        // unreachable — but the cost of being wrong is the operator's whole
-        // usage history, and the fallback keeps the row just picked.
+        // 🔴 `ifEmpty` guards against wiping the file: recordAndPrune drops
+        // every label absent from the set it is given, so an empty set means
+        // "nothing in the catalog still exists".
+        //
+        // 🔴 IT IS UNREACHABLE BY CONSTRUCTION, AND MEASURED SO — mutant
+        // m-mru09 deletes it and SURVIVES. A row can only be picked after the
+        // shell rendered it, which means readRows ran and populated
+        // `liveLabels`, so no test can reach the empty case through the
+        // activity. It is kept anyway: the cost is one `ifEmpty` call and the
+        // cost of being wrong is the operator's entire usage history. Recorded
+        // rather than quietly left looking like covered code — a reader must
+        // not take the mutant's survival for a missing test.
         runCatching {
             usageStore.recordAndPrune(row.label, liveLabels.ifEmpty { setOf(row.label) })
         }

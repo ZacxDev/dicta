@@ -104,6 +104,16 @@ class SnipUsageStore internal constructor(
                 out.write(payload.toByteArray())
                 out.fd.sync()
             }
+            // 🔴 The in-place fallback covers filesystems whose `renameTo`
+            // refuses an existing target, as SnipStore's does.
+            //
+            // 🔴 THIS BRANCH IS UNREACHABLE IN THE SUITE, AND MEASURED SO:
+            // mutant m-mru19 removes the `scratch.delete()` and SURVIVES,
+            // because the tests run on a filesystem where `renameTo` succeeds
+            // and the fallback never executes. `theWriteLeavesNoTemporaryFileBehind`
+            // therefore pins the RENAME path only. Stated so the fallback is
+            // not read as covered: it is inherited from SnipStore, where the
+            // same shape is in production use.
             if (!scratch.renameTo(file)) {
                 file.writeText(payload)
                 scratch.delete()

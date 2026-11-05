@@ -24,6 +24,29 @@
 # narrowly. It is recorded in the PR because it is the control a reader can
 # reproduce without the harness.
 #
+# 🔴 FOUR SURVIVED ON THE FIRST RUN (fd43127), splitting two ways. The verdicts
+# live in the PR; what belongs HERE is which rows are EXPECTED to survive a
+# re-run, so the next reader does not re-investigate them.
+#
+#   m-mru03, m-mru07 — REAL COVERAGE GAPS, now closed, and they must NOT
+#     survive again. m-mru03 deletes the browse gate so ordering leaks into
+#     typed queries; the test written for exactly that could not see it,
+#     because its query matched ONE row and a one-row list is identically
+#     ordered under every sort. m-mru07 moves the never-used sentinel to 0L,
+#     which no fixture could distinguish because every stamp was >= 1000.
+#     Killed by tests added after that run:
+#     aTypedQueryMatchingSeveralRowsKeepsRankOrderAndIgnoresUsage and
+#     aNeverUsedRowSortsBelowEvenAZeroStamp.
+#
+#   m-mru09, m-mru19 — UNREACHABLE GUARDS, EXPECTED to survive. Their survival
+#     is not a missing test. m-mru09's empty-liveLabels case cannot be reached
+#     through the activity (a row is only pickable after readRows populated the
+#     set); m-mru19's branch runs only when renameTo FAILS, which it does not on
+#     the test filesystem. Both are documented at their call sites with this
+#     verdict, so neither reads as covered code. Deleting either would be
+#     defensible; both are kept because what they prevent is losing the
+#     operator's entire usage file.
+#
 # 🔴 m-mru03 is the one that matters most and the reason the batch exists.
 # SnipUsageOrderTest and SnipUsageStoreTest both stay GREEN under the
 # partial-revert control — they test the pure function and the store, neither

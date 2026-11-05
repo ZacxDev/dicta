@@ -36,24 +36,30 @@ jobs:
       # measured nothing is worse than no gate — so the count is asserted, not
       # inferred from the task's exit status.
       #
-      # BASELINE: 781 against a suite of 899 tests / 86 classes, read from the
+      # BASELINE: 783 against a suite of 901 tests / 86 classes, read from the
       # JUnit XML of a full run on `feat/snip-mru` — most-recently-used ordering
       # for the snippet picker's BROWSE list.
       #
-      # 899 * 500 / 575 = 781.74 -> 781, which is 13.13% slack.
+      # 901 * 500 / 575 = 783.48 -> 783, which is 13.10% slack.
       #
       # Accounted for PER CLASS against 871 / 83, not asserted:
-      #   +11  SnipUsageStoreTest (new)      +5  SnipUsageOrderTest (new)
+      #   +11  SnipUsageStoreTest (new)      +6  SnipUsageOrderTest (new)
       #    +3  SnipMatcherBrowsePredicateTest (new)
-      #    +9  SnipPickerActivityTest (16 -> 25)
-      #   = +28 tests and +3 classes.
+      #   +10  SnipPickerActivityTest (16 -> 26)
+      #   = +30 tests and +3 classes.
       #
       # 🔴 THE PER-CLASS RECONCILIATION IS THE CHECK, AND IT CAUGHT A MISCOUNT
-      # here: counting the new test functions by hand gave 29, one more than the
-      # 28 the XML reports. The hand count was wrong, not the tool — read the
-      # per-class numbers out of assert-tests-ran.py rather than counting @Test
-      # annotations, which is what the entry below means by "reconciled PER
-      # CLASS".
+      # on this very entry. At the FIRST measurement of this branch — 899 / 86,
+      # before the mutation sweep added two more tests — counting the new test
+      # functions by hand gave 29 against the XML's 28. The hand count was
+      # wrong, not the tool. Read the per-class numbers out of
+      # assert-tests-ran.py rather than counting @Test annotations; that is what
+      # "reconciled PER CLASS" means.
+      #
+      # 🔴 And the number above is NOT that first measurement — it is 901 / 86,
+      # re-read after the sweep. Quoting 899 here would have been exactly the
+      # one-commit-of-a-moving-branch error the CORRECTION note below is about,
+      # on the same entry that complains about it.
       #
       # 🔴 COMMIT COUNTED ON: the commit that adds SnipUsageStore and its tests.
       # This comment and the --min argument land in the SAME commit as the
@@ -61,8 +67,8 @@ jobs:
       # tests it measures were reviewed together; the number was read from a
       # full local run before the commit was made, and CI re-reads it.
       #
-      # 🔴 LEFT AT 757 THIS GATE WOULD NOT HAVE GONE RED: 757 against 899 is
-      # 15.8% slack, still inside TestCountFloorTest's 20% ceiling. Raised here
+      # 🔴 LEFT AT 757 THIS GATE WOULD NOT HAVE GONE RED: 757 against 901 is
+      # 16.0% slack, still inside TestCountFloorTest's 20% ceiling. Raised here
       # rather than discovered later, same as the previous entry.
       #
       # 🔴 PREVIOUS-ENTRY CHAIN TRIMMED TO THREE. Round 0 of #46's audit raised
@@ -82,7 +88,7 @@ jobs:
       # 🔴 THE HEADROOM IS THE CONSTANT, NOT THE FLOOR — re-derive it, do not
       # pick a round number:
       #     floor = floor(current_total * 500 / 575)      # 0.86957, 13.04% slack
-      # 899 * 500 / 575 = 781.74 -> 781, which is 13.13% slack.
+      # 901 * 500 / 575 = 783.48 -> 783, which is 13.10% slack.
       #
       # 🔴 NAME THE TREE YOU COUNTED ON, not just the date. Past entries were
       # raised several-per-day, so a date does not identify a tree while a
@@ -122,7 +128,7 @@ jobs:
       # one place.
       - name: Assert tests actually ran
         if: always()
-        run: python3 scripts/assert-tests-ran.py --min 781
+        run: python3 scripts/assert-tests-ran.py --min 783
 
       - name: Upload test reports
         if: always()
