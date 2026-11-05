@@ -1,0 +1,75 @@
+# Mutant batch for most-recently-used browse ordering in the snippet picker.
+#
+#   scripts/mutate.sh batch scripts/mutants/snip-mru.tsv
+#
+# Tab-separated: NAME <TAB> FILE <TAB> FROM <TAB> TO [<TAB> TEST_FILTER]
+# FROM must occur EXACTLY ONCE in FILE or the mutant is refused. Every FROM
+# below was checked for single occurrence before the row was written.
+#
+# 🔴 DEFINITIONS ONLY, NEVER RESULTS. A verdict is void the moment the tree
+# moves — see scripts/MUTATION-TESTING.md. The verdicts these produced live in
+# the pull request for this change, stamped with the commit they were measured
+# on.
+#
+# 🔴 WHY THIS BATCH CARRIES MORE WEIGHT THAN USUAL. This change has NO
+# regression coverage and cannot have any: SnipUsageStore arrives with it, so a
+# run at the base commit is a compile error rather than a test watched going
+# red, and the feature's behaviour cannot even be expressed at base (asserting
+# "browse is ordered by use" requires being able to record use). Every test is
+# therefore an invariant guard. These mutants plus the partial-revert control
+# recorded in the PR are the ONLY evidence those guards can go red at all.
+#
+# 🔴 The partial-revert control is NOT in this file and is not a substitute for
+# m-mru01: it deletes the whole filterRows body, which m-mru01 does more
+# narrowly. It is recorded in the PR because it is the control a reader can
+# reproduce without the harness.
+#
+# 🔴 FOUR SURVIVED ON THE FIRST RUN (fd43127), splitting two ways. The verdicts
+# live in the PR; what belongs HERE is which rows are EXPECTED to survive a
+# re-run, so the next reader does not re-investigate them.
+#
+#   m-mru03, m-mru07 — REAL COVERAGE GAPS, now closed, and they must NOT
+#     survive again. m-mru03 deletes the browse gate so ordering leaks into
+#     typed queries; the test written for exactly that could not see it,
+#     because its query matched ONE row and a one-row list is identically
+#     ordered under every sort. m-mru07 moves the never-used sentinel to 0L,
+#     which no fixture could distinguish because every stamp was >= 1000.
+#     Killed by tests added after that run:
+#     aTypedQueryMatchingSeveralRowsKeepsRankOrderAndIgnoresUsage and
+#     aNeverUsedRowSortsBelowEvenAZeroStamp.
+#
+#   m-mru09, m-mru19 — UNREACHABLE GUARDS, EXPECTED to survive. Their survival
+#     is not a missing test. m-mru09's empty-liveLabels case cannot be reached
+#     through the activity (a row is only pickable after readRows populated the
+#     set); m-mru19's branch runs only when renameTo FAILS, which it does not on
+#     the test filesystem. Both are documented at their call sites with this
+#     verdict, so neither reads as covered code. Deleting either would be
+#     defensible; both are kept because what they prevent is losing the
+#     operator's entire usage file.
+#
+# 🔴 m-mru03 is the one that matters most and the reason the batch exists.
+# SnipUsageOrderTest and SnipUsageStoreTest both stay GREEN under the
+# partial-revert control — they test the pure function and the store, neither
+# of which the picker's wiring touches. That is the "verified in isolation"
+# seam: two components each covered, the defect living in the seam nobody owns.
+# m-mru03 mutates the GATE between them.
+
+m-mru01-browse-is-never-ordered	app/src/main/java/dev/zacx/dicta/SnipPickerActivity.kt	return SnipUsageStore.order(ranked, runCatching { usageStore.lastUsed() }.getOrDefault(emptyMap()))	return ranked	dev.zacx.dicta.SnipPickerActivityTest
+m-mru02-usage-map-is-always-empty	app/src/main/java/dev/zacx/dicta/SnipPickerActivity.kt	runCatching { usageStore.lastUsed() }.getOrDefault(emptyMap())	emptyMap()	dev.zacx.dicta.SnipPickerActivityTest
+m-mru03-ordering-leaks-into-typed-queries	app/src/main/java/dev/zacx/dicta/SnipPickerActivity.kt	if (!SnipMatcher.isBrowse(query)) return ranked	if (false) return ranked	dev.zacx.dicta.SnipPickerActivityTest
+m-mru04-browse-gate-inverted	app/src/main/java/dev/zacx/dicta/SnipPickerActivity.kt	if (!SnipMatcher.isBrowse(query)) return ranked	if (SnipMatcher.isBrowse(query)) return ranked	dev.zacx.dicta.SnipPickerActivityTest
+m-mru05-order-ascending-instead-of-descending	app/src/main/java/dev/zacx/dicta/SnipUsageStore.kt	rows.sortedByDescending { lastUsed[it.label] ?: Long.MIN_VALUE }	rows.sortedBy { lastUsed[it.label] ?: Long.MIN_VALUE }	dev.zacx.dicta.SnipUsageOrderTest
+m-mru06-never-used-sorts-first	app/src/main/java/dev/zacx/dicta/SnipUsageStore.kt	lastUsed[it.label] ?: Long.MIN_VALUE	lastUsed[it.label] ?: Long.MAX_VALUE	dev.zacx.dicta.SnipUsageOrderTest
+m-mru07-never-used-collides-with-a-real-stamp	app/src/main/java/dev/zacx/dicta/SnipUsageStore.kt	lastUsed[it.label] ?: Long.MIN_VALUE	lastUsed[it.label] ?: 0L	dev.zacx.dicta.SnipUsageOrderTest
+m-mru08-pick-is-never-recorded	app/src/main/java/dev/zacx/dicta/SnipPickerActivity.kt	usageStore.recordAndPrune(row.label, liveLabels.ifEmpty { setOf(row.label) })	Unit	dev.zacx.dicta.SnipPickerActivityTest
+m-mru09-prune-wipes-everything-when-labels-are-empty	app/src/main/java/dev/zacx/dicta/SnipPickerActivity.kt	liveLabels.ifEmpty { setOf(row.label) }	liveLabels	dev.zacx.dicta.SnipPickerActivityTest
+m-mru10-live-labels-never-captured	app/src/main/java/dev/zacx/dicta/SnipPickerActivity.kt	if (rows != null) liveLabels = rows.mapTo(HashSet()) { it.label }	if (rows == null) liveLabels = emptySet()	dev.zacx.dicta.SnipPickerActivityTest
+m-mru11-prune-keeps-departed-labels	app/src/main/java/dev/zacx/dicta/SnipUsageStore.kt	merged.keys.retainAll(liveLabels)	Unit	dev.zacx.dicta.SnipUsageStoreTest
+m-mru12-stamp-does-not-overwrite	app/src/main/java/dev/zacx/dicta/SnipUsageStore.kt	merged[label] = nowMs()	merged.putIfAbsent(label, nowMs())	dev.zacx.dicta.SnipUsageStoreTest
+m-mru13-record-replaces-instead-of-merging	app/src/main/java/dev/zacx/dicta/SnipUsageStore.kt	val merged = HashMap(read())	val merged = HashMap<String, Long>()	dev.zacx.dicta.SnipUsageStoreTest
+m-mru14-non-positive-stamps-are-kept	app/src/main/java/dev/zacx/dicta/SnipUsageStore.kt	if (at > 0L) out[label] = at	out[label] = at	dev.zacx.dicta.SnipUsageStoreTest
+m-mru15-empty-label-is-recorded	app/src/main/java/dev/zacx/dicta/SnipUsageStore.kt	if (label.isEmpty()) return@synchronized	Unit	dev.zacx.dicta.SnipUsageStoreTest
+m-mru16-browse-predicate-ignores-whitespace	app/src/main/java/dev/zacx/dicta/SnipMatcher.kt	fun isBrowse(query: String): Boolean = query.trim().isEmpty()	fun isBrowse(query: String): Boolean = query.isEmpty()	dev.zacx.dicta.SnipMatcherBrowsePredicateTest
+m-mru17-rank-stops-using-the-shared-predicate	app/src/main/java/dev/zacx/dicta/SnipMatcher.kt	if (isBrowse(query)) return rows	if (query.isEmpty()) return rows	dev.zacx.dicta.SnipMatcherBrowsePredicateTest
+m-mru18-rename-is-claimed-but-never-happens	app/src/main/java/dev/zacx/dicta/SnipUsageStore.kt	if (!scratch.renameTo(file)) {	if (false) {	dev.zacx.dicta.SnipUsageStoreTest
+m-mru19-scratch-is-left-beside-the-real-file	app/src/main/java/dev/zacx/dicta/SnipUsageStore.kt	scratch.delete()	Unit	dev.zacx.dicta.SnipUsageStoreTest

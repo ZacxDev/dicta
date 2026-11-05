@@ -36,154 +36,48 @@ jobs:
       # measured nothing is worse than no gate — so the count is asserted, not
       # inferred from the task's exit status.
       #
-      # BASELINE: 757 against a suite of 871 tests / 83 classes, read from the
-      # JUnit XML of a full run on `feat/history-picker` — the change that moves
-      # dictation history from a chip ListView inside the bubble's overlay
-      # window to an icon button plus a searchable floating picker Activity.
+      # BASELINE: 783 against a suite of 901 tests / 86 classes, read from the
+      # JUnit XML of a full run on `feat/snip-mru` — most-recently-used ordering
+      # for the snippet picker's BROWSE list.
       #
-      # 🔴 THE COUNT WENT UP, AND IT WAS NOT OBVIOUS THAT IT WOULD. This change
-      # DELETES tests as well as adding them: BubbleHistoryRevealTest — 893
-      # lines, 26 tests — went entirely, because it pinned a surface that no
-      # longer exists. The net is still +46, accounted for PER CLASS rather
-      # than asserted:
-      #   -26  BubbleHistoryRevealTest (deleted with the chip list)
-      #   +10  BubbleHistoryButtonRevealTest    +7  BubbleHistoryStateTest
-      #   +12  BubbleRevealGestureTest         +23  HistoryPickerActivityTest
-      #   +12  HistoryRowTest                   +8  PickerShellSeamLedgerTest
-      #    +4  FloatingWindowSizeTest (the new activity's four width cases)
-      #    +1  FloatingOverlaySeamLedgerTest    +1  SnipSeamLedgerTest
-      #    -6  HistoryLabelTest (shortLabel/MAX_CHARS died with the 220dp chip)
-      #   = +46 tests and +5 classes against 825 / 78.
+      # 901 * 500 / 575 = 783.48 -> 783, which is 13.10% slack.
       #
-      # 871/83 was measured directly (83 TEST-*.xml files summing to tests=871
-      # failures=0 errors=0 skipped=0), agrees with
-      # scripts/assert-tests-ran.py's own TOTAL line on the same run, and was
-      # additionally reconciled PER CLASS against TestCountFloorTest's source
-      # counter — 83 classes, ZERO mismatches, both totals 871. That per-class
-      # reconciliation is what TestCountFloorTest's kdoc asks for and is the
-      # check that once found a counter inflating itself from its own fixtures.
-      # (An unstripped @Test count over the same tree returns 883 — 16 phantoms
-      # — which is the direct evidence that the comment-and-literal stripping
-      # is load-bearing. Scoped to this tree; do not check it against HEAD.)
+      # Accounted for PER CLASS against 871 / 83, not asserted:
+      #   +11  SnipUsageStoreTest (new)      +6  SnipUsageOrderTest (new)
+      #    +3  SnipMatcherBrowsePredicateTest (new)
+      #   +10  SnipPickerActivityTest (16 -> 26)
+      #   = +30 tests and +3 classes.
       #
-      # The same counter independently reproduces the PREVIOUS entry's own
-      # claim of 825 / 78 at 97c3466. That is a check on the INSTRUMENT and not
-      # only on the tree, and it is cheap: without it, "871" is a number from
-      # one tool about one tree.
-      # 871 * 500 / 575 = 757.39 -> 757, which is 13.09% slack.
+      # 🔴 THE PER-CLASS RECONCILIATION IS THE CHECK, AND IT CAUGHT A MISCOUNT
+      # on this very entry. At the FIRST measurement of this branch — 899 / 86,
+      # before the mutation sweep added two more tests — counting the new test
+      # functions by hand gave 29 against the XML's 28. The hand count was
+      # wrong, not the tool. Read the per-class numbers out of
+      # assert-tests-ran.py rather than counting @Test annotations; that is what
+      # "reconciled PER CLASS" means.
       #
-      # 🔴 COMMIT COUNTED ON, since a branch is not a tree: 168e78c, the commit
-      # that adds HistoryPickerActivity's four FloatingWindowSizeTest cases. It
-      # is the LAST commit on this branch that moves the count, and it is the
-      # tree the 871/83 run above was made on. It is NOT 1e8ceb2 — that earlier
-      # tree had 867, four fewer, so quoting it here would be the exact error
-      # the correction note below is about. This comment block and the --min
-      # argument are in the FOLLOWING commit, which touches only this file and
-      # therefore cannot move the count.
+      # 🔴 And the number above is NOT that first measurement — it is 901 / 86,
+      # re-read after the sweep. Quoting 899 here would have been exactly the
+      # one-commit-of-a-moving-branch error the CORRECTION note below is about,
+      # on the same entry that complains about it.
       #
-      # 🔴 LEFT AT 717 THIS GATE WOULD NOT HAVE GONE RED, which is why it is
-      # raised here rather than discovered later: 717 against 871 is 17.7%
-      # slack, still inside TestCountFloorTest's 20% ceiling. Nothing would
-      # have complained. It would simply have stopped being able to notice a
-      # sixth of the suite disappearing — which is exactly the silent drift the
-      # correction note below is about, caught one entry earlier this time.
+      # 🔴 COMMIT COUNTED ON: the commit that adds SnipUsageStore and its tests.
+      # This comment and the --min argument land in the SAME commit as the
+      # source here (unlike the previous entry), because the floor bump and the
+      # tests it measures were reviewed together; the number was read from a
+      # full local run before the commit was made, and CI re-reads it.
       #
-      # PREVIOUS ENTRY: 717 against a suite of 825 tests / 78 classes, read from
-      # the JUnit XML of a full run on `fix/snip-picker-width` — the
-      # floating-window
-      # width fix for issue #38's snippet picker. It adds ten tests and one
-      # class: six in the new FloatingOverlaySeamLedgerTest (the theme-derived
-      # ledger of floating overlay activities) and four picker width cases in
-      # FloatingWindowSizeTest, less one DELETED — round 0's D1,
-      # theExpectedWidthsCannotBeHitByAccident, which rebuilt its expectation
-      # from its own copied literals and so could not fail; the deletion note in
-      # that file says why assertCappedAt already covers it. 825/78 was measured
-      # directly (78 TEST-*.xml files summing to tests=825 failures=0 errors=0
-      # skipped=0) and agrees with scripts/assert-tests-ran.py's own TOTAL line
-      # on the same run.
-      # 825 * 500 / 575 = 717.39 -> 717, which is 13.09% slack.
+      # 🔴 LEFT AT 757 THIS GATE WOULD NOT HAVE GONE RED: 757 against 901 is
+      # 16.0% slack, still inside TestCountFloorTest's 20% ceiling. Raised here
+      # rather than discovered later, same as the previous entry.
       #
-      # 🔴 COMMIT COUNTED ON, since a branch is not a tree: 091186b, the commit
-      # that DELETED theExpectedWidthsCannotBeHitByAccident. It is the tree the
-      # 825/78 run above was made on, and it is NOT b127185 — that earlier tree
-      # had 826, one more test, so quoting it here would be the exact error the
-      # correction note below is about. This comment block and the --min
-      # argument are in that same commit, so the number is exact for it —
-      # because "measured on the branch" is precisely the imprecision the
-      # correction note below is about.
-      #
-      # PREVIOUS ENTRY: 708 against a suite of 815 tests / 77 classes, read from the
-      # JUnit XML of a full run on `feat/snip-picker` — the audit-fix commit on
-      # issue #38's snippet picker, which adds eight tests and no class (three
-      # in SnipSeamLedgerTest, where one name-based ledger test became three
-      # structural ones; three in SnipPickerActivityTest for the stale-re-entry
-      # fix and the sensitive-clipboard flag; three in SettingsSnippetImportTest
-      # for the split import-failure frames, less none removed). 815/77 was
-      # measured directly (77 TEST-*.xml files summing to tests=815 failures=0
-      # errors=0 skipped=0), agrees with scripts/assert-tests-ran.py's own TOTAL
-      # line on the same run, and was additionally reconciled PER CLASS against
-      # TestCountFloorTest's source counter — 77 classes, zero mismatches, both
-      # totals 815. That per-class reconciliation is what TestCountFloorTest's
-      # kdoc asks for and is the check that once found a counter inflating
-      # itself from its own fixtures.
-      # 815 * 500 / 575 = 708.69 -> 708, which is 13.13% slack.
-      #
-      # (Its own commit counted on was 84477fa, the audit-fix commit that added
-      # those eight tests.)
-      #
-      # AND BEFORE THAT: 701 against a suite of 807 tests / 77 classes, read from
-      # the JUnit XML of a full run on `feat/snip-picker` at fbc652d — issue
-      # #38's snippet picker, which adds ten test classes (SnipMatcherTest,
-      # SnipCatalogTest, SnipClipTest, SnipRowTest, SnipStoreTest,
-      # SnipPickerActivityTest, SnipSeamLedgerTest, BubbleSnipStateTest,
-      # BubbleSnipRevealTest, SettingsSnippetImportTest). 807/77 was measured
-      # directly and reconciled per class the same way. Raised here rather than
-      # carried forward, because the headroom is the constant: 701 against 815
-      # is 13.99% slack, which is inside the 20% ceiling but already drifting.
-      #
-      # AND BEFORE THAT: 605 against a suite of 696 tests / 65 classes, read from the
-      # JUnit XML of a full run on `main` at ebffaf9 (2026-10-26) — the tip
-      # after #33 deleted the reachability probe's backoff and two ledger
-      # tests. 696/65 was measured directly (65 TEST-*.xml files summing to
-      # tests=696 failures=0 errors=0 skipped=0) and agrees with
-      # scripts/assert-tests-ran.py's own TOTAL line on the same run.
-      #
-      # 🔴 THE FLOOR WAS LAGGING THE SUITE, WHICH IS WHY THIS RAISES IT. The
-      # entry below is CORRECT about the tree it names and was never wrong;
-      # what went stale is this gate's floor, because the rule further down
-      # makes the HEADROOM the constant and the suite has moved since. The
-      # intervening history, so nobody reads this as one jump: the suite
-      # reached 699/65 (#30, the tile-add outcomes), then 701/65 (#32, the
-      # audit-round-1 fixes), then 696/65 (#33, the two deletions). At 701 the
-      # formula prescribed 609; the gate said 600 throughout. Re-derived here
-      # rather than carried forward.
-      #
-      # And before that: 600 against a suite of 691 tests / 63 classes, measured
-      # from the JUnit XML of a full run on feat/stt-reachability-precheck
-      # (2026-10-23) — the reachability pre-check stacked on 433fbc8, the tip
-      # of feat/ui-surface-cleanup, which is itself stacked on ae1b464
-      # (feat/bubble-state-tile-boot). That is the tree this number is about
-      # and no other: this is a three-deep stack and each branch adds test
-      # classes the ones below it do not have, so no lower branch's count
-      # applies here. It reconciles as 651/60 at 433fbc8 plus this branch's
-      # +40 tests / +3 classes (SttReachabilityTest,
-      # SttReachabilityLedgerTest, BubbleUnreachableWarningTest).
-      #
-      # 🔴 COMMITS COUNTED ON, since a branch is not a tree: 691/63 was read
-      # from the XML at 11f2a9c (the commit that adds the feature) and read
-      # again, unchanged, at 65e6f7b (the last of the four follow-ups that
-      # close the mutation-sweep findings and retract two prose claims). Those
-      # follow-ups delete one production line, add no test and remove none, so
-      # the count is constant across this branch — stated because "measured on
-      # the branch" is exactly the imprecision the correction note below is
-      # about.
-      #
-      # The previous entries said "566 against 651 / 60" at the rebased tip of
-      # feat/ui-surface-cleanup, "554 against 638 / 58" at ae1b464 and, before
-      # that, "550 against 633 / 57" at ce38e39 — several of them on the same
-      # day, which is exactly why the date alone does not identify the tree.
-      # 🔴 NAME THE TREE YOU COUNTED ON, not just the date — the correction
-      # note below is entirely about why.
+      # 🔴 PREVIOUS-ENTRY CHAIN TRIMMED TO THREE. Round 0 of #46's audit raised
+      # that this block had grown an append-only chain of nine historical
+      # derivations with no eviction rule, so it grew every time the suite did.
+      # The three most recent are kept — enough to see the trend and to check
+      # the arithmetic convention — and the older ones are in `git log` for this
+      # file, which is where a full history belongs. Do not re-grow it: add your
+      # entry and drop the oldest.
       #
       # It was --min 3, which could only ever catch a collapse to almost
       # literally nothing: against this suite 3 IS the "handful" the old comment
@@ -194,15 +88,20 @@ jobs:
       # 🔴 THE HEADROOM IS THE CONSTANT, NOT THE FLOOR — re-derive it, do not
       # pick a round number:
       #     floor = floor(current_total * 500 / 575)      # 0.86957, 13.04% slack
-      # 871 * 500 / 575 = 757.39 -> 757, which is 13.09% slack.
-      # (Previous entries: 825 * 500 / 575 = 717.39 -> 717, 13.09% slack;
-      #  826 * 500 / 575 = 718.26 -> 718, 13.08% slack; 815 * 500 / 575 = 708.69 -> 708, 13.13% slack;
-      #  807 * 500 / 575 = 701.7 -> 701, 13.14% slack;
-      #  696 * 500 / 575 = 605.22 -> 605, 13.07% slack;
-      #  691 * 500 / 575 = 600.87 -> 600, 13.17% slack;
-      #  651 * 500 / 575 = 566.09 -> 566, 13.06% slack;
-      #  638 * 500 / 575 = 554.78 -> 554, 13.17% slack;
-      #  633 * 500 / 575 = 550.43 -> 550, 13.11% slack.)
+      # 901 * 500 / 575 = 783.48 -> 783, which is 13.10% slack.
+      #
+      # 🔴 NAME THE TREE YOU COUNTED ON, not just the date. Past entries were
+      # raised several-per-day, so a date does not identify a tree while a
+      # branch is moving — the CORRECTION note below is entirely about why.
+      # Restated here because the trim deleted the line that carried it: it is
+      # an INSTRUCTION, not a history entry, and losing it was a mistake.
+      #
+      # 🔴 THREE PREVIOUS ENTRIES, AND NO MORE — see the trim note at the top of
+      # this block. Add yours, drop the oldest; `git log -p -- <this file>` has
+      # the rest.
+      # (Previous entries: 871 * 500 / 575 = 757.39 -> 757, 13.09% slack;
+      #  825 * 500 / 575 = 717.39 -> 717, 13.09% slack;
+      #  826 * 500 / 575 = 718.26 -> 718, 13.08% slack.)
       #
       # 🔴 CORRECTION (2026-10-23). This block used to say the previous entry
       # "was left alone while the suite grew to 623, drifting the slack to 20%".
@@ -229,7 +128,7 @@ jobs:
       # one place.
       - name: Assert tests actually ran
         if: always()
-        run: python3 scripts/assert-tests-ran.py --min 757
+        run: python3 scripts/assert-tests-ran.py --min 783
 
       - name: Upload test reports
         if: always()

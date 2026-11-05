@@ -203,6 +203,13 @@ class SnipSeamLedgerTest {
         "SnipPickerActivity.kt",
         "SnipRow.kt",
         "SnipStore.kt",
+        // Browse ordering by last use. It belongs in THIS list rather than in
+        // snipAwareMicOwningHosts because it owns no microphone path at all: it
+        // reads and writes one JSON file of labels and timestamps and names no
+        // capture symbol, so it is correctly held to this list's stricter
+        // claim. The ledger caught it the moment it was added, which is the
+        // behaviour this guard exists for.
+        "SnipUsageStore.kt",
         "Snippet.kt",
     )
 

@@ -13,7 +13,9 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
+import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.TemporaryFolder
 import org.junit.runner.RunWith
 import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
@@ -22,6 +24,7 @@ import org.robolectric.Shadows.shadowOf
 import org.robolectric.android.controller.ActivityController
 import org.robolectric.annotation.Config
 import org.robolectric.shadows.ShadowToast
+import java.io.File
 import java.util.concurrent.Executor
 
 /**
@@ -48,6 +51,20 @@ class SnipPickerActivityTest {
 
     private var controller: ActivityController<SnipPickerActivity>? = null
 
+    @get:Rule
+    val tmp = TemporaryFolder()
+
+    /**
+     * The usage store the activity under test reads and writes.
+     *
+     * Held so a test can seed it before [start] or read it after a pick.
+     * Rebuilt per [start] over a fresh directory.
+     */
+    private var usageStore: SnipUsageStore? = null
+
+    /** The clock the usage store stamps with. A test may move it. */
+    private var nowMs: Long = 1_000L
+
     private val rows = listOf(
         Snippet("Zebra crossing", "walk slowly", listOf("stripes"), "path"),
         Snippet("Quince jam", "boil the fruit", listOf("preserve"), "prompt"),
@@ -66,7 +83,32 @@ class SnipPickerActivityTest {
         controller = c
         c.get().source = SnipSource { catalog }
         c.get().loadExecutor = Executor { it.run() }
+        // 🔴 Injected on EVERY start, including for the tests that predate
+        // most-recently-used ordering. Without it they read the production
+        // store over Robolectric's `noBackupFilesDir`, which is shared across
+        // the class — so one test's pick would reorder another test's browse
+        // list, and that failure would read as a flake rather than as the
+        // ordering working. Reuses a store the test may already have seeded.
+        c.get().usage = usageStore ?: SnipUsageStore(tmp.newFolder()) { nowMs }
+            .also { usageStore = it }
         return c.setup().get()
+    }
+
+    /**
+     * A usage store seeded with [stamps], for a test that asserts browse ORDER
+     * without having to pick rows first.
+     *
+     * Deliberately writes through the store's own API rather than hand-rolling
+     * the JSON: a fixture that wrote the file directly would keep passing if
+     * the on-disk format changed under it.
+     */
+    private fun seedUsage(vararg stamps: Pair<String, Long>) {
+        val dir = tmp.newFolder()
+        val live = rows.map { it.label }.toSet()
+        for ((label, at) in stamps) {
+            SnipUsageStore(dir) { at }.recordAndPrune(label, live)
+        }
+        usageStore = SnipUsageStore(dir) { nowMs }
     }
 
     private fun stocked() = start(SnipStore.Catalog(rows, 1_700_000_000_000L))
@@ -389,7 +431,256 @@ class SnipPickerActivityTest {
         )
     }
 
+    // --- most-recently-used browse ordering ----------------------------------
+    //
+    // 🔴 INVARIANT GUARDS, not regression coverage, and the distinction is not
+    // a technicality here. These reference SnipUsageStore, which arrives with
+    // this change, so a run at 6434700 — the 0.5.0 release commit — is a
+    // COMPILE ERROR rather than a test watched going red.
+    //
+    // The feature cannot be expressed at base at all: asserting "browse is
+    // ordered by use" requires being able to record use, and nothing at base
+    // can. So no test of this feature is red at base, and these do not claim
+    // to be. What stands in for it is the partial-revert control (delete the
+    // ordering call from filterRows and watch these redden) plus the mutant
+    // batch in scripts/mutants/snip-mru.tsv — both reported in the PR.
+    //
+    // aTypedQueryKeepsTheRankedOrderAndIsNotReorderedByUsage is the one that
+    // pins the DECISION rather than the mechanism: it is what fails if the
+    // ordering is ever moved into readRows() as a pre-sort.
+
+    @Test
+    fun browseListsTheMostRecentlyPickedSnippetFirst() {
+        // Catalog order is Zebra, Quince, Paste. Usage inverts it.
+        seedUsage("Paste it back" to 3_000L, "Zebra crossing" to 1_000L, "Quince jam" to 2_000L)
+        assertEquals(
+            "the picker must open on the snippet last used, not on whatever " +
+                "the catalog file happens to list first",
+            listOf("Paste it back", "Quince jam", "Zebra crossing"),
+            labels(stocked()),
+        )
+    }
+
+    @Test
+    fun snippetsNeverPickedFollowTheUsedOnesInCatalogOrder() {
+        seedUsage("Paste it back" to 3_000L)
+        assertEquals(
+            "the one used snippet leads; the two never used keep catalog " +
+                "order behind it rather than being shuffled",
+            listOf("Paste it back", "Zebra crossing", "Quince jam"),
+            labels(stocked()),
+        )
+    }
+
+    @Test
+    fun aFreshInstallBrowsesInCatalogOrder() {
+        assertEquals(
+            "with no usage recorded the order must be the catalog's — this is " +
+                "0.5.0's behaviour and the correct starting state",
+            listOf("Zebra crossing", "Quince jam", "Paste it back"),
+            labels(stocked()),
+        )
+    }
+
+    @Test
+    fun pickingASnippetRecordsItSoTheNextBrowseLeadsWithIt() {
+        // 🔴 The round trip, end to end through the activity: pick the LAST
+        // row, then reopen and assert it leads. Nothing here writes the usage
+        // file by hand.
+        nowMs = 5_000L
+        val first = stocked()
+        assertEquals(
+            "precondition: the catalog's own order",
+            listOf("Zebra crossing", "Quince jam", "Paste it back"),
+            labels(first),
+        )
+        pick(first, 2) // "Paste it back"
+
+        controller?.close()
+        assertEquals(
+            "a pick must survive the activity and lead the next browse — " +
+                "this is the whole feature, exercised the way the operator does it",
+            listOf("Paste it back", "Zebra crossing", "Quince jam"),
+            labels(stocked()),
+        )
+    }
+
+    @Test
+    fun aTypedQueryKeepsTheRankedOrderAndIsNotReorderedByUsage() {
+        // 🔴 The asymmetry, pinned. Both rows below match "e" through their
+        // labels, and `Quince jam` is the LESS recently used of the two — so if
+        // usage leaked into the filtered path it would move. Relevance order
+        // must win.
+        //
+        // This is the test that fails if the ordering is ever moved into
+        // readRows() as a pre-sort, which is the obvious and wrong refactor:
+        // SnipMatcher.rank preserves input order within its groups.
+        seedUsage("Paste it back" to 9_000L, "Quince jam" to 1_000L)
+        val activity = stocked()
+
+        search(activity).setText("preserve")
+        assertEquals(
+            "a declared-term match must still be found",
+            listOf("Quince jam"),
+            labels(activity),
+        )
+
+        search(activity).setText("")
+        assertEquals(
+            "and clearing the field returns to the MRU browse order",
+            listOf("Paste it back", "Quince jam", "Zebra crossing"),
+            labels(activity),
+        )
+    }
+
+    @Test
+    fun aWhitespaceOnlyQueryBrowsesInUsageOrderRatherThanMatchingNothing() {
+        // 🔴 The input that separates `query.trim().isEmpty()` from
+        // `query.isEmpty()`, asserted through the real TextWatcher. A
+        // TextWatcher produces this constantly — a space typed before the first
+        // letter — and the wrong predicate shows an empty picker.
+        seedUsage("Quince jam" to 2_000L)
+        val activity = stocked()
+        search(activity).setText(" ")
+        assertEquals(
+            "a whitespace-only query must browse, in usage order",
+            listOf("Quince jam", "Zebra crossing", "Paste it back"),
+            labels(activity),
+        )
+        assertEquals(View.VISIBLE, list(activity).visibility)
+    }
+
+    @Test
+    fun aSnippetDroppedFromTheCatalogIsPrunedFromUsageOnTheNextPick() {
+        // A label that is no longer in the catalog must not keep a stamp
+        // forever — that is what bounds the usage file by the catalog.
+        val dir = tmp.newFolder()
+        SnipUsageStore(dir) { 1_000L }.recordAndPrune("Departed snippet", setOf("Departed snippet"))
+        usageStore = SnipUsageStore(dir) { 7_000L }
+
+        val activity = stocked()
+        pick(activity, 0) // "Zebra crossing"
+
+        assertEquals(
+            "the departed label must be gone and only the live pick retained",
+            mapOf("Zebra crossing" to 7_000L),
+            SnipUsageStore(dir).lastUsed(),
+        )
+    }
+
+    @Test
+    fun aTypedQueryMatchingSeveralRowsKeepsRankOrderAndIgnoresUsage() {
+        // 🔴 THE DISCRIMINATING TEST, added because mutant m-mru03 SURVIVED
+        // without it — and m-mru03 deletes the browse gate, i.e. it makes
+        // most-recently-used ordering apply to TYPED queries too, which is the
+        // one thing this change promises not to do.
+        //
+        // aTypedQueryKeepsTheRankedOrderAndIsNotReorderedByUsage could not see
+        // it: its query matches ONE row, and a one-row list is in the same
+        // order under every sort. The leak is only observable when a filtered
+        // result holds at least two rows whose usage order DISAGREES with their
+        // rank order — so this fixture is built to make those two orders
+        // opposite, and asserts both in the same test.
+        val catalog = listOf(
+            Snippet("Alpha one", "A", listOf("shared"), "t"),
+            Snippet("Bravo two", "B", listOf("shared"), "t"),
+        )
+        val live = catalog.map { it.label }.toSet()
+        val dir = tmp.newFolder()
+        // Bravo is the MORE recently used, so usage order is Bravo, Alpha —
+        // the reverse of the catalog order rank must preserve.
+        SnipUsageStore(dir) { 1_000L }.recordAndPrune("Alpha one", live)
+        SnipUsageStore(dir) { 9_000L }.recordAndPrune("Bravo two", live)
+        usageStore = SnipUsageStore(dir) { 10_000L }
+
+        val activity = start(SnipStore.Catalog(catalog, 1L))
+
+        assertEquals(
+            "precondition — BROWSE is ordered by use, so Bravo leads",
+            listOf("Bravo two", "Alpha one"),
+            labels(activity),
+        )
+
+        search(activity).setText("shared")
+        assertEquals(
+            "both rows declare `shared`, so rank keeps them in CATALOG order " +
+                "and usage must not touch them. If this reads [Bravo two, " +
+                "Alpha one] the browse ordering has leaked into the filtered " +
+                "path — the exact decision this change was asked to preserve.",
+            listOf("Alpha one", "Bravo two"),
+            labels(activity),
+        )
+    }
+
+    @Test
+    fun pickingOneSnippetKeepsTheStampsOfTheOthersStillInTheCatalog() {
+        // 🔴 Written because a MUTANT exposed that nothing covered it: if
+        // `liveLabels` were never captured from readRows, it would stay empty,
+        // the `ifEmpty { setOf(row.label) }` fallback would engage, and the
+        // prune would drop EVERY other snippet's stamp — silently resetting the
+        // operator's ordering on every pick.
+        //
+        // Every test that existed before this one passed under that mutant,
+        // because each recorded at most one label. The bug needs two.
+        val dir = tmp.newFolder()
+        SnipUsageStore(dir) { 1_000L }.recordAndPrune("Quince jam", rows.map { it.label }.toSet())
+        SnipUsageStore(dir) { 2_000L }.recordAndPrune("Paste it back", rows.map { it.label }.toSet())
+        usageStore = SnipUsageStore(dir) { 3_000L }
+
+        val activity = stocked()
+        // 🔴 By LABEL, not by position: usage is seeded here, so the list is
+        // already reordered and row 0 is "Paste it back", not "Zebra crossing".
+        pickLabel(activity, "Zebra crossing")
+
+        assertEquals(
+            "picking one snippet must not prune the others — all three are in " +
+                "the catalog the picker just rendered, so all three stamps survive",
+            mapOf(
+                "Quince jam" to 1_000L,
+                "Paste it back" to 2_000L,
+                "Zebra crossing" to 3_000L,
+            ),
+            SnipUsageStore(dir).lastUsed(),
+        )
+    }
+
+    @Test
+    fun aPickStillReachesTheClipboardWhenTheUsageWriteCannotHappen() {
+        // 🔴 The failure posture, as a behaviour rather than a comment: usage
+        // ordering is a convenience and the clipboard write is the feature. The
+        // store is pointed at a path that cannot be created — a FILE standing
+        // where its directory would go — so every write throws.
+        val blocker = tmp.newFile("not-a-directory")
+        usageStore = SnipUsageStore(File(blocker, "usage")) { 1_000L }
+
+        val activity = stocked()
+        pick(activity, 0)
+
+        assertEquals(
+            "the body must be on the clipboard even though the usage write " +
+                "failed — losing the row order must never cost the paste",
+            "walk slowly",
+            clipText(),
+        )
+    }
+
     /** Clicks row [position] the way the list does. */
     private fun pick(activity: SnipPickerActivity, position: Int): Boolean =
         list(activity).performItemClick(null, position, position.toLong())
+
+    /**
+     * Clicks the row whose label is [label], wherever it currently sits.
+     *
+     * 🔴 Use this, not [pick], in any test that seeds usage. Most-recently-used
+     * ordering means a POSITION no longer identifies a row: seeding usage
+     * reorders the list, so `pick(activity, 0)` silently picks whichever
+     * snippet the ordering floated to the top. That cost a real debugging
+     * round on [pickingOneSnippetKeepsTheStampsOfTheOthersStillInTheCatalog] —
+     * it asserted on "Zebra crossing" and had actually clicked "Paste it back".
+     */
+    private fun pickLabel(activity: SnipPickerActivity, label: String): Boolean {
+        val at = labels(activity).indexOf(label)
+        require(at >= 0) { "no row labelled \"$label\"; rows are ${labels(activity)}" }
+        return pick(activity, at)
+    }
 }
