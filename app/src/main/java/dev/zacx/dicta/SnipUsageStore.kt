@@ -108,12 +108,21 @@ class SnipUsageStore internal constructor(
             // refuses an existing target, as SnipStore's does.
             //
             // 🔴 THIS BRANCH IS UNREACHABLE IN THE SUITE, AND MEASURED SO:
-            // mutant m-mru19 removes the `scratch.delete()` and SURVIVES,
+            // mutant m-mru19 removes the scratch cleanup below and SURVIVES,
             // because the tests run on a filesystem where `renameTo` succeeds
-            // and the fallback never executes. `theWriteLeavesNoTemporaryFileBehind`
-            // therefore pins the RENAME path only. Stated so the fallback is
-            // not read as covered: it is inherited from SnipStore, where the
-            // same shape is in production use.
+            // and the fallback never executes.
+            // `theWriteLeavesNoTemporaryFileBehind` therefore pins the RENAME
+            // path only. Stated so the fallback is not read as covered: it is
+            // inherited from SnipStore, where the same shape is in production
+            // use.
+            //
+            // 🔴 Do NOT write the mutated expression literally in this comment.
+            // The harness requires a mutant's FROM string to occur EXACTLY ONCE
+            // in the file and refuses it otherwise — an earlier version of this
+            // comment quoted the call verbatim, which made it occur twice and
+            // turned m-mru19's verdict from SURVIVED into REFUSED. A refusal is
+            // not a pass: the row produced no verdict at all, and a batch
+            // summary full of KILLEDs is where that is easiest to miss.
             if (!scratch.renameTo(file)) {
                 file.writeText(payload)
                 scratch.delete()
