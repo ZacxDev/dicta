@@ -133,9 +133,26 @@ object SnipMatcher {
      * not a degenerate case of filtering: it is how the picker opens, and a
      * matcher that returned nothing for it would look like an empty catalog.
      */
+    /**
+     * Whether [query] selects BROWSE rather than filtering.
+     *
+     * 🔴 This exists so the predicate has **one** definition, and it is a
+     * rename rather than a new rule. [rank] returns every row unchanged for a
+     * blank query; `SnipPickerActivity` has to know about exactly that branch,
+     * because most-recently-used ordering applies to BROWSE and to nothing
+     * else — a typed query keeps `snip`'s declared-before-labeled order with
+     * the catalog breaking ties.
+     *
+     * Two copies of `query.trim()…` would be two chances to disagree, and they
+     * would disagree on the input nobody types by hand: a whitespace-only
+     * query, where one copy browses and the other filters to nothing. [rank]
+     * calls this, so the branch below and this function cannot drift apart.
+     */
+    fun isBrowse(query: String): Boolean = query.trim().isEmpty()
+
     fun rank(rows: List<Snippet>, query: String): List<Snippet> {
+        if (isBrowse(query)) return rows
         val norm = query.trim().lowercase()
-        if (norm.isEmpty()) return rows
         val kept = rows.filter { termMatches(norm, it) }
         val declared = kept.filter { termMatchesDeclared(norm, it) }
         val labeled = kept.filterNot { termMatchesDeclared(norm, it) }

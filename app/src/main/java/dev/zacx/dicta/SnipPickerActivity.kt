@@ -58,6 +58,31 @@ class SnipPickerActivity : FloatingPickerActivity<Snippet>() {
      */
     internal var source: SnipSource? = null
 
+    /**
+     * Where most-recently-used ordering comes from. `null` means a
+     * [SnipUsageStore] over `noBackupFilesDir`.
+     *
+     * A seam for the same reason [source] is one: the production read touches
+     * the filesystem, so a test asserting the browse ORDER would otherwise also
+     * be a test of the store and at the mercy of what the previous test left
+     * behind.
+     */
+    internal var usage: SnipUsageStore? = null
+
+    private val usageStore: SnipUsageStore get() = usage ?: SnipUsageStore(this)
+
+    /**
+     * The labels of the catalog currently rendered, for the usage prune.
+     *
+     * 🔴 `@Volatile` because it is written on the shell's worker thread (inside
+     * [readRows]) and read on the main thread (inside [onRowPicked]). Without
+     * it the pick could read a stale empty set, and the consequence is not a
+     * missed ordering — it is [SnipUsageStore.recordAndPrune] treating every
+     * stored label as departed and wiping the file.
+     */
+    @Volatile
+    private var liveLabels: Set<String> = emptySet()
+
     override val titleRes: Int = R.string.snip_title
     override val searchHintRes: Int = R.string.snip_search_hint
     override val emptyUnreadableRes: Int = R.string.snip_empty_no_catalog
@@ -76,15 +101,44 @@ class SnipPickerActivity : FloatingPickerActivity<Snippet>() {
      * shell turns a throw into the same `null`, so this needs no wrapping of
      * its own.
      */
-    override fun readRows(): List<Snippet>? =
-        (source ?: SnipStore(this)).catalog()?.snippets
+    override fun readRows(): List<Snippet>? {
+        val rows = (source ?: SnipStore(this)).catalog()?.snippets
+        // The set the usage prune measures "still exists" against. Captured
+        // here because this is the only place the catalog is read, and NOT by
+        // widening the shell's private `all` — that field is the shell's
+        // business and one picker's bookkeeping is not a reason to expose it to
+        // every future one.
+        if (rows != null) liveLabels = rows.mapTo(HashSet()) { it.label }
+        return rows
+    }
 
     /**
-     * The ranking is [SnipMatcher.rank] and nothing else — including for a
-     * blank query, which is its BROWSE case and is how the picker opens.
+     * [SnipMatcher.rank], with **BROWSE additionally ordered most-recently-used
+     * first**.
+     *
+     * 🔴 The gate is [SnipMatcher.isBrowse] and the asymmetry is the whole
+     * decision:
+     *
+     *  * **A blank query** — how the picker opens — lists the snippets the
+     *    operator actually reaches for, newest first, with everything never
+     *    picked following in catalog order. Before this, a 28-row catalog
+     *    opened in import order, so the common rows were wherever the source
+     *    file happened to put them.
+     *  * **A typed query** is untouched: `snip`'s declared-before-labeled
+     *    ranking, with the catalog breaking ties. Relevance is not negotiable
+     *    against recency, and reordering a filtered list would move rows the
+     *    operator is reading as they type.
+     *
+     * 🔴 It is applied AFTER `rank`, not by pre-sorting [readRows]. `rank`
+     * preserves its input order within each group, so a pre-sort would reorder
+     * the typed case too — the exact thing the paragraph above says must not
+     * happen. The ordering is only correct in this position.
      */
-    override fun filterRows(rows: List<Snippet>, query: String): List<Snippet> =
-        SnipMatcher.rank(rows, query)
+    override fun filterRows(rows: List<Snippet>, query: String): List<Snippet> {
+        val ranked = SnipMatcher.rank(rows, query)
+        if (!SnipMatcher.isBrowse(query)) return ranked
+        return SnipUsageStore.order(ranked, runCatching { usageStore.lastUsed() }.getOrDefault(emptyMap()))
+    }
 
     /**
      * 🔴 Every per-item field is set on every call, including the
@@ -131,6 +185,19 @@ class SnipPickerActivity : FloatingPickerActivity<Snippet>() {
                 getString(R.string.snip_copied, row.label),
                 Toast.LENGTH_SHORT,
             ).show()
+        }
+        // 🔴 LAST, and wrapped. Ordering is a convenience; the clipboard write
+        // above is the feature. A usage file that cannot be written must cost
+        // the operator their row order, never their paste.
+        //
+        // 🔴 `ifEmpty` is a guard against wiping the file, not defensiveness
+        // for its own sake: recordAndPrune drops every label absent from the
+        // set it is given, so an empty set means "nothing in the catalog still
+        // exists". A picked row proves the catalog was read, so this should be
+        // unreachable — but the cost of being wrong is the operator's whole
+        // usage history, and the fallback keeps the row just picked.
+        runCatching {
+            usageStore.recordAndPrune(row.label, liveLabels.ifEmpty { setOf(row.label) })
         }
     }
 
