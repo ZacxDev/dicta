@@ -38,11 +38,33 @@
 # particular no row deletes a guard TOGETHER WITH its enclosing condition —
 # that proves nothing about the guard and dies for the wrong reason.
 #
+#
+# 🔴 TWO VERDICTS FROM THE FIRST RUN OF THIS BATCH DROVE EDITS HERE, and
+# both are findings about the HARNESS rather than about the code:
+#
+#   * m-clip02 was reported SURVIVED under `dev.zacx.dicta.BubbleClipRevealTest`.
+#     It is killed by `BubbleRevealGestureTest`, which MEASURES the container's
+#     own growth and compares it against the sum of the three dp-derived blocks
+#     — the only test that computes the two sides independently. The clip
+#     picker's own clamp tests build their expected sum FROM clipBlockPx, so an
+#     UNDERSTATED block is invisible to them by construction. A `-run` filter
+#     that excludes the killing test reports SURVIVED; the filter is widened to
+#     `dev.zacx.dicta.Bubble*Test`, not the test weakened.
+#
+#   * m-clip17's original mutation — rank-the-whole-list instead of
+#     filter-row-by-row — is an EQUIVALENT MUTANT, which is why it survived.
+#     `SnipMatcher.rank` partitions into declared-term hits and label hits and
+#     returns `declared + labeled`; `ClipPickerActivity.searchViewOf` builds its
+#     synthetic Snippet with `searchTerms = emptyList()`, so `declared` is
+#     ALWAYS empty and rank degrades to a stable filter. There is no ordering
+#     to leak. Replaced with a mutation that genuinely reorders
+#     (`rows.sortedBy { it.body }`), which the server-order test kills.
+#
 # 🔴 TEST_FILTER is an optimisation and the harness refuses a run that
 # executed zero tests, which is what makes a typo'd filter fail loudly instead
 # of reading as SURVIVED. Without that guard the column would be unsafe.
 m-clip01-the-clamp-forgets-the-third-button	app/src/main/java/dev/zacx/dicta/BubbleService.kt	(if (clip?.visibility == View.VISIBLE) clipBlockPx else 0)	0	dev.zacx.dicta.BubbleClipRevealTest
-m-clip02-the-third-block-has-no-gap	app/src/main/java/dev/zacx/dicta/BubbleService.kt	clipBlockPx = ((CLIP_DP + CLIP_GAP_DP) * density).toInt()	clipBlockPx = (CLIP_GAP_DP * density).toInt()	dev.zacx.dicta.BubbleClipRevealTest
+m-clip02-the-third-block-has-no-gap	app/src/main/java/dev/zacx/dicta/BubbleService.kt	clipBlockPx = ((CLIP_DP + CLIP_GAP_DP) * density).toInt()	clipBlockPx = (CLIP_GAP_DP * density).toInt()	dev.zacx.dicta.Bubble*Test
 m-clip03-the-reveal-leaves-the-clip-button-up	app/src/main/java/dev/zacx/dicta/BubbleService.kt	clip?.visibility = visibility	clip?.visibility = View.VISIBLE	dev.zacx.dicta.BubbleClipRevealTest
 m-clip04-the-clip-button-opens-the-snip-picker	app/src/main/java/dev/zacx/dicta/BubbleDictation.kt	if (state == State.IDLE) listOf(Effect.OpenClipPicker) else emptyList()	if (state == State.IDLE) listOf(Effect.OpenSnipPicker) else emptyList()	dev.zacx.dicta.BubbleClipStateTest
 m-clip05-the-clip-button-works-while-recording	app/src/main/java/dev/zacx/dicta/BubbleDictation.kt	if (state == State.IDLE) listOf(Effect.OpenClipPicker) else emptyList()	listOf(Effect.OpenClipPicker)	dev.zacx.dicta.BubbleClipStateTest
@@ -54,7 +76,7 @@ m-clip12-the-outbox-id-comes-from-the-list-size	app/src/main/java/dev/zacx/dicta
 m-clip13-a-failed-capture-write-is-swallowed	app/src/main/java/dev/zacx/dicta/ClipOutbox.kt	throw ClipOutbox.Failed("the capture could not be saved", e)	Unit	dev.zacx.dicta.ClipOutboxStoreTest
 m-clip14-a-corrupt-outbox-reads-as-drained	app/src/main/java/dev/zacx/dicta/ClipOutbox.kt	throw ClipOutbox.Failed("the outbox file could not be read", e)	return State(nextId = 1L, items = emptyList())	dev.zacx.dicta.ClipOutboxStoreTest
 m-clip15-the-outbox-lives-in-the-backed-up-files-dir	app/src/main/java/dev/zacx/dicta/ClipOutbox.kt	File(context.noBackupFilesDir, DIR)	File(context.filesDir, DIR)	dev.zacx.dicta.ClipOutboxStoreTest
-m-clip17-the-picker-reorders-the-shared-list	app/src/main/java/dev/zacx/dicta/ClipPickerActivity.kt	rows.filter { SnipMatcher.rank(listOf(searchViewOf(it)), query).isNotEmpty() }	SnipMatcher.rank(rows.map { searchViewOf(it) }, query).mapNotNull { m -> rows.firstOrNull { it.body == m.label } }	dev.zacx.dicta.ClipPickerActivityTest
+m-clip17-the-picker-reorders-the-shared-list	app/src/main/java/dev/zacx/dicta/ClipPickerActivity.kt	rows.filter { SnipMatcher.rank(listOf(searchViewOf(it)), query).isNotEmpty() }	rows.sortedBy { it.body }.filter { SnipMatcher.rank(listOf(searchViewOf(it)), query).isNotEmpty() }	dev.zacx.dicta.ClipPickerActivityTest
 m-clip18-the-copied-clip-is-not-marked-sensitive	app/src/main/java/dev/zacx/dicta/ClipPickerActivity.kt	clipboard?.setPrimaryClip(sensitive(ClipData.newPlainText(null, row.body)))	clipboard?.setPrimaryClip(ClipData.newPlainText(null, row.body))	dev.zacx.dicta.ClipPickerActivityTest
 m-clip19-a-styled-selection-lands-nothing	app/src/main/java/dev/zacx/dicta/CaptureActivity.kt	intent.getCharSequenceExtra(Intent.EXTRA_PROCESS_TEXT)	intent.getStringExtra(Intent.EXTRA_PROCESS_TEXT)	dev.zacx.dicta.CaptureActivityTest
 m-clip20-the-receiver-replaces-the-users-selection	app/src/main/java/dev/zacx/dicta/CaptureActivity.kt	setResult(RESULT_CANCELED)	setResult(RESULT_OK)	dev.zacx.dicta.CaptureActivityTest
