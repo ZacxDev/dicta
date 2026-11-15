@@ -478,5 +478,106 @@
             android:textColor="@color/dicta_on_surface"
             android:contentDescription="@string/stt_import_snippets_desc"
             android:text="@string/stt_import_snippets" />
+
+        <!-- 🔴 ITS OWN SECTION, for the reason the snippets heading above gives
+             about itself: the transcription cluster is "which service, which
+             language, which token" with @id/stt_status as its result line, and
+             the shared clipboard is a DIFFERENT subject reaching a DIFFERENT
+             service with a SEPARATE token. Folding its token field into the
+             transcription group is what would make "Clear token" an ambiguous
+             act — see ClipSettings' kdoc for why the two tokens are separate at
+             all. -->
+        <TextView
+            style="@style/Text.Dicta.SectionHeading"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="32dp"
+            android:text="@string/clip_settings_header" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:text="@string/clip_settings_desc"
+            android:textSize="12sp"
+            android:lineSpacingExtra="3dp"
+            android:textColor="@color/dicta_on_surface_variant" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:layout_marginTop="10dp"
+            android:background="@drawable/row_bg"
+            android:padding="14dp">
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:labelFor="@id/clip_url"
+                android:text="@string/clip_url_label"
+                android:textSize="15sp"
+                android:textColor="@color/dicta_on_surface" />
+
+            <!-- @id/stt_url's element, attribute for attribute. The padding is
+                 not cosmetic: replacing the platform EditText background drops
+                 the padding that drawable reported. -->
+            <EditText
+                android:id="@+id/clip_url"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:minHeight="48dp"
+                android:background="@drawable/input_bg"
+                android:padding="14dp"
+                android:textSize="15sp"
+                android:textColor="@color/dicta_on_surface"
+                android:textColorHint="@color/dicta_on_surface_variant"
+                android:hint="@string/clip_url_hint"
+                android:importantForAutofill="no"
+                android:inputType="textUri" />
+
+            <!--
+              @id/stt_token's element, attribute for attribute: textPassword,
+              the stored value is NEVER rendered back into the field (an empty
+              field means "keep what is stored"), and importantForAutofill is
+              off so the token is not offered to a password manager or synced.
+            -->
+            <EditText
+                android:id="@+id/clip_token"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:minHeight="48dp"
+                android:background="@drawable/input_bg"
+                android:padding="14dp"
+                android:textSize="15sp"
+                android:textColor="@color/dicta_on_surface"
+                android:textColorHint="@color/dicta_on_surface_variant"
+                android:hint="@string/clip_token_hint_empty"
+                android:importantForAutofill="no"
+                android:inputType="textPassword" />
+        </LinearLayout>
+
+        <!-- @id/stt_clear_token's element, attribute for attribute, including
+             the ✕ glyph and the error colour: the two controls destroy the same
+             KIND of thing, so a difference in styling would read as a
+             difference in consequence. Deliberately unconfirmed, for that
+             button's stated reason — a token is re-pasteable from the password
+             manager it came from. -->
+        <Button
+            android:id="@+id/clip_clear_token"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:layout_marginTop="8dp"
+            android:background="@drawable/destructive_button_bg"
+            android:drawableStart="@drawable/ic_close"
+            android:drawableTint="@color/dicta_error"
+            android:drawablePadding="8dp"
+            android:stateListAnimator="@null"
+            android:textAllCaps="false"
+            android:textColor="@color/dicta_error"
+            android:contentDescription="@string/clip_clear_token_desc"
+            android:text="@string/clip_clear_token" />
     </LinearLayout>
 </ScrollView>

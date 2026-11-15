@@ -182,6 +182,99 @@
             android:taskAffinity="dev.zacx.dicta.history"
             android:launchMode="singleTop" />
 
+        <!--
+          The shared-clipboard picker: search what every device has copied and
+          copy one row onto this phone's clipboard.
+
+          Every attribute below is the other two pickers', for the reasons
+          written above them, and the three elements are deliberately identical
+          except for the name and the affinity — they are the same KIND of
+          surface and all three are FloatingPickerActivity subclasses, so a
+          difference in any of these would be a difference nobody decided on.
+
+          🔴 exported="false" and NO <intent-filter>. The element being
+          self-closing IS the no-filter claim — a filter would have to be a
+          child, so it could not be. Stronger here than for the snippet picker
+          and for the same reason as the history one: this activity lists
+          everything the operator has copied on any of their devices, so an
+          exported surface would be a read of that which any installed app
+          could invoke. The capture activity below IS exported, and that is the
+          whole of this feature's third-party surface.
+
+          🔴 taskAffinity is LOAD-BEARING for DictateActivity's reason (issue
+          #11), and must stay DIFFERENT from all three others. The value must
+          stay in sync with ClipLaunch.PICKER_TASK_AFFINITY; ClipSeamLedgerTest
+          pins that and the all-different property.
+
+          It starts no recording, touches no microphone, and starts no activity
+          at all — see ClipPickerActivity's kdoc and ClipSeamLedgerTest.
+        -->
+        <activity
+            android:name=".ClipPickerActivity"
+            android:exported="false"
+            android:theme="@style/Theme.Dicta.Overlay"
+            android:excludeFromRecents="true"
+            android:taskAffinity="dev.zacx.dicta.clip"
+            android:launchMode="singleTop" />
+
+        <!--
+          🔴 THE APP'S FIRST THIRD-PARTY-REACHABLE ENTRY POINT, other than
+          MAIN/LAUNCHER and the QS tile. Read CaptureActivity's kdoc before
+          touching any attribute here; every one of them is load-bearing and
+          several fail INVISIBLY.
+
+          ONE activity with TWO filters, because the work is byte-identical.
+          android:label on an <intent-filter> overrides the activity's, so the
+          selection-toolbar item and the sharesheet entry still read
+          differently.
+
+          🔴 exported="true" is REQUIRED, not a choice.
+          Editor.isSupportedActivity skips a non-exported out-of-package
+          activity — and skips one whose android:permission the host does not
+          hold, so declaring a permission here would make the item invisible
+          rather than protected. From API 31 the attribute must also be
+          explicit or the app cannot install. The compensating guarantee is
+          structural and is asserted rather than argued:
+          ClipSeamLedgerTest.theCaptureActivityCannotReachTheMicrophoneOrHistory.
+
+          🔴 <data android:mimeType="text/plain"> is REQUIRED on both. The
+          platform calls setType("text/plain"), and a typed intent cannot pass
+          the data test against a filter with no <data> — the item simply never
+          appears, with nothing going red.
+
+          🔴 taskAffinity is a FOURTH distinct value and it is needed even
+          though this activity is noHistory and shows no window: the platform
+          starts it from a foreign process, and an undeclared affinity inherits
+          MainActivity's, which would bring Dicta's whole task forward over the
+          app the user is selecting text in. That is issue #11 by a fifth
+          route. Must stay in sync with CaptureActivity.CAPTURE_TASK_AFFINITY.
+
+          🔴 NOT @style/Theme.Dicta.Overlay. This shows no window at all, and
+          wearing that theme would put it on FloatingOverlaySeamLedgerTest's
+          ledger and owe it a FloatingWindowSizeTest case for geometry it never
+          has.
+
+          noHistory + excludeFromRecents: it finishes in onCreate, so it must
+          not be something the user can swipe back to or find in Recents.
+        -->
+        <activity
+            android:name=".CaptureActivity"
+            android:exported="true"
+            android:noHistory="true"
+            android:excludeFromRecents="true"
+            android:taskAffinity="dev.zacx.dicta.capture">
+            <intent-filter android:label="@string/capture_verb">
+                <action android:name="android.intent.action.PROCESS_TEXT" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
+            <intent-filter android:label="@string/capture_verb_share">
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
+        </activity>
+
         <!-- Transcription settings: the base URL and the bearer token. Not
              exported — the token field must not be reachable by another app's
              intent. -->

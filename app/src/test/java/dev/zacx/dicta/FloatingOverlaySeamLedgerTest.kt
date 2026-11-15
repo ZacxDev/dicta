@@ -95,6 +95,18 @@ class FloatingOverlaySeamLedgerTest {
      * the shell.
      */
     private val overlayThemedActivities = listOf(
+        // 🔴 Added by the shared-clipboard change, for the reason the history
+        // picker's entry above records: a FOURTH activity wearing
+        // @style/Theme.Dicta.Overlay grew the theme-derived set and this went
+        // red until the sizing obligation had been read. It meets it through
+        // FloatingPickerActivity, so the obligation is inherited.
+        //
+        // 🔴 `.CaptureActivity` is deliberately NOT here, and must not be: it
+        // shows NO window at all, so it is not a floating surface and would owe
+        // a FloatingWindowSizeTest case for geometry it never has. Its manifest
+        // element carries no android:theme, which is what keeps the
+        // theme-derived set and this list in agreement.
+        ".ClipPickerActivity",
         ".DictateActivity",
         ".HistoryPickerActivity",
         ".SnipPickerActivity",

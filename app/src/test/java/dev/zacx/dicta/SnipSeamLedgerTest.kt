@@ -196,6 +196,17 @@ class SnipSeamLedgerTest {
      * own, and the claim being made is about the snip flow's own files.
      */
     private val snipSources = listOf(
+        // 🔴 HERE RATHER THAN IN snipAwareMicOwningHosts, and the distinction
+        // is this list's whole point. The shared-clipboard picker reaches this
+        // flow because it reuses SnipMatcher and presents each clip as a
+        // synthetic Snippet — the operator's "one matching rule in the app"
+        // decision, which is also why HistoryPickerActivity is in the ledger
+        // at all. Unlike that file it names NO MIC_SYMBOLS entry: it starts no
+        // activity whatsoever, so it is correctly held to this list's stricter
+        // claim and needs no exemption of its own. The structural scan caught
+        // it the moment it was added, which is the behaviour this guard exists
+        // for.
+        "ClipPickerActivity.kt",
         "SnipCatalog.kt",
         "SnipClip.kt",
         "SnipLaunch.kt",

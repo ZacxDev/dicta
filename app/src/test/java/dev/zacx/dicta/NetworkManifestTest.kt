@@ -241,4 +241,30 @@ class NetworkManifestTest {
             SttEndpoints.DEFAULT_BASE_URL.contains(exempted),
         )
     }
+
+    @Test
+    fun theSharedClipboardsDefaultBaseUrlPointsAtTheSAMEExemptedHost() {
+        // 🔴 The sibling of the guard above, and the reason the shared
+        // clipboard commits no new network fact: it reaches a DIFFERENT PORT on
+        // the host that is ALREADY exempted, and a <domain-config> carries no
+        // port. So `exactlyOneDomainIsExempted` above stays at one, the
+        // repository gains no second mesh address — it is a PUBLIC repository —
+        // and the cleartext surface is unchanged.
+        //
+        // 🔴 The failure this closes is specific: point the clip store at any
+        // other host and network policy refuses the request with
+        // `CLEARTEXT communication not permitted`, which arrives as an
+        // IOException — i.e. as Unreachable, i.e. as a queue that never drains
+        // and reads exactly like the service being down.
+        val exempted = Regex("<domain>([^<]+)</domain>")
+            .find(securityConfigSource())!!
+            .groupValues[1]
+            .trim()
+        assertTrue(
+            "the clip store's default base URL " +
+                "(${ClipEndpoints.DEFAULT_BASE_URL}) does not point at the " +
+                "cleartext-exempted host ($exempted)",
+            ClipEndpoints.DEFAULT_BASE_URL.contains(exempted),
+        )
+    }
 }

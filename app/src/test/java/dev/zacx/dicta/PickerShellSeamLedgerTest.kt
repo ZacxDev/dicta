@@ -76,6 +76,11 @@ class PickerShellSeamLedgerTest {
      * read.
      */
     private val pickers = listOf(
+        // 🔴 Added by the shared-clipboard change, and this is the guard
+        // WORKING rather than an obstacle: a third picker grew the
+        // structurally-derived set and the ledger went red until the five
+        // rules had been read. It meets all five through the shell.
+        "ClipPickerActivity.kt",
         "HistoryPickerActivity.kt",
         "SnipPickerActivity.kt",
     )

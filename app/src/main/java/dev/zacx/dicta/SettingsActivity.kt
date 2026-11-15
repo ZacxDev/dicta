@@ -43,6 +43,19 @@ class SettingsActivity : Activity() {
     private lateinit var snippetsState: TextView
 
     /**
+     * The shared clipboard's own configuration.
+     *
+     * 🔴 A second settings object rather than three more fields on
+     * [SttSettings], and [ClipSettings]' kdoc has the reason: the two tokens
+     * reach different services, are rotated independently, and are stored under
+     * different keystore aliases. One object would make "clear the token" an
+     * ambiguous act on this screen.
+     */
+    private lateinit var clipSettings: ClipSettings
+    private lateinit var clipUrlField: EditText
+    private lateinit var clipTokenField: EditText
+
+    /**
      * History, read here only through [DictationHistoryStore.usage] and
      * [DictationHistoryStore.clearAll]. This screen makes no retention
      * decision and exposes no bound — see the History comment in
@@ -103,13 +116,20 @@ class SettingsActivity : Activity() {
         snippetsState = findViewById(R.id.stt_snippets_state)
         history = DictationHistoryStore(this)
         if (snippets == null) snippets = SnipStore(this)
+        clipSettings = ClipSettings.create(this)
+        clipUrlField = findViewById(R.id.clip_url)
+        clipTokenField = findViewById(R.id.clip_token)
 
         urlField.setText(settings.baseUrl)
         remoteToggle.isChecked = settings.remoteEnabled
         bindLanguageSpinner()
         renderTokenState()
+        clipUrlField.setText(clipSettings.baseUrl)
+        renderClipTokenState()
 
         findViewById<Button>(R.id.stt_save).setOnClickListener { save() }
+        findViewById<Button>(R.id.clip_clear_token)
+            .setOnClickListener { clearClipToken() }
         findViewById<Button>(R.id.stt_clear_token).setOnClickListener { clearToken() }
         findViewById<Button>(R.id.stt_test).setOnClickListener { testConnection() }
         findViewById<Button>(R.id.stt_clear_history).setOnClickListener { clearHistory() }
@@ -215,6 +235,12 @@ class SettingsActivity : Activity() {
                 return
             }
         }
+        // 🔴 The clip half, and `save()` STOPS if it failed — see [saveClip].
+        // It runs after the transcription token is stored so that a clip
+        // failure cannot discard a transcription token the operator just
+        // pasted; the two are independent settings and one must not roll the
+        // other back.
+        if (!saveClip()) return
         // Clear the field immediately so the pasted token does not linger in
         // the view (and so it is not in a screenshot taken a moment later).
         renderTokenState()
@@ -227,6 +253,65 @@ class SettingsActivity : Activity() {
         settings.tokens.clearToken()
         renderTokenState()
         statusLine.text = getString(R.string.stt_token_cleared)
+    }
+
+    // --- the shared clipboard -----------------------------------------------
+
+    /**
+     * [renderTokenState]'s twin for the clip token.
+     *
+     * 🔴 The stored token is **never** displayed back, for the reason this
+     * class's kdoc gives at length: rendering it into an `EditText` would put
+     * it on screen, in the view hierarchy, in an accessibility dump and in any
+     * screenshot — and the whole point of [KeystoreCipher] is that it is not
+     * casually readable. The hint says whether one is stored; an empty field
+     * means "keep it".
+     */
+    private fun renderClipTokenState() {
+        clipTokenField.setText("")
+        clipTokenField.hint = getString(
+            if (clipSettings.tokens.hasToken) {
+                R.string.clip_token_hint_stored
+            } else {
+                R.string.clip_token_hint_empty
+            }
+        )
+    }
+
+    /**
+     * Saves the clip store's URL and token, and reports a failed encryption.
+     *
+     * 🔴 Called from [save] rather than given its own button, so one "Save"
+     * means one save. But it returns a BOOLEAN and [save] stops on false: a
+     * "Saved" line over a failed encryption would leave the operator sending no
+     * token and seeing an unexplained 401 on every flush — `save()`'s own
+     * token arm makes exactly this call about the transcription token.
+     */
+    private fun saveClip(): Boolean {
+        clipSettings.baseUrl = clipUrlField.text.toString()
+        val typed = clipTokenField.text.toString()
+        if (typed.isNotBlank()) {
+            try {
+                clipSettings.tokens.putToken(typed)
+            } catch (e: Exception) {
+                statusLine.text = getString(
+                    R.string.clip_token_save_failed,
+                    e.javaClass.simpleName
+                )
+                return false
+            }
+        }
+        // Clear the field immediately so the pasted token does not linger in
+        // the view (and so it is not in a screenshot taken a moment later).
+        renderClipTokenState()
+        clipUrlField.setText(clipSettings.baseUrl)
+        return true
+    }
+
+    private fun clearClipToken() {
+        clipSettings.tokens.clearToken()
+        renderClipTokenState()
+        statusLine.text = getString(R.string.clip_token_cleared)
     }
 
     // --- history ------------------------------------------------------------

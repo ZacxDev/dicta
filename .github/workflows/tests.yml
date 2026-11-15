@@ -36,17 +36,34 @@ jobs:
       # measured nothing is worse than no gate — so the count is asserted, not
       # inferred from the task's exit status.
       #
-      # BASELINE: 783 against a suite of 901 tests / 86 classes, read from the
-      # JUnit XML of a full run on `feat/snip-mru` — most-recently-used ordering
-      # for the snippet picker's BROWSE list.
+      # BASELINE: 914 against a suite of 1052 tests / 99 classes, read from the
+      # JUnit XML of a full run on `feat/shared-clipboard` — Dicta's client for
+      # the clipstore shared-clipboard service.
       #
-      # 901 * 500 / 575 = 783.48 -> 783, which is 13.10% slack.
+      # 1052 * 500 / 575 = 914.78 -> 914, which is 13.12% slack.
       #
-      # Accounted for PER CLASS against 871 / 83, not asserted:
-      #   +11  SnipUsageStoreTest (new)      +6  SnipUsageOrderTest (new)
-      #    +3  SnipMatcherBrowsePredicateTest (new)
-      #   +10  SnipPickerActivityTest (16 -> 26)
-      #   = +30 tests and +3 classes.
+      # 🔴 COMMIT COUNTED ON: the commit that adds the shared-clipboard client
+      # and its tests. The number was read from a full local run immediately
+      # before that commit was made, from the XML rather than by counting
+      # `@Test` annotations, and CI re-reads it.
+      #
+      # 🔴 LEFT AT 783 THIS GATE WOULD HAVE GONE RED, and did: 783 against 1052
+      # is 25.6% slack, past TestCountFloorTest's 20% ceiling. That test is what
+      # produced the 914 above — it prints the formula's result in its own
+      # failure message, which is the eviction playbook working rather than a
+      # number picked by hand.
+      #
+      # Accounted for PER CLASS against 901 / 86, not asserted:
+      #   +12  ClipJsonTest (new)            +12  ClipOutboxStoreTest (new)
+      #   +17  ClipHttpTest (new)            +12  ClipFlusherTest (new)
+      #   +18  ClipPickerActivityTest (new)  +11  CaptureActivityTest (new)
+      #   +11  CaptureManifestTest (new)      +7  ClipSeamLedgerTest (new)
+      #   +11  ClipSettingsTest (new)         +6  BubbleClipStateTest (new)
+      #   +11  BubbleClipRevealTest (new)     +6  ClipDeviceTest (new)
+      #    +5  ClipEndpointsTest (new)
+      #    +1  NetworkManifestTest (14 -> 15)
+      #    +4  FloatingWindowSizeTest (12 -> 16)
+      #   = +151 tests and +13 classes.
       #
       # 🔴 THE PER-CLASS RECONCILIATION IS THE CHECK, AND IT CAUGHT A MISCOUNT
       # on this very entry. At the FIRST measurement of this branch — 899 / 86,
@@ -88,7 +105,7 @@ jobs:
       # 🔴 THE HEADROOM IS THE CONSTANT, NOT THE FLOOR — re-derive it, do not
       # pick a round number:
       #     floor = floor(current_total * 500 / 575)      # 0.86957, 13.04% slack
-      # 901 * 500 / 575 = 783.48 -> 783, which is 13.10% slack.
+      # 1052 * 500 / 575 = 914.78 -> 914, which is 13.12% slack.
       #
       # 🔴 NAME THE TREE YOU COUNTED ON, not just the date. Past entries were
       # raised several-per-day, so a date does not identify a tree while a
@@ -99,9 +116,12 @@ jobs:
       # 🔴 THREE PREVIOUS ENTRIES, AND NO MORE — see the trim note at the top of
       # this block. Add yours, drop the oldest; `git log -p -- <this file>` has
       # the rest.
-      # (Previous entries: 871 * 500 / 575 = 757.39 -> 757, 13.09% slack;
-      #  825 * 500 / 575 = 717.39 -> 717, 13.09% slack;
-      #  826 * 500 / 575 = 718.26 -> 718, 13.08% slack.)
+      # (Previous entries: 901 * 500 / 575 = 783.48 -> 783, 13.10% slack;
+      #  871 * 500 / 575 = 757.39 -> 757, 13.09% slack;
+      #  825 * 500 / 575 = 717.39 -> 717, 13.09% slack.)
+      # 826 -> 718 was DROPPED as the oldest when the shared-clipboard entry was
+      # added, which is the eviction rule this block states. The full history is
+      # in this file's own log.
       #
       # 🔴 CORRECTION (2026-10-23). This block used to say the previous entry
       # "was left alone while the suite grew to 623, drifting the slack to 20%".
@@ -128,7 +148,7 @@ jobs:
       # one place.
       - name: Assert tests actually ran
         if: always()
-        run: python3 scripts/assert-tests-ran.py --min 783
+        run: python3 scripts/assert-tests-ran.py --min 914
 
       - name: Upload test reports
         if: always()

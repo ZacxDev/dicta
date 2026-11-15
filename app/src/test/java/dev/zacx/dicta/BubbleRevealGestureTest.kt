@@ -279,16 +279,25 @@ class BubbleRevealGestureTest {
 
         val historyBlock: Int = field(service, "historyBlockPx")
         val snipBlock: Int = field(service, "snipBlockPx")
+        // 🔴 WIDENED TO THREE BY THE SHARED-CLIPBOARD CHANGE, and this guard
+        // is why it was not forgotten: the reveal grew a third button and this
+        // test went red with "the container grew by 450px while the clamp was
+        // told the reveal adds 300px" — i.e. it named the exact defect it
+        // exists for, on a change that had not yet wired the new block into
+        // windowHeightPx's sum. Measured on the tree that added the button.
+        val clipBlock: Int = field(service, "clipBlockPx")
         assertTrue("precondition: the history block has a height", historyBlock > 0)
         assertTrue("precondition: the snip block has a height", snipBlock > 0)
+        assertTrue("precondition: the clip block has a height", clipBlock > 0)
 
         assertEquals(
             "the container grew by ${expanded - collapsed}px while the clamp " +
-                "was told the reveal adds ${historyBlock + snipBlock}px. One of " +
-                "the two blocks is understated, which is what tells clampY the " +
+                "was told the reveal adds " +
+                "${historyBlock + snipBlock + clipBlock}px. One of the three " +
+                "blocks is understated, which is what tells clampY the " +
                 "window is shorter than it is and leaves the lower button " +
                 "off-screen on a bubble near the bottom edge.",
-            historyBlock + snipBlock,
+            historyBlock + snipBlock + clipBlock,
             expanded - collapsed,
         )
         assertEquals(

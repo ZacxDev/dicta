@@ -149,8 +149,85 @@ class FloatingWindowSizeTest {
     fun historyPickerTabletLandscape() =
         assertCappedAt(HistoryPickerActivity::class.java, 0.50f)
 
-    private fun <A : Activity> assertCappedAt(clazz: Class<A>, expectedFraction: Float) {
-        val controller = Robolectric.buildActivity(clazz).setup()
+    // --- the shared-clipboard picker: the THIRD surface to inherit it --------
+    //
+    // 🔴 Added for the same reason as the history block above, and the ledger's
+    // own failure message demands them: `FloatingOverlaySeamLedgerTest` gained
+    // `.ClipPickerActivity` in this change, and a ledger entry without a
+    // behavioural case is a guard that reads as coverage while providing none.
+    //
+    // 🔴 INVARIANT GUARDS, not regression coverage — the activity arrives with
+    // this change, so there is no tree these could be watched going red on; a
+    // run at the base commit is a compile error.
+    //
+    // 🔴 THEY MUST NOT OPEN A SOCKET. `assertCappedAt` builds the activity with
+    // no seams, and for this picker a plain `setup()` would reach the real
+    // `ClipHttp` against the mesh host — which, from a workstation on the mesh,
+    // may actually CONNECT. A sizing test that talks to the operator's live
+    // clipboard is not a sizing test, so these four go through
+    // [assertClipPickerCappedAt], which injects a source and a flush and
+    // nothing else.
+
+    @Test
+    @Config(qualifiers = "w411dp-h914dp-port-xxhdpi")
+    fun clipPickerPhonePortrait() = assertClipPickerCappedAt(0.92f)
+
+    @Test
+    @Config(qualifiers = "w914dp-h411dp-land-xxhdpi")
+    fun clipPickerPhoneLandscape() = assertClipPickerCappedAt(0.62f)
+
+    @Test
+    @Config(qualifiers = "sw600dp-w800dp-h1200dp-port-xhdpi")
+    fun clipPickerTabletPortrait() = assertClipPickerCappedAt(0.70f)
+
+    @Test
+    @Config(qualifiers = "sw600dp-w1280dp-h800dp-land-xhdpi")
+    fun clipPickerTabletLandscape() = assertClipPickerCappedAt(0.50f)
+
+    /**
+     * [assertCappedAt] for the clip picker, with its two network seams stubbed.
+     *
+     * The rows are non-empty deliberately: an empty list hides the ListView and
+     * shows the empty state, and the window's width must be the display's
+     * fraction either way — but a fixture that only ever rendered the empty
+     * state would be measuring a different view tree from the one users see.
+     */
+    private fun assertClipPickerCappedAt(expectedFraction: Float) {
+        val controller = Robolectric.buildActivity(ClipPickerActivity::class.java)
+        controller.get().flush = {}
+        controller.get().remote = object : SharedClipSource {
+            override fun rows(): List<Clip> = listOf(
+                Clip(1L, "a clip from another machine", "laptop", 1_700_000_000_000L, 0)
+            )
+            override fun delete(id: Long): Boolean = false
+        }
+        controller.get().loadExecutor = java.util.concurrent.Executor { it.run() }
+        controller.setup()
+        assertWindowCapped(controller, ClipPickerActivity::class.java, expectedFraction)
+    }
+
+    private fun <A : Activity> assertCappedAt(clazz: Class<A>, expectedFraction: Float) =
+        assertWindowCapped(
+            Robolectric.buildActivity(clazz).setup(),
+            clazz,
+            expectedFraction,
+        )
+
+    /**
+     * The window assertions, over an activity someone else has already built.
+     *
+     * 🔴 Extracted from [assertCappedAt] rather than copied, because the clip
+     * picker needs its seams injected BEFORE `setup()` and a second copy of
+     * these checks is a second definition of "sized" — one of which would
+     * inevitably stop matching the other. [assertCappedAt] is now this function
+     * plus the plain build it always did, so the existing eight cases assert
+     * exactly what they asserted before.
+     */
+    private fun <A : Activity> assertWindowCapped(
+        controller: org.robolectric.android.controller.ActivityController<A>,
+        clazz: Class<A>,
+        expectedFraction: Float,
+    ) {
         try {
             val activity = controller.get()
             val name = clazz.simpleName

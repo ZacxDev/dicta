@@ -147,12 +147,32 @@ class BubbleService : Service() {
      * visibility applies here identically — which is why it is said once,
      * there.
      *
-     * 🔴 FIRST of the two, i.e. nearest the bubble. History is what the long
+     * 🔴 FIRST of the three, i.e. nearest the bubble. History is what the long
      * press meant before this change, so it is the affordance most likely to be
      * wanted by the finger that just performed it. Order relative to [cancel]
      * is bookkeeping rather than layout — see `buildWindow`.
      */
     private var history: ImageButton? = null
+
+    /**
+     * The shared-clipboard button inside the long-press reveal.
+     *
+     * Everything [snip]'s field says about being a child of the existing
+     * window, about sitting below the bubble and about [showActions] owning its
+     * visibility applies here identically — which is why it is said once,
+     * there.
+     *
+     * 🔴 THIRD of the three, i.e. furthest from the bubble, and that ordering
+     * is a decision rather than append-where-convenient. History is nearest
+     * because it is what the long press meant before any of this; snip next
+     * because it has been there since 0.4.0; the shared clipboard last because
+     * it is the newest and the least likely to be what the finger that just
+     * long-pressed was reaching for. Being last also makes it the control the
+     * clamp is most likely to push off-screen, which is why [clipBlockPx]'s
+     * term in [windowHeightPx] is the one genuinely mutation-killable guard in
+     * this feature.
+     */
+    private var clip: ImageButton? = null
 
     /**
      * The box holding the bubble and its pulse ring.
@@ -262,13 +282,27 @@ class BubbleService : Service() {
      * button plus the gap above it. [snipBlockPx]'s twin, and in the clamp for
      * the same reason.
      *
-     * 🔴 **BOTH blocks, not one doubled value**, even though the two buttons
-     * are the same size today. A single `actionsBlockPx = 2 * …` would be a
-     * term whose correctness depends on the two dp constants staying equal,
-     * with nothing saying so; two terms summed in [windowHeightPx] stay right
-     * if either changes.
+     * 🔴 **ONE BLOCK PER BUTTON, not one multiplied value**, even though all
+     * three buttons are the same size today. A single `actionsBlockPx = 3 * …`
+     * would be a term whose correctness depends on three dp constants staying
+     * equal, with nothing saying so; three terms summed in [windowHeightPx]
+     * stay right if any of them changes.
      */
     private var historyBlockPx = 0
+
+    /**
+     * How much taller the window is while the shared-clipboard button is shown
+     * — the button plus the gap above it. [snipBlockPx]'s and [historyBlockPx]'s
+     * triplet, and in the clamp for the same reason.
+     *
+     * 🔴 This term is the one the reveal cannot afford to lose. Three 44dp
+     * buttons at 6dp gaps under an 84dp halo is **234dp of window**, and the
+     * clip button is the bottom-most of them (see the [clip] field) — so
+     * omitting this term leaves exactly that control off-screen on a bubble
+     * parked near the bottom edge: a button the user can see the top pixel of
+     * and cannot tap. `BubbleClipRevealTest` kills that mutation.
+     */
+    private var clipBlockPx = 0
 
     /**
      * 🔴 Whether the long-press action buttons are on screen.
@@ -484,6 +518,11 @@ class BubbleService : Service() {
         // warning is unavailable for the first minute of every service life —
         // and the service is restarted on every boot and every upgrade.
         scheduleProbe(0L)
+        // 🔴 Immediately, for the probe's reason applied to the drain: a
+        // service that has just started is the most likely moment for a queue
+        // built up off-mesh to be drainable, and the service is restarted on
+        // every boot and every upgrade.
+        scheduleClipFlush(0L)
     }
 
     // --- the window ---------------------------------------------------------
@@ -495,6 +534,7 @@ class BubbleService : Service() {
         cancelBlockPx = ((CANCEL_DP + CANCEL_GAP_DP) * density).toInt()
         snipBlockPx = ((SNIP_DP + SNIP_GAP_DP) * density).toInt()
         historyBlockPx = ((HISTORY_DP + HISTORY_GAP_DP) * density).toInt()
+        clipBlockPx = ((CLIP_DP + CLIP_GAP_DP) * density).toInt()
 
         params = WindowManager.LayoutParams(
             // 🔴 WRAP_CONTENT, not the old fixed 60 dp square. The window has
@@ -629,6 +669,34 @@ class BubbleService : Service() {
             }
         }
 
+        // The reveal's THIRD affordance: the shared clipboard. Built mirroring
+        // `snipButton` and `historyButton` above in every respect — same 44 dp
+        // square, same bubble_bg, same on-surface tint, same
+        // contentDescription-and-tooltip pairing, no DragListener, the click
+        // through the machine. Three of the same KIND of thing, so a difference
+        // in any of those would read as a difference in meaning.
+        //
+        // 🔴 Its own CLIP_DP/CLIP_GAP_DP pair rather than reusing either
+        // sibling's, for the reason HISTORY_DP records: the three being the
+        // same size is a fact about today's design, not a rule.
+        val clipButton = ImageButton(this).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                (CLIP_DP * density).toInt(),
+                (CLIP_DP * density).toInt(),
+            ).apply { topMargin = (CLIP_GAP_DP * density).toInt() }
+            setImageResource(R.drawable.ic_clip)
+            imageTintList = android.content.res.ColorStateList
+                .valueOf(getColor(R.color.dicta_on_surface))
+            background = getDrawable(R.drawable.bubble_bg)
+            val clipLabel = getString(R.string.bubble_clip)
+            contentDescription = clipLabel
+            tooltipText = clipLabel
+            visibility = View.GONE
+            setOnClickListener {
+                applyEffects(machine.on(BubbleDictation.Event.ClipTapped))
+            }
+        }
+
         // 🔴 THE CHIP `ListView` WAS BUILT HERE AND IS DELETED, along with its
         // adapter, its chip views, `REVEAL_SLOTS`, `REVEAL_WIDTH_DP`,
         // `CHIP_DP`/`CHIP_GAP_DP`, `REVEAL_WIDTH_DP`'s width arithmetic and the
@@ -658,23 +726,24 @@ class BubbleService : Service() {
             // at index 0, which is what `showReveal`'s `y` compensation existed
             // for and what made "above the bubble" a real position in this
             // container. With it gone the bubble is the first child and all
-            // three optional controls hang BELOW it, in this order: history,
-            // snip, cancel.
+            // FOUR optional controls hang BELOW it, in this order: history,
+            // snip, clip, cancel.
             //
-            // History before snip because history is nearest the bubble — see
-            // the `history` field. Cancel last because `showCancel`'s "below"
-            // arm appends at childCount.
+            // History before snip before clip — see the `clip` field for the
+            // whole ordering argument. Cancel last because `showCancel`'s
+            // "below" arm appends at childCount.
             //
-            // 🔴 Cancel's order relative to the other two is bookkeeping rather
-            // than layout, and the argument now has to cover THREE controls
-            // rather than two: cancel is RECORDING-only while history and snip
+            // 🔴 Cancel's order relative to the other three is bookkeeping
+            // rather than layout, and the argument now has to cover FOUR
+            // controls: cancel is RECORDING-only while history, snip and clip
             // are reveal-only, and the reveal opens only in IDLE, so cancel is
-            // never co-visible with either. The two reveal buttons ARE
-            // co-visible with each other, which is why both their blocks are in
-            // windowHeightPx.
+            // never co-visible with any of them. The three reveal buttons ARE
+            // co-visible with each other, which is why all three of their
+            // blocks are in windowHeightPx.
             addView(bubbleBox)
             addView(historyButton)
             addView(snipButton)
+            addView(clipButton)
             addView(abort)
         }
 
@@ -701,6 +770,7 @@ class BubbleService : Service() {
         cancel = abort
         snip = snipButton
         history = historyButton
+        clip = clipButton
         bubble = button
         halo = bubbleBox
     }
@@ -816,6 +886,7 @@ class BubbleService : Service() {
         cancel = null
         snip = null
         history = null
+        clip = null
         halo = null
         // shutdownNow, like SettingsActivity: a probe in flight is worth
         // nothing once the window it belongs to is gone, and the executor is
@@ -906,6 +977,12 @@ class BubbleService : Service() {
                 // from history instead of capturing. Same HideActions ordering
                 // as the snip arm above.
                 BubbleDictation.Effect.OpenHistoryPicker -> openHistoryPicker()
+                // 🔴 Also not a recording path, and the SMALLEST of the
+                // three: the picker it opens starts no activity at all. It
+                // fetches rows over the mesh and writes one to the
+                // clipboard. Same HideActions ordering as the two arms
+                // above.
+                BubbleDictation.Effect.OpenClipPicker -> openClipPicker()
             }
         }
         // 🔴 `state == IDLE ⇒ session == null` is relied on by startRecording()
@@ -1124,6 +1201,24 @@ class BubbleService : Service() {
      */
     private fun openHistoryPicker() {
         runCatching { startActivity(HistoryLaunch.intent(this)) }
+    }
+
+    /**
+     * Opens the shared-clipboard picker.
+     *
+     * 🔴 Through [ClipLaunch], never a hand-built `Intent`, and never through
+     * [SnipLaunch] or [HistoryLaunch] either — the four floating surfaces hold
+     * four DIFFERENT `taskAffinity` values on purpose, and sharing one with
+     * `singleTop` on both would stack them so that Back walks through a surface
+     * the user never opened. [ClipLaunch] owns that pairing with the manifest.
+     *
+     * 🔴 Deliberately NOT through [DictateLaunch], for [openSnipPicker]'s
+     * reason: that object builds `DictateActivity` intents, a plain one of
+     * which auto-starts a capture, which is why `DictateLaunchTest` keeps a
+     * one-file ledger of who may construct them.
+     */
+    private fun openClipPicker() {
+        runCatching { startActivity(ClipLaunch.intent(this)) }
     }
 
     // --- what the session says back -----------------------------------------
@@ -1394,6 +1489,11 @@ class BubbleService : Service() {
         val visibility = if (show) View.VISIBLE else View.GONE
         history?.visibility = visibility
         snip?.visibility = visibility
+        // 🔴 In the SAME call as its two siblings, set together, every
+        // time. That is this function's whole discipline: a reveal-only
+        // control whose visibility is decided anywhere else is how one
+        // becomes an always-on surface.
+        clip?.visibility = visibility
         // 🔴 Scoped to the revealed state, NOT set once at window creation.
         // FLAG_WATCH_OUTSIDE_TOUCH delivers an ACTION_OUTSIDE for every touch
         // anywhere on the device, so leaving it on would wake this service on
@@ -1466,7 +1566,8 @@ class BubbleService : Service() {
             // left behind by a partial update is visible to the clamp rather
             // than masked by the intention that it should not be there.
             (if (history?.visibility == View.VISIBLE) historyBlockPx else 0) +
-            (if (snip?.visibility == View.VISIBLE) snipBlockPx else 0)
+            (if (snip?.visibility == View.VISIBLE) snipBlockPx else 0) +
+            (if (clip?.visibility == View.VISIBLE) clipBlockPx else 0)
 
     /**
      * The window's width.
@@ -1585,20 +1686,146 @@ class BubbleService : Service() {
                     // while the probes do not.
                     main.removeCallbacks(probeTick)
                     reachability.forget()
+                    // 🔴 Stop the drain too, but drop NOTHING: the outbox is
+                    // the user's capture, not a cached fact, so there is no
+                    // `forget()` equivalent here and there must not be one.
+                    main.removeCallbacks(clipFlushTick)
                 }
                 // Not "resume the chain": probe now. The screen coming back on
                 // is the moment before the user's next tap.
-                Intent.ACTION_SCREEN_ON -> scheduleProbe(0L)
+                // Not "resume the chains": act now, on both. The screen
+                // coming back on is the moment before the user's next tap, and
+                // it is also the most likely moment for the mesh to be back —
+                // which is the flush trigger that costs no scheduler and no
+                // wakelock.
+                Intent.ACTION_SCREEN_ON -> {
+                    scheduleProbe(0L)
+                    scheduleClipFlush(0L)
+                }
             }
         }
     }
 
+    /**
+     * The shared clipboard's outbox drain. `null` means a real [ClipFlusher]
+     * over a real [ClipOutboxStore] and [ClipHttp].
+     *
+     * A seam so a test can decide what the store says without opening a socket
+     * — [healthProbe]'s reason exactly, and with the same shape.
+     */
+    internal var clipFlush: (() -> Unit)? = null
+
+    /** Where [clipFlush] runs. `null` means [worker]. */
+    internal var clipFlushExecutor: java.util.concurrent.Executor? = null
+
     private val probeTick = Runnable { runProbe() }
+
+    /**
+     * The outbox drain's own tick.
+     *
+     * 🔴 A SECOND chain rather than a branch inside [runProbe], and the reason
+     * is that `runProbe`'s early returns are the wrong ones. It returns without
+     * doing anything when `isRemoteConfigured` is false — that is the
+     * TRANSCRIPTION token — so folding the flush in would stop the shared
+     * clipboard draining for an operator who turned remote dictation off. The
+     * two features have separate tokens and separate base URLs by decision
+     * ([ClipSettings]); they get separate schedules.
+     *
+     * 🔴 Everything else about the shape is copied deliberately:
+     * [scheduleClipFlush] does `removeCallbacks` first so the chain can never
+     * fork, EVERY early return reschedules, and the only terminal branch is the
+     * one where the window is gone. `runProbe`'s own kdoc states what a branch
+     * that returned without posting the next tick costs: the chain stops for
+     * the rest of the service's life.
+     */
+    private val clipFlushTick = Runnable { runClipFlush() }
 
     /** Replaces any pending tick, so the chain can never fork. */
     private fun scheduleProbe(delayMs: Long) {
         main.removeCallbacks(probeTick)
         main.postDelayed(probeTick, delayMs)
+    }
+
+    /** [scheduleProbe]'s twin, for the outbox drain. */
+    private fun scheduleClipFlush(delayMs: Long) {
+        main.removeCallbacks(clipFlushTick)
+        main.postDelayed(clipFlushTick, delayMs)
+    }
+
+    /**
+     * One outbox drain, then reschedules itself.
+     *
+     * 🔴 No reachability precheck and no `/healthz`. It attempts the POST and
+     * keeps the item on failure — see [ClipFlusher], and the two ledgers
+     * (`exactlyOneSiteInTheWholeTreeReadsTheVerdict`,
+     * `onlyTheDeclaredFilesPerformAHealthProbe`) that would go red if this
+     * reached for either. `SttReachability`'s verdict is about the
+     * TRANSCRIPTION service on a different port anyway.
+     *
+     * 🔴 The token is unwrapped on the WORKER, not here. `runProbe` does its
+     * `isRemoteConfigured` read on the main thread and its own kdoc records
+     * that as a known, unmeasured keystore-IPC cost; this does not repeat it.
+     * Everything inside the executor block is off-main.
+     *
+     * Honest limits, because they belong in the README too: this tick runs only
+     * while the service is alive — the bubble enabled and the overlay
+     * permission granted — and deliberately not while the screen is off (a
+     * wakelock is explicitly refused elsewhere in this file). So with the
+     * bubble off, the outbox drains **on next picker open** rather than in the
+     * background. That is `ClipPickerActivity.readRows`'s flush-then-fetch.
+     */
+    private fun runClipFlush() {
+        // The window is gone: the service is being torn down, or `onCreate`
+        // refused before building one. The one terminal branch, exactly as in
+        // [runProbe].
+        if (root == null) return
+        if (!screenIsInteractive()) {
+            // A backstop for a screen that went off without the broadcast
+            // reaching us; ACTION_SCREEN_ON is the normal re-arm. Not acting
+            // while asleep is the decision `screenIsInteractive`'s kdoc
+            // records for the health probe, and it applies harder here: the
+            // operator measured the mesh tunnel dropping while the phone
+            // sleeps, so a flush then is a round trip that cannot succeed.
+            scheduleClipFlush(CLIP_FLUSH_INTERVAL_MS)
+            return
+        }
+        val flush = clipFlush ?: ::defaultClipFlush
+        val executor = clipFlushExecutor ?: worker
+        runCatching { executor.execute { runCatching { flush() } } }
+        // 🔴 Rescheduled unconditionally and WITHOUT waiting for the flush to
+        // finish, unlike `runProbe` which re-arms from inside its own
+        // completion. The difference is deliberate: a probe's result is a
+        // cached fact whose freshness window the next tick depends on, whereas
+        // a flush leaves its state in the outbox file. If a flush overran the
+        // interval the next tick would find the single-thread executor busy
+        // and queue behind it — so there is never a second concurrent drain —
+        // and re-arming here means a flush that somehow never calls back
+        // cannot stop the chain.
+        scheduleClipFlush(CLIP_FLUSH_INTERVAL_MS)
+    }
+
+    /**
+     * The production drain: the real outbox, the real HTTP client, this
+     * handset's attribution.
+     *
+     * Runs on [worker]. Returns immediately when no clip token is configured —
+     * which is the ordinary state of a fresh install, and a flush then would be
+     * a 401 per queued item per minute.
+     *
+     * 🔴 It does NOT clear the outbox when unconfigured. The capture is the
+     * user's and the token is a setting they can paste at any time; the queue
+     * waits.
+     */
+    private fun defaultClipFlush() {
+        val settings = ClipSettings.create(this)
+        if (!settings.isConfigured) return
+        val token = settings.tokens.token() ?: return
+        val http = ClipHttp(settings.baseUrl, token)
+        ClipFlusher(
+            outbox = ClipOutboxStore(this),
+            device = ClipDevice.of(),
+            post = { body, device -> http.post(body, device) },
+        ).flush()
     }
 
     /**
@@ -2168,6 +2395,35 @@ class BubbleService : Service() {
          */
         private const val HISTORY_DP = 44
         private const val HISTORY_GAP_DP = 6
+
+        /**
+         * The shared-clipboard button's size and the gap above it — [SNIP_DP]
+         * and [SNIP_GAP_DP] again, for the reason given there.
+         *
+         * 🔴 Its OWN pair rather than reusing either sibling's, and the
+         * argument is [HISTORY_DP]'s at one more instance: the three buttons
+         * being the same size is a fact about today's design, not a rule, and
+         * spelling it as one shared constant would make a future change to any
+         * of them silently change all three. Their sum is [clipBlockPx], which
+         * is in the clamp.
+         */
+        private const val CLIP_DP = 44
+        private const val CLIP_GAP_DP = 6
+
+        /**
+         * How often the outbox drain runs while the bubble is up and the
+         * screen is on.
+         *
+         * 🔴 Its own number rather than [SttReachability.PROBE_INTERVAL_MS],
+         * even though the two are equal today. They are two independent
+         * decisions about two different things — how stale a cached
+         * reachability verdict may be before it stops being evidence, versus
+         * how long a capture may sit queued once the mesh is back — and a
+         * shared constant would assert a relationship that does not exist.
+         * `HistoryRow.PREVIEW_MAX` makes exactly this argument about exactly
+         * this shape.
+         */
+        private const val CLIP_FLUSH_INTERVAL_MS = 60_000L
 
         /*
          * 🔴 `REVEAL_SLOTS`, `REVEAL_MAX_ITEMS`, `CHIP_DP`, `CHIP_GAP_DP` AND
