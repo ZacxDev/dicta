@@ -39,11 +39,18 @@ import android.widget.Toast
  *    returned `EXTRA_PROCESS_TEXT` into the user's field when the result is
  *    `RESULT_OK`. Returning OK with text would edit the document the user was
  *    reading.
- *  * **No `setContentView` and no `Theme.Dicta.Overlay`.** Translucent and
- *    invisible: this is not a floating surface, it is a side effect. Wearing
- *    that theme would also put it on
- *    `FloatingOverlaySeamLedgerTest`'s ledger and owe it a
- *    `FloatingWindowSizeTest` case for a window it never shows.
+ *  * **No `setContentView`, AND a translucent theme.** Both halves, and only
+ *    the first shipped: the manifest element declared no `android:theme`, so
+ *    this inherited `@style/Theme.Dicta` — opaque — and the platform raised a
+ *    full-screen empty window over whatever the user was reading before
+ *    `finish()`. It now declares
+ *    `@android:style/Theme.Translucent.NoTitleBar`. 🔴 Still **not**
+ *    `@style/Theme.Dicta.Overlay`: that one makes a window *floating*, and it
+ *    is what `FloatingOverlaySeamLedgerTest` derives its set from, so wearing
+ *    it would owe a `FloatingWindowSizeTest` case for a window this never
+ *    shows. ⚠ The opaque flash and its absence are **device-observable only** —
+ *    Robolectric raises no window — so the manifest attribute is what is
+ *    pinned and the handset is what confirms the fix.
  *  * **Its own `taskAffinity`, a FOURTH distinct value.** `SnipLaunch.kt:14-30`
  *    and the manifest state three times over that an undeclared affinity
  *    inherits `MainActivity`'s — issue #11.
@@ -142,8 +149,15 @@ class CaptureActivity : Activity() {
      */
     internal var outbox: ClipOutbox? = null
 
-    /** The clock, injected so a queued row's timestamp is assertable. */
-    internal var nowMs: () -> Long = System::currentTimeMillis
+    /*
+     * 🔴 DELETED with it: `internal var nowMs: () -> Long`.
+     *
+     * Its only job was to stamp `ClipOutbox.Pending.capturedAtMs`, which D5
+     * removed as a field nothing read — so the clock seam became a seam with
+     * nothing behind it, which is exactly the dead-seam shape D3 removed from
+     * `ClipPickerActivity`. Removing the field and keeping its injector would
+     * have left the next reader looking for the timestamp it implies.
+     */
 
     /**
      * 🔴 No `setContentView`, no `setResult(RESULT_OK)`, and `finish()` on
@@ -215,7 +229,7 @@ class CaptureActivity : Activity() {
             return
         }
         try {
-            (outbox ?: ClipOutboxStore(this)).append(text.toString(), nowMs())
+            (outbox ?: ClipOutboxStore(this)).append(text.toString())
             toast(R.string.clip_capture_queued)
         } catch (_: Exception) {
             toast(R.string.clip_capture_failed)

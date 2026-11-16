@@ -56,6 +56,60 @@ class BubbleChromeTest {
     }
 
     @Test
+    fun theClipButtonANNOUNCESAStuckQueueRatherThanOnlyColouringItself() {
+        // 🔴 The same rule as the three state labels above, applied to the one
+        // piece of state a reveal button carries. A stuck outbox also turns the
+        // icon @color/dicta_error, and colors.xml's standing rule is that state
+        // is never carried by colour alone — so a screen-reader user who hears
+        // the ordinary label over an ember icon learns nothing, and what they
+        // are not being told is that captures on this phone are not reaching
+        // their other devices.
+        //
+        // 🔴 Asserted as a SET and over the RESOURCE, never over words: a copy
+        // edit stays free, and a mutation pointing the fault at the ordinary
+        // label dies. The "must DIFFER from the plain label" half is the one
+        // with teeth — SettingsThemingTest makes the identical assertion about
+        // the settings screen's three destructive controls, where a description
+        // copied from the visible label satisfies "has a description" and tells
+        // nobody anything they did not already have.
+        val healthy = ctx.getString(BubbleChrome.clipLabelFor(stuck = false))
+        val stuck = ctx.getString(BubbleChrome.clipLabelFor(stuck = true))
+
+        assertTrue("the clip button's healthy label is blank", healthy.isNotBlank())
+        assertTrue("the clip button's stuck label is blank", stuck.isNotBlank())
+        assertEquals(
+            "a stuck shared clipboard announces the SAME text as a healthy " +
+                "one, so the fault is conveyed by the icon tint and nothing " +
+                "else. Labels: [$healthy], [$stuck]",
+            2,
+            setOf(healthy, stuck).size,
+        )
+
+        // And the tints, decided in the same one place. Either half alone is
+        // satisfiable while the other lies: a changed label with an unchanged
+        // tint is invisible at a glance, and a changed tint with an unchanged
+        // label is invisible to a screen reader.
+        assertEquals(
+            "the clip button's healthy tint is not the on-surface one its two " +
+                "siblings use, so a healthy reveal has one odd button in it",
+            R.color.dicta_on_surface,
+            BubbleChrome.clipTintFor(stuck = false),
+        )
+        assertEquals(
+            "a stuck shared clipboard is not drawn in @color/dicta_error. " +
+                "colors.xml states that dicta_live and dicta_error exist " +
+                "precisely so that *recording* and *failed* do not share a hue",
+            R.color.dicta_error,
+            BubbleChrome.clipTintFor(stuck = true),
+        )
+        assertFalse(
+            "the two clip tints are the same colour resource",
+            BubbleChrome.clipTintFor(stuck = true) ==
+                BubbleChrome.clipTintFor(stuck = false),
+        )
+    }
+
+    @Test
     fun theCancelButtonHasItsOwnLabelDistinctFromTheBubbleStates() {
         val cancel = ctx.getString(R.string.bubble_cancel)
         val stateLabels = BubbleDictation.State.entries

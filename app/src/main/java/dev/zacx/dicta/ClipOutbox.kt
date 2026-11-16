@@ -67,7 +67,7 @@ interface ClipOutbox {
      * @throws Failed when the queue could not be written. The caller must say
      *   so rather than toasting success.
      */
-    fun append(body: String, capturedAtMs: Long): Long
+    fun append(body: String): Long
 
     /**
      * Everything still waiting, **oldest first**.
@@ -104,11 +104,28 @@ interface ClipOutbox {
      *   server's: the store assigns that on acceptance, and until then there is
      *   nothing to key on. The two id spaces are deliberately different types
      *   of thing in the same `Long`, which is why [Clip] documents its own.
-     * @param capturedAtMs when the user actually took it, kept even though the
-     *   store timestamps on arrival — see [Clip.createdAtMs] for the cost that
-     *   records.
+     *
+     * ## 🔴 There is deliberately no `capturedAtMs`, and it was DELETED
+     *
+     * It held when the user actually took the capture, was written into the
+     * queue file as `created_at`, was parsed back out — and was **consumed by
+     * no caller at all**. Its kdoc kept it *"for anyone who later wants it"*,
+     * which is the justification that makes a field permanent: nothing can ever
+     * disprove it. Deletion candidate D5 of this branch's audit round 0,
+     * accepted. [Clip.createdAtMs] is server-assigned and is what every surface
+     * actually renders.
+     *
+     * 🔴 **An outbox file written by the PREVIOUS build still reads correctly**,
+     * which was checked rather than assumed. The old envelope's rows carry a
+     * `created_at` key; `ClipOutboxStore.readState` reads only `id` and `body`
+     * and ignores every other key, so an upgrade over a queue of pending
+     * captures loses nothing — the first rewrite simply drops the stale key.
+     * `ClipOutboxStoreTest.aQueueFileFromThePreviousBuildIsReadInFull` pins it,
+     * and that is not a nicety: this file is the ONLY copy of the user's
+     * capture, so a parse that rejected or skipped an old row would destroy
+     * captures on upgrade.
      */
-    data class Pending(val id: Long, val body: String, val capturedAtMs: Long)
+    data class Pending(val id: Long, val body: String)
 
     /** The queue could not be written, or could not be read. */
     class Failed(reason: String, cause: Throwable? = null) : Exception(reason, cause)
@@ -139,7 +156,7 @@ class ClipOutboxStore internal constructor(
     private val file: File get() = File(dir, FILE)
     private val temp: File get() = File(dir, "$FILE$TMP_SUFFIX")
 
-    override fun append(body: String, capturedAtMs: Long): Long = synchronized(LOCK) {
+    override fun append(body: String): Long = synchronized(LOCK) {
         if (body.isEmpty()) {
             // 🔴 Refused rather than queued. The service answers an empty body
             // with a 400 (`error: empty_body`, measured), so queuing one would
@@ -149,7 +166,7 @@ class ClipOutboxStore internal constructor(
         }
         val state = readState()
         val id = state.nextId
-        val items = state.items + ClipOutbox.Pending(id, body, capturedAtMs)
+        val items = state.items + ClipOutbox.Pending(id, body)
         write(nextId = id + 1, items = items)
         id
     }
@@ -204,8 +221,14 @@ class ClipOutboxStore internal constructor(
             // and keeping it would be an item that fails forever. Dropped on
             // READ rather than trusted, as SnipUsageStore filters a
             // non-positive stamp.
+            //
+            // 🔴 `id` and `body` are the only keys read, which is what makes a
+            // queue file written by the PREVIOUS build — whose rows also carry
+            // a `created_at` — read back in full rather than being rejected or
+            // skipped. See [ClipOutbox.Pending]: that is upgrade safety for the
+            // only copy of the user's capture, not tolerance for its own sake.
             if (id > 0L && body.isNotEmpty()) {
-                items += ClipOutbox.Pending(id, body, row.optLong(ClipJson.KEY_CREATED_AT, 0L))
+                items += ClipOutbox.Pending(id, body)
             }
         }
         val stored = root.optLong(KEY_NEXT_ID, 0L)

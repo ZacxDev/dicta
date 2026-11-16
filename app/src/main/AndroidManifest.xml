@@ -249,10 +249,33 @@
           app the user is selecting text in. That is issue #11 by a fifth
           route. Must stay in sync with CaptureActivity.CAPTURE_TASK_AFFINITY.
 
-          🔴 NOT @style/Theme.Dicta.Overlay. This shows no window at all, and
-          wearing that theme would put it on FloatingOverlaySeamLedgerTest's
-          ledger and owe it a FloatingWindowSizeTest case for geometry it never
-          has.
+          🔴 THE THEME IS TRANSLUCENT, AND IT MUST BE DECLARED — leaving it off
+          was audit round 0's finding #2. With no android:theme this activity
+          inherited <application>'s @style/Theme.Dicta, whose parent is
+          android:Theme.Material.NoActionBar and whose windowBackground is an
+          OPAQUE @color/dicta_surface_0. It calls no setContentView, so picking
+          "Send to Dicta" from the selection overflow made the platform raise a
+          full-screen opaque window with nothing in it over whatever the user
+          was reading, for at least a frame, before finish() in onCreate. §4.2
+          of the design specified "translucent, no setContentView"; only the
+          second half was implemented.
+
+          @android:style/Theme.Translucent.NoTitleBar rather than a style of our
+          own: windowIsTranslucent, a null window background and no title bar
+          are the whole requirement, the platform already composes exactly
+          that, and a Dicta style would be a fourth theme in themes.xml whose
+          only job is to restate it. Nothing here is drawn, so none of
+          Theme.Dicta's colour tokens are reachable from this activity anyway.
+
+          🔴 STILL NOT @style/Theme.Dicta.Overlay — which is the narrow claim
+          this element has to satisfy, and NOT "no theme at all". That theme is
+          what makes a window FLOATING, and it is what
+          FloatingOverlaySeamLedgerTest derives its set of floating surfaces
+          from, so wearing it would put this activity on that ledger and owe it
+          a FloatingWindowSizeTest case for geometry it never has.
+          CaptureManifestTest asserts that narrow claim; it used to assert the
+          WIDER "declares no android:theme= at all", which forbade every theme
+          and so pinned the opaque-window bug in place.
 
           noHistory + excludeFromRecents: it finishes in onCreate, so it must
           not be something the user can swipe back to or find in Recents.
@@ -260,6 +283,7 @@
         <activity
             android:name=".CaptureActivity"
             android:exported="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar"
             android:noHistory="true"
             android:excludeFromRecents="true"
             android:taskAffinity="dev.zacx.dicta.capture">

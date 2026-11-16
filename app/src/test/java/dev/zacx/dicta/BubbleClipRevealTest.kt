@@ -9,6 +9,7 @@ import android.view.WindowManager
 import android.widget.ImageButton
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertSame
@@ -59,12 +60,22 @@ class BubbleClipRevealTest {
 
     private val fake = FakeSession()
 
+    @org.junit.Before
+    fun setUp() {
+        // 🔴 Process-wide, like the three cleared below: without this the
+        // drains one test records are the next test's starting verdict — and
+        // the service reads that verdict at window-build time, so the
+        // contamination would arrive before the test's first assertion.
+        ClipOutboxHealth.clearForTest()
+    }
+
     @After
     fun tearDown() {
         runCatching { controller?.destroy() }
         OverlayVisibility.clearForTest()
         BubbleSessionBus.clearForTest()
         MicrophoneOwner.clearForTest()
+        ClipOutboxHealth.clearForTest()
     }
 
     private fun start(): BubbleService {
@@ -305,6 +316,198 @@ class BubbleClipRevealTest {
                 buttons.map { it.contentDescription },
             3,
             buttons.map { it.contentDescription.toString() }.toSet().size,
+        )
+    }
+
+    // --- a queue that cannot drain -------------------------------------------
+
+    /** Drives [ClipOutboxHealth] with [times] drains that [report] describes. */
+    private fun drains(report: ClipFlusher.Report, times: Int) {
+        repeat(times) { ClipOutboxHealth.record(report) }
+        idle(0)
+    }
+
+    /** A failed drain: the 401-forever shape, and a dead mesh's. */
+    private val failedDrain = ClipFlusher.Report(kept = 3, unreachable = true)
+
+    /**
+     * A drain that is WORKING and left rows behind — a
+     * [ClipFlusher.MAX_PER_FLUSH] ceiling hit. `kept > 0`, `unreachable` false.
+     */
+    private val pendingDrain = ClipFlusher.Report(stored = 25, kept = 40)
+
+    private fun string(id: Int) = RuntimeEnvironment.getApplication().getString(id)
+
+    @Test
+    fun aQueueThatKEEPSFAILINGToDrainIsVISIBLEOnTheClipButton() {
+        // 🔴 THE RELATIONSHIP audit round 0 found missing, asserted end to end:
+        // a ClipFlusher.Report carrying a persistent failure ⇒ the bubble's
+        // clip affordance reflects it. The three links either side of this are
+        // each pinned separately — ClipFlusherTest (a failed drain produces a
+        // Report that says so), ClipOutboxHealthTest (a RUN of those is a
+        // fault), ClipSeamLedgerTest (both drain sites hand the Report over) —
+        // and the defect lived in the join, so this drives the whole chain.
+        //
+        // 🔴 Asserted on the STATE, not on a word: the description is compared
+        // against the RESOURCE and the tint against the colour resource, both
+        // together. A guard on either alone is satisfiable while the other
+        // lies, and a guard on the text "not reaching" would be walkable by a
+        // copy edit.
+        val service = start()
+        drains(failedDrain, times = ClipOutboxHealth.STUCK_AFTER_FAILURES)
+        longPress(service)
+
+        val button = clip(service)
+        assertEquals(
+            "the shared clipboard cannot drain and the button says exactly " +
+                "what it says when everything is fine — which is the silent " +
+                "failure this feature shipped with",
+            string(R.string.bubble_clip_stuck),
+            button.contentDescription?.toString(),
+        )
+        assertEquals(
+            "the description and the tooltip disagree, which is two labels " +
+                "for one control",
+            button.contentDescription?.toString(),
+            button.tooltipText?.toString(),
+        )
+        assertEquals(
+            "a stuck shared clipboard is not drawn in @color/dicta_error",
+            RuntimeEnvironment.getApplication().getColor(R.color.dicta_error),
+            button.imageTintList?.defaultColor,
+        )
+    }
+
+    @Test
+    fun aQueueThatIsMERELYPENDINGLooksEXACTLYLikeAHealthyOne() {
+        // 🔴 THE OTHER DIRECTION, and the one that decides whether this
+        // indicator survives contact with the operator. A pending row is the
+        // ORDINARY state — the POST is always deferred by design — so a
+        // ceiling-hit drain repeated ten times must leave the button
+        // indistinguishable from an untouched one. An indicator keyed on
+        // `kept > 0` would be lit after every multi-item capture.
+        val service = start()
+        drains(pendingDrain, times = 10)
+        longPress(service)
+
+        val button = clip(service)
+        assertEquals(
+            "a queue that is draining a batch at a time is being reported as " +
+                "a FAULT, so the bubble cries wolf on normal use",
+            string(R.string.bubble_clip),
+            button.contentDescription?.toString(),
+        )
+        assertEquals(
+            RuntimeEnvironment.getApplication().getColor(R.color.dicta_on_surface),
+            button.imageTintList?.defaultColor,
+        )
+
+        // 🔴 And the two readings must actually differ, or both assertions here
+        // and in the test above are satisfied by one constant label. This is
+        // the control that makes the pair evidence rather than a tautology.
+        assertNotEquals(
+            "the healthy and stuck labels are the same string, so neither of " +
+                "these two tests can distinguish anything",
+            string(R.string.bubble_clip),
+            string(R.string.bubble_clip_stuck),
+        )
+    }
+
+    @Test
+    fun aREPAIREDQueuePutsTheButtonBack() {
+        // One successful drain is proof the queue CAN drain, so the fault must
+        // clear — including on a reveal that is already on screen, which is the
+        // case a render-at-build-time-only implementation would miss.
+        val service = start()
+        drains(failedDrain, times = ClipOutboxHealth.STUCK_AFTER_FAILURES)
+        longPress(service)
+        assertEquals(
+            "precondition: the fault is on the button",
+            string(R.string.bubble_clip_stuck),
+            clip(service).contentDescription?.toString(),
+        )
+
+        drains(ClipFlusher.Report(stored = 3), times = 1)
+        assertEquals(
+            "the mesh came back and the button is still ember, so the only " +
+                "way to clear a fault is to restart the service",
+            string(R.string.bubble_clip),
+            clip(service).contentDescription?.toString(),
+        )
+    }
+
+    @Test
+    fun aServiceThatSTARTSIntoAStuckQueueShowsItOnTheFirstLongPress() {
+        // 🔴 The sink only fires on a CHANGE, and the service is restarted on
+        // every boot and every upgrade — so a window built after the verdict
+        // was already `true` would never be told, and the fault would be
+        // invisible until the queue recovered and failed again. The initial
+        // read in buildWindow is what closes that, and deleting it leaves every
+        // other assertion in this file green.
+        drains(failedDrain, times = ClipOutboxHealth.STUCK_AFTER_FAILURES)
+        val service = start()
+        longPress(service)
+        assertEquals(
+            "the bubble started with the queue already stuck and the button " +
+                "reads healthy — the verdict predates the window, and nothing " +
+                "will re-announce it",
+            string(R.string.bubble_clip_stuck),
+            clip(service).contentDescription?.toString(),
+        )
+    }
+
+    @Test
+    fun theFaultDoesNotSLAMTheRevealSHUTUnderTheOperatorsFinger() {
+        // 🔴 Why this is NOT routed through BubbleDictation, asserted rather
+        // than argued. `on()` prefixes Effect.HideActions to every event that
+        // is not a long press, so an event raised by a background flush would
+        // dismiss the reveal each time the mesh blipped — and the one moment
+        // the operator is looking at this button is the moment it would vanish.
+        val service = start()
+        longPress(service)
+        assertEquals(View.VISIBLE, clip(service).visibility)
+
+        drains(failedDrain, times = ClipOutboxHealth.STUCK_AFTER_FAILURES + 2)
+
+        assertEquals(
+            "a background drain closed the reveal, which is what routing this " +
+                "through the state machine would do",
+            View.VISIBLE,
+            clip(service).visibility,
+        )
+        assertEquals(View.VISIBLE, history(service).visibility)
+        assertEquals(View.VISIBLE, snip(service).visibility)
+        assertEquals(
+            "and the fault did reach the button while it was up",
+            string(R.string.bubble_clip_stuck),
+            clip(service).contentDescription?.toString(),
+        )
+    }
+
+    @Test
+    fun aDrainRecordedAfterTheServiceIsGoneHarmsNothing() {
+        // ClipOutboxHealth is process-wide and the PICKER records into it with
+        // no bubble running at all, so drains arrive after a bubble is torn
+        // down as a matter of routine. The sink's `root?.post` is what makes
+        // that a no-op rather than a view touch on a dead window.
+        //
+        // ⚠ **What this does NOT pin:** the `onDestroy` unregister itself. A
+        // sink left registered would hold the destroyed Service and its view
+        // tree for the life of the process, and that leak is a REFERENCE rather
+        // than an observable — nothing goes red for it here, and the
+        // `root?.post` means nothing throws either. Stated so the line is not
+        // read as covered; `BubbleService.onDestroy`'s own comment carries the
+        // reason it is there.
+        start()
+        drains(failedDrain, times = ClipOutboxHealth.STUCK_AFTER_FAILURES)
+        controller?.destroy()
+        controller = null
+
+        drains(ClipFlusher.Report(stored = 1), times = 1)
+        assertFalse(
+            "a successful drain after the bubble was destroyed left the " +
+                "verdict stuck",
+            ClipOutboxHealth.isStuck(),
         )
     }
 

@@ -50,12 +50,17 @@ class ClipJsonTest {
                 body = "dicta-ct-probe-zzq9",
                 device = "wire-probe",
                 createdAtMs = 1794779809819L,
-                bumpCount = 0,
             ),
             rows[0],
         )
         assertEquals(3L, rows[1].id)
-        assertEquals(1, rows[1].bumpCount)
+        // 🔴 `bump_count` is present in BOTH rows of the fixture and is read by
+        // nothing. [Clip.bumpCount] parsed and carried it, and no surface ever
+        // rendered or branched on it — deletion candidate D4 of this branch's
+        // audit round 0. The fixture keeps the key deliberately: it is what the
+        // live service sends, and tolerating keys the client ignores is
+        // SnipCatalog's rule, so a parse that choked on it would brick the
+        // phone on the next clipstore release.
         // 🔴 ORDER, asserted as such. Newest-first is the requirement and the
         // server is what decides it; a parser that sorted would be a second
         // definition of "newest" that could disagree with the desktop's.
@@ -176,18 +181,23 @@ class ClipJsonTest {
     // --- reading a POST's answer ---------------------------------------------
 
     @Test
-    fun theLive201AndThe200DedupeAnswerAreReadForWhatTheySay() {
+    fun theLive201AndThe200DedupeAnswerBothYieldTheSameId() {
         // Both captured from the live service: an identical body answers 200
         // with deduped:true and a bumped count where a new one answers 201.
+        //
+        // 🔴 What is READ from either is the id, and nothing else.
+        // `ClipJson.deduped(text)` stood here and its only consumer folded the
+        // answer into a `ClipPost.Stored.deduped` that nothing read — both are
+        // deleted (D4). The two bodies are kept verbatim because the keys the
+        // client now ignores are the interesting half of the fixture: an
+        // unknown key must not disturb the id.
         val created =
             """{"id":5,"body":"dicta-wire-probe-zzq9","device":"wire-probe","created_at":1794779793374,"bump_count":0,"deduped":false}"""
         val deduped =
             """{"id":5,"body":"dicta-wire-probe-zzq9","device":"wire-probe","created_at":1794779793667,"bump_count":1,"deduped":true}"""
 
         assertEquals(5L, ClipJson.parseIdOrZero(created))
-        assertEquals(false, ClipJson.deduped(created))
         assertEquals(5L, ClipJson.parseIdOrZero(deduped))
-        assertEquals(true, ClipJson.deduped(deduped))
     }
 
     @Test
@@ -203,13 +213,18 @@ class ClipJsonTest {
     }
 
     @Test
-    fun dedupedIsThreeValuedAndAbsenceIsNULLRatherThanFalse() {
-        // 🔴 JsonLite.boolField's rule, and the third value is load-bearing in
-        // the same direction: `null` means the server said nothing, which must
-        // not be read as "checked, and it was new".
-        assertNull(ClipJson.deduped("""{"id":1}"""))
-        assertNull(ClipJson.deduped("""{"id":1,"deduped":null}"""))
-        assertNull(ClipJson.deduped("<html>502</html>"))
+    fun aRowCarryingKEYSTheClientDoesNotReadStillParses() {
+        // 🔴 The replacement for `dedupedIsThreeValuedAndAbsenceIsNULLRatherThanFalse`,
+        // which tested a reader that is now deleted (D4). The claim worth
+        // keeping is the one SnipCatalog states: a clipstore release that adds
+        // a field must not brick the phone. So a row with the two keys this
+        // client stopped reading — plus one it has never heard of — must parse
+        // to exactly the four fields [Clip] has.
+        val rows = ClipJson.parseList(
+            """{"clips":[{"id":11,"body":"b","device":"d","created_at":99,""" +
+                """"bump_count":7,"deduped":true,"a_field_from_next_year":{"x":[1]}}]}"""
+        )
+        assertEquals(listOf(Clip(id = 11L, body = "b", device = "d", createdAtMs = 99L)), rows)
     }
 
     @Test

@@ -74,15 +74,22 @@ class ClipPickerActivity : FloatingPickerActivity<Clip>() {
      */
     internal var remote: SharedClipSource? = null
 
-    /**
-     * The outbox, flushed on open. `null` means a real [ClipOutboxStore].
+    /*
+     * 🔴 DELETED: `internal var outbox: ClipOutbox? = null`.
      *
-     * A seam for the same reason: the production store touches the filesystem
-     * under `noBackupFilesDir`, which is process-wide under Robolectric, so a
-     * test driving the picker would be at the mercy of what the previous test
-     * left behind.
+     * It was a seam **no test ever set** — only `CaptureActivity.outbox` is
+     * assigned anywhere — whose kdoc claimed a test purpose it did not serve,
+     * and it was a `?:` fallback for something the very next line already
+     * supplies: [defaultFlush] builds a `ClipOutboxStore(this)` either way, and
+     * a test that wants to control the flush sets [flush], which is the seam
+     * that exists for that and is used. Deletion candidate D3 of this branch's
+     * audit round 0, accepted.
+     *
+     * `ClipSeamLedgerTest.onlyTheDeclaredFilesTouchTheCaptureQueue` is
+     * UNDISTURBED by this, and that was checked rather than assumed: the ledger
+     * counts files containing `ClipOutboxStore(`, and [defaultFlush] below
+     * still contains one, so this file stays on the ledger exactly as before.
      */
-    internal var outbox: ClipOutbox? = null
 
     /**
      * The flush the picker performs before fetching. `null` means a real
@@ -267,10 +274,19 @@ class ClipPickerActivity : FloatingPickerActivity<Clip>() {
         if (!settings.isConfigured) return
         val token = settings.tokens.token() ?: return
         val http = ClipHttp(settings.baseUrl, token)
-        ClipFlusher(
-            outbox = outbox ?: ClipOutboxStore(this),
+        val report = ClipFlusher(
+            outbox = ClipOutboxStore(this),
             device = ClipDevice.of(),
             post = { body, device -> http.post(body, device) },
         ).flush()
+        // 🔴 CONSUMED, not discarded — round 0's finding, at the second of the
+        // two sites that had it. The picker has nowhere of its own to show a
+        // stuck queue (its three empty states are about the SERVER's list, not
+        // about the local one), so what it does is feed the verdict the BUBBLE
+        // renders. A flush-on-open that fails is also the most informative
+        // sample there is: the operator is looking at the feature right now.
+        // See [ClipOutboxHealth] and
+        // `ClipSeamLedgerTest.everySiteThatDrainsTheOutboxCONSUMESItsReport`.
+        ClipOutboxHealth.record(report)
     }
 }

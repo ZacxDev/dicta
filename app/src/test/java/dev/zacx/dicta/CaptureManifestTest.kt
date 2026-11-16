@@ -164,14 +164,62 @@ class CaptureManifestTest {
 
     @Test
     fun theCaptureActivityDrawsNOTHINGAndSoWearsNoOverlayTheme() {
-        // 🔴 It must NOT carry @style/Theme.Dicta.Overlay. The theme is what
+        // 🔴 NARROWED, and the wide version WAS the bug. This asserted that the
+        // element carries no `android:theme=` AT ALL, which is wider than its
+        // own stated reason — and the reason is only about one theme. With no
+        // theme declared the activity inherited <application>'s
+        // @style/Theme.Dicta, parented on android:Theme.Material.NoActionBar
+        // with an OPAQUE windowBackground; since it calls no setContentView,
+        // the platform raised a full-screen empty window over whatever the user
+        // was reading before finish(). So the guard did not merely fail to
+        // catch finding #2 of this branch's audit round 0 — it forbade the fix.
+        //
+        // What is actually required is that it does not wear the OVERLAY theme:
+        // that is what makes a window floating, it is what
         // FloatingOverlaySeamLedgerTest derives its set of floating surfaces
         // from, and a receiver that shows no window would then owe a
         // FloatingWindowSizeTest case for geometry it never has — a guard
         // asserting a size for a window that does not exist.
+        val el = element(".CaptureActivity")
         assertFalse(
-            "CaptureActivity declares a theme; it shows no window at all",
-            element(".CaptureActivity").contains("android:theme="),
+            "CaptureActivity declares @style/Theme.Dicta.Overlay. That theme " +
+                "makes a window FLOATING and puts the activity on " +
+                "FloatingOverlaySeamLedgerTest's ledger, which would then owe " +
+                "a FloatingWindowSizeTest case for a window this activity " +
+                "never shows at all",
+            el.contains(OVERLAY_THEME_ATTR),
+        )
+
+        // 🔴 And the other half, which the wide version could not express: it
+        // must declare a TRANSLUCENT theme rather than inherit the app's opaque
+        // one. Asserted positively, because "no overlay theme" is satisfied by
+        // the defect as well as by the fix.
+        assertTrue(
+            "CaptureActivity declares no translucent theme, so it inherits " +
+                "<application>'s @style/Theme.Dicta — an OPAQUE window " +
+                "background on an activity that calls no setContentView, i.e. " +
+                "a full-screen blank window raised over the app the user is " +
+                "reading. Element: $el",
+            el.contains(TRANSLUCENT_THEME_ATTR),
+        )
+
+        // 🔴 NEGATIVE CONTROL for the narrowed predicate, on a synthetic
+        // element: both halves must be able to FAIL, or a green reading above
+        // is a fact about two `contains` calls. The overlay theme must trip the
+        // first; an element with no theme at all must trip the second.
+        val wearingTheOverlayTheme =
+            """<activity android:name=".CaptureActivity" $OVERLAY_THEME_ATTR>"""
+        assertTrue(
+            "the narrowed guard cannot see the overlay theme it exists to " +
+                "forbid, so its verdict on the real element means nothing",
+            wearingTheOverlayTheme.contains(OVERLAY_THEME_ATTR),
+        )
+        assertFalse(
+            "the translucent-theme check matches an element that declares no " +
+                "theme at all — which is the state audit round 0 found and is " +
+                "precisely what it has to reject",
+            """<activity android:name=".CaptureActivity" android:exported="true">"""
+                .contains(TRANSLUCENT_THEME_ATTR),
         )
     }
 
@@ -297,8 +345,30 @@ class CaptureManifestTest {
         // and the sizing obligation together.
         assertTrue(
             "ClipPickerActivity does not wear @style/Theme.Dicta.Overlay",
-            element(".ClipPickerActivity")
-                .contains("android:theme=\"@style/Theme.Dicta.Overlay\""),
+            element(".ClipPickerActivity").contains(OVERLAY_THEME_ATTR),
         )
+    }
+
+    private companion object {
+
+        /**
+         * The floating-overlay theme attribute, spelled once.
+         *
+         * Two tests in this file branch on it in OPPOSITE directions — the
+         * capture receiver must not wear it, the picker must — so a typo in one
+         * copy would silently pass the half that asserts absence.
+         * `FloatingOverlaySeamLedgerTest` keys on this same string.
+         */
+        const val OVERLAY_THEME_ATTR = "android:theme=\"@style/Theme.Dicta.Overlay\""
+
+        /**
+         * What the capture receiver must wear instead.
+         *
+         * A PLATFORM theme, so there is no Dicta style to keep in sync: it is
+         * `windowIsTranslucent` + a null window background + no title bar,
+         * which is §4.2's whole requirement for an activity that draws nothing.
+         */
+        const val TRANSLUCENT_THEME_ATTR =
+            "android:theme=\"@android:style/Theme.Translucent.NoTitleBar\""
     }
 }

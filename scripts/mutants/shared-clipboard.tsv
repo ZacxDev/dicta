@@ -88,3 +88,31 @@ m-clip10-an-unreachable-flush-reports-nothing-kept	app/src/main/java/dev/zacx/di
 m-clip10b-an-unreachable-flush-does-not-say-so	app/src/main/java/dev/zacx/dicta/ClipFlusher.kt	unreachable = true,	unreachable = false,	dev.zacx.dicta.ClipFlusherTest
 m-clip11-a-permanent-refusal-blocks-the-queue-forever	app/src/main/java/dev/zacx/dicta/ClipFlusher.kt	dropped++	return Report(stored, dropped, kept = queue.size - index)	dev.zacx.dicta.ClipFlusherTest
 m-clip16-the-picker-never-flushes-the-outbox	app/src/main/java/dev/zacx/dicta/ClipPickerActivity.kt	runCatching { (flush ?: ::defaultFlush).invoke() }	Unit	dev.zacx.dicta.ClipPickerActivityTest
+#
+# ===========================================================================
+# AUDIT ROUND 0's FIXES. Added with the commit that makes a stuck outbox
+# visible, narrows the capture-theme guard and takes deletions D3/D4/D5.
+# ===========================================================================
+#
+# 🔴 THESE ARE THE ONLY ROWS IN THIS FILE THAT ARE REGRESSION MUTANTS rather
+# than invariant guards. m-clip25 restores the shipped defect exactly — the
+# Report built with the failure in it and dropped on the floor — so its kill is
+# evidence about the defect and not merely about a guard. Every row above was
+# written against new code with no tree to go red on, which the header says.
+#
+# 🔴 m-clip26 is the CRYING-WOLF direction, and it is as important as the
+# silent one: an indicator keyed on `kept > 0` lights after every ordinary
+# multi-item capture, and an indicator that is always on is one nobody reads.
+# A sweep that only mutated toward silence would certify half the requirement.
+m-clip25-REGRESSION-the-drain-discards-its-own-report	app/src/main/java/dev/zacx/dicta/BubbleService.kt	ClipOutboxHealth.record(report)	Unit	dev.zacx.dicta.ClipSeamLedgerTest
+m-clip25b-REGRESSION-the-picker-discards-its-own-report	app/src/main/java/dev/zacx/dicta/ClipPickerActivity.kt	ClipOutboxHealth.record(report)	Unit	dev.zacx.dicta.ClipSeamLedgerTest
+m-clip26-a-merely-pending-queue-reads-as-a-fault	app/src/main/java/dev/zacx/dicta/ClipOutboxHealth.kt	if (report.cannotDrain) {	if (report.kept > 0) {	dev.zacx.dicta.ClipOutboxHealthTest
+m-clip27-an-unreadable-outbox-reads-as-healthy	app/src/main/java/dev/zacx/dicta/ClipFlusher.kt	get() = unreachable || failure != null	get() = unreachable	dev.zacx.dicta.ClipOutboxHealthTest
+m-clip28-the-fault-threshold-is-off-by-one	app/src/main/java/dev/zacx/dicta/ClipOutboxHealth.kt	consecutiveFailures >= STUCK_AFTER_FAILURES	consecutiveFailures > STUCK_AFTER_FAILURES	dev.zacx.dicta.ClipOutboxHealthTest
+m-clip29-every-mesh-blip-is-a-fault	app/src/main/java/dev/zacx/dicta/ClipOutboxHealth.kt	const val STUCK_AFTER_FAILURES: Int = 3	const val STUCK_AFTER_FAILURES: Int = 1	dev.zacx.dicta.ClipOutboxHealthTest
+m-clip30-the-stuck-queue-is-announced-as-a-healthy-one	app/src/main/java/dev/zacx/dicta/BubbleChrome.kt	if (stuck) R.string.bubble_clip_stuck else R.string.bubble_clip	R.string.bubble_clip	dev.zacx.dicta.Bubble*Test
+m-clip31-the-fault-is-carried-by-colour-alone	app/src/main/java/dev/zacx/dicta/BubbleChrome.kt	if (stuck) R.color.dicta_error else R.color.dicta_on_surface	R.color.dicta_on_surface	dev.zacx.dicta.Bubble*Test
+m-clip32-a-service-starting-into-a-stuck-queue-shows-nothing	app/src/main/java/dev/zacx/dicta/BubbleService.kt	applyClipHealth(clipButton, ClipOutboxHealth.isStuck())	applyClipHealth(clipButton, false)	dev.zacx.dicta.BubbleClipRevealTest
+m-clip33-the-capture-receiver-raises-an-opaque-window	app/src/main/AndroidManifest.xml	android:theme="@android:style/Theme.Translucent.NoTitleBar"	android:noHistory="true"	dev.zacx.dicta.CaptureManifestTest
+m-clip34-the-capture-receiver-wears-the-overlay-theme	app/src/main/AndroidManifest.xml	android:theme="@android:style/Theme.Translucent.NoTitleBar"	android:theme="@style/Theme.Dicta.Overlay"	dev.zacx.dicta.CaptureManifestTest
+m-clip35-an-old-queue-file-loses-every-capture	app/src/main/java/dev/zacx/dicta/ClipOutbox.kt	if (id > 0L && body.isNotEmpty()) {	if (id > 0L && body.isNotEmpty() && row.has(ClipJson.KEY_CREATED_AT).not()) {	dev.zacx.dicta.ClipOutboxStoreTest

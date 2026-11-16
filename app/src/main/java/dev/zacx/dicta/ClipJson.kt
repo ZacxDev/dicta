@@ -53,8 +53,19 @@ object ClipJson {
     const val KEY_BODY: String = "body"
     const val KEY_DEVICE: String = "device"
     const val KEY_CREATED_AT: String = "created_at"
-    const val KEY_BUMP_COUNT: String = "bump_count"
-    const val KEY_DEDUPED: String = "deduped"
+
+    /*
+     * 🔴 DELETED: `KEY_BUMP_COUNT` ("bump_count") and `KEY_DEDUPED`
+     * ("deduped"), with [Clip.bumpCount], `ClipPost.Stored.deduped` and the
+     * `deduped(text)` reader. Each was parsed and carried and **read by
+     * nothing** — deletion candidate D4 of this branch's audit round 0.
+     *
+     * The server still sends both and that is fine: unknown keys are tolerated
+     * here by design ([SnipCatalog]'s rule — a clipstore release that adds a
+     * field must not brick the phone), and `parseList` simply does not look.
+     * Re-adding either means having a surface that renders it first.
+     */
+
     const val KEY_ERROR: String = "error"
     const val KEY_DETAIL: String = "detail"
 
@@ -99,7 +110,6 @@ object ClipJson {
                 body = row.optString(KEY_BODY, ""),
                 device = row.optString(KEY_DEVICE, ""),
                 createdAtMs = row.optLong(KEY_CREATED_AT, 0L),
-                bumpCount = row.optInt(KEY_BUMP_COUNT, 0),
             )
         }
         return out
@@ -134,27 +144,6 @@ object ClipJson {
     }
 
     /**
-     * Whether a 2xx `POST` response says the clip was **deduped** rather than
-     * appended.
-     *
-     * Three-valued for [JsonLite.boolField]'s reason, and the third value is
-     * load-bearing in the same direction: `null` means the server said nothing,
-     * which must not be read as "checked, and it was new". A 201 carries
-     * `deduped:false` and a 200 carries `deduped:true` on the live service, so
-     * the status code and this field agree today — the field is read anyway,
-     * because the server's own verdict is the server's to give.
-     */
-    fun deduped(text: String): Boolean? {
-        val root = try {
-            JSONObject(text)
-        } catch (_: Exception) {
-            return null
-        }
-        if (!root.has(KEY_DEDUPED) || root.isNull(KEY_DEDUPED)) return null
-        return root.optBoolean(KEY_DEDUPED, false)
-    }
-
-    /**
      * The service's own reason string from an error body, or null.
      *
      * 🔴 The service's `detail`, never an exception's `toString()`. `SttHttp`
@@ -175,7 +164,15 @@ object ClipJson {
         return error.takeIf { it.isNotEmpty() }
     }
 
-    /** The local outbox envelope's `items` array. See [ClipOutboxStore]. */
+    /**
+     * The local outbox envelope's `items` array. See [ClipOutboxStore].
+     *
+     * 🔴 `id` and `body`, and nothing else. A `created_at` carrying
+     * `ClipOutbox.Pending.capturedAtMs` was written here and read back by
+     * nothing (D5); the reader only ever looked at these two keys, so dropping
+     * the write is compatible in both directions — an old file still parses,
+     * and a new file is missing only a key no one asked for.
+     */
     internal fun toJsonArray(items: List<ClipOutbox.Pending>): JSONArray {
         val array = JSONArray()
         for (item in items) {
@@ -183,7 +180,6 @@ object ClipJson {
                 JSONObject()
                     .put(KEY_ID, item.id)
                     .put(KEY_BODY, item.body)
-                    .put(KEY_CREATED_AT, item.capturedAtMs)
             )
         }
         return array

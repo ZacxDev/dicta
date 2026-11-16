@@ -47,16 +47,14 @@ import org.robolectric.shadows.ShadowToast
 @Config(sdk = [34])
 class CaptureActivityTest {
 
-    private val nowMs = 1_700_000_900_000L
-
     /** An in-memory outbox that can be told to fail. */
     private class FakeOutbox(private val failWith: String? = null) : ClipOutbox {
         val appended = mutableListOf<ClipOutbox.Pending>()
         private var next = 1L
-        override fun append(body: String, capturedAtMs: Long): Long {
+        override fun append(body: String): Long {
             failWith?.let { throw ClipOutbox.Failed(it) }
             val id = next++
-            appended += ClipOutbox.Pending(id, body, capturedAtMs)
+            appended += ClipOutbox.Pending(id, body)
             return id
         }
         override fun pending(): List<ClipOutbox.Pending> = appended.toList()
@@ -69,7 +67,6 @@ class CaptureActivityTest {
     ): Pair<CaptureActivity, FakeOutbox> {
         val c = Robolectric.buildActivity(CaptureActivity::class.java, intent)
         c.get().outbox = outbox
-        c.get().nowMs = { nowMs }
         return c.create().get() to outbox
     }
 
@@ -90,25 +87,37 @@ class CaptureActivityTest {
     private fun string(id: Int) = RuntimeEnvironment.getApplication().getString(id)
 
     @Test
-    fun selectedTextArrivesInTheOutboxWithTHISDEVICESCaptureTime() {
+    fun selectedTextArrivesInTheOutboxVERBATIM() {
         val (_, outbox) = launch(processText("the thing I selected"))
         assertEquals(
-            listOf(ClipOutbox.Pending(1L, "the thing I selected", nowMs)),
+            listOf(ClipOutbox.Pending(1L, "the thing I selected")),
             outbox.appended,
         )
     }
 
     @Test
-    fun theCaptureTimeIsTHISDevicesClockEvenThoughTheServerOverwritesIt() {
-        // 🔴 Recorded anyway, and the reason is worth keeping: the SERVER
-        // assigns created_at at POST time, so a clip captured off the mesh
-        // appears to every device as if it were copied at flush time rather
-        // than at capture time. The local stamp is what a later fix would need
-        // and costs one field now; it is deliberately NOT presented to the user
-        // as the clip's age, because that would disagree with every other
-        // client.
-        val (_, outbox) = launch(processText("x"))
-        assertEquals(nowMs, outbox.appended.single().capturedAtMs)
+    fun aQueuedRowCarriesTheBODYAndNOTHINGELSE() {
+        // 🔴 This REPLACES `theCaptureTimeIsTHISDevicesClockEvenThoughTheServerOverwritesIt`,
+        // which asserted a local capture timestamp that deletion candidate D5
+        // removed. Its rationale was that the stamp "is what a later fix would
+        // need and costs one field now" — which is the justification that can
+        // never be disproved, and the field was in fact written to disk, parsed
+        // back and consumed by nobody.
+        //
+        // The claim that survives is narrower and is the one that matters for
+        // the only copy of the user's capture: what the receiver queues is the
+        // selection, byte-exact, and the queue carries no second opinion about
+        // when it happened. [Clip.createdAtMs] is server-assigned and is what
+        // every surface renders.
+        val body = "x\ty\nz \"quoted\""
+        val (_, outbox) = launch(processText(body))
+        val row = outbox.appended.single()
+        assertEquals(body, row.body)
+        assertEquals(
+            "a queued row carries a field beyond its local id and its body",
+            ClipOutbox.Pending(id = row.id, body = body),
+            row,
+        )
     }
 
     @Test

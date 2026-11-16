@@ -116,21 +116,106 @@ class ClipSeamLedgerTest {
         )
     }
 
+    /**
+     * The only files that may DRAIN the outbox — i.e. build a [ClipFlusher].
+     *
+     * 🔴 A THIRD ledger, added by audit round 0, and the relationship it pins is
+     * the one that was broken: every drain site must **consume** the
+     * [ClipFlusher.Report] it produces. Both sites built one carrying the
+     * failure and discarded it, so a mistyped clip token queued every capture
+     * forever while every toast said "queued" and the picker rendered the
+     * server's own empty list as "nothing stored yet".
+     *
+     * `ClipFlusher.kt` is a member for the mirror image of the reason
+     * [outboxStoreConstructors] records about its own absentee: the pattern
+     * `ClipFlusher(` DOES match `class ClipFlusher(`, so the declaring file
+     * lands on its own ledger — and is excused the consumption rule, which is
+     * about call sites.
+     */
+    private val clipFlusherConstructors = listOf(
+        "BubbleService.kt",
+        "ClipFlusher.kt",
+        "ClipPickerActivity.kt",
+    )
+
+    @Test
+    fun everySiteThatDrainsTheOutboxCONSUMESItsReport() {
+        // 🔴 THE SEAM NOBODY OWNED. `ClipFlusherTest` proves a failed drain
+        // produces a Report that says so; `ClipOutboxHealthTest` proves a RUN of
+        // those is a fault and one of them is not; `BubbleClipRevealTest` proves
+        // a fault reaches the button. Each of those is scoped to one surface,
+        // and the defect lived in none of them — the Report was simply never
+        // handed over. So this asserts the RELATIONSHIP: a ledger of the drain
+        // sites, plus the rule that each one records.
+        //
+        // 🔴 Both directions, which is what makes it a ledger rather than a
+        // check on today's two files. GROWTH: a third drain is a third place a
+        // persistent failure can go unreported, which is this feature's whole
+        // silent-failure class. SHRINK: a drain that vanished means captures
+        // queue and never leave.
+        val drains = sourceFiles()
+            .filter { normalise(it.readText()).contains("ClipFlusher(") }
+            .map { it.name }
+            .sorted()
+        assertEquals(
+            "🔴 the set of files that drain the capture outbox changed. Every " +
+                "one of them must hand its ClipFlusher.Report to " +
+                "ClipOutboxHealth.record — see ClipOutboxHealth's kdoc for the " +
+                "defect that rule exists for. Update this ledger deliberately.",
+            clipFlusherConstructors,
+            drains,
+        )
+
+        val callSites = drains.filter { it != "ClipFlusher.kt" }
+        for (name in callSites) {
+            val src = normalise(sourceFiles().first { it.name == name }.readText())
+            assertTrue(
+                "🔴 $name builds a ClipFlusher and never calls " +
+                    "ClipOutboxHealth.record. That is audit round 0's finding " +
+                    "exactly: the Report is built with the failure in it and " +
+                    "dropped on the floor, so a 401 on a mistyped token keeps " +
+                    "every capture forever with nothing on screen saying so.",
+                src.contains("ClipOutboxHealth.record("),
+            )
+        }
+
+        // 🔴 POSITIVE CONTROL for the LOOP, which is a different claim from the
+        // scan's own control below. A ledger holding only `ClipFlusher.kt` would
+        // skip every iteration and pass while nothing consumed anything — a
+        // zero-iteration loop is indistinguishable from a satisfied one.
+        assertEquals(
+            "the consumption rule was applied to no file at all",
+            2,
+            callSites.size,
+        )
+    }
+
     @Test
     fun theTwoLedgersDoNotSILENTLYAgreeByBeingEmpty() {
-        // 🔴 POSITIVE CONTROL. Both assertions above are set comparisons, and
-        // a scan wired to nothing — a wrong directory, a pattern that stopped
-        // matching after a rename — returns an empty list that compares equal
-        // to an empty ledger. Non-zero counts are what make a clean result
-        // evidence.
+        // 🔴 POSITIVE CONTROL. All three assertions above are set comparisons,
+        // and a scan wired to nothing — a wrong directory, a pattern that
+        // stopped matching after a rename — returns an empty list that compares
+        // equal to an empty ledger. Non-zero counts are what make a clean
+        // result evidence.
         assertTrue("the ClipHttp ledger is empty", clipHttpConstructors.isNotEmpty())
         assertTrue("the outbox ledger is empty", outboxStoreConstructors.isNotEmpty())
+        assertTrue("the flusher ledger is empty", clipFlusherConstructors.isNotEmpty())
         val hits = sourceFiles().count { normalise(it.readText()).contains("ClipHttp(") }
         assertEquals(
             "the scan found $hits files constructing ClipHttp — if this is 0 " +
                 "the ledger above is vacuous",
             clipHttpConstructors.size,
             hits,
+        )
+        // The third ledger's own non-zero count. Its consumption loop already
+        // has a control, but that one proves the loop RAN — this proves the scan
+        // it iterates over saw the tree.
+        val flushes = sourceFiles().count { normalise(it.readText()).contains("ClipFlusher(") }
+        assertEquals(
+            "the scan found $flushes files constructing ClipFlusher — if this " +
+                "is 0 the drain ledger is vacuous",
+            clipFlusherConstructors.size,
+            flushes,
         )
     }
 

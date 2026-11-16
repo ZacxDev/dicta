@@ -56,21 +56,18 @@ class ClipPickerActivityTest {
             body = "zebra crossing notes",
             device = "laptop",
             createdAtMs = nowMs - 30_000L,
-            bumpCount = 0,
         ),
         Clip(
             id = 5L,
             body = "quince jam recipe",
             device = "desktop",
             createdAtMs = nowMs - 7_200_000L,
-            bumpCount = 2,
         ),
         Clip(
             id = 3L,
             body = "ssh prod gateway",
             device = "",
             createdAtMs = nowMs - 172_800_000L,
-            bumpCount = 0,
         ),
     )
 
@@ -170,7 +167,7 @@ class ClipPickerActivityTest {
         // body. "prod gateway" must not pull in a row that only has one of
         // them.
         val activity = start(
-            serverRows + Clip(9L, "gateway timeout", "laptop", nowMs, 0),
+            serverRows + Clip(9L, "gateway timeout", "laptop", nowMs),
         )
         search(activity).setText("prod gateway")
         assertEquals(listOf("ssh prod gateway"), bodies(activity))
@@ -188,8 +185,8 @@ class ClipPickerActivityTest {
         // query is a whole word in it and only a substring in the newer one.
         val activity = start(
             listOf(
-                Clip(2L, "pastelito", "a", nowMs, 0),
-                Clip(1L, "paste this", "b", nowMs - 1_000L, 0),
+                Clip(2L, "pastelito", "a", nowMs),
+                Clip(1L, "paste this", "b", nowMs - 1_000L),
             )
         )
         search(activity).setText("paste")
@@ -334,7 +331,7 @@ class ClipPickerActivityTest {
         // text from another machine, and expanding a brace sequence in it would
         // silently alter what the user copied. The fixture carries the exact
         // token SnipClip treats as a variable.
-        val activity = start(listOf(Clip(1L, "literal ${SnipClip.CLIP_VAR} here", "a", nowMs, 0)))
+        val activity = start(listOf(Clip(1L, "literal ${SnipClip.CLIP_VAR} here", "a", nowMs)))
         list(activity).performItemClick(null, 0, 0L)
         assertEquals(
             "literal ${SnipClip.CLIP_VAR} here",

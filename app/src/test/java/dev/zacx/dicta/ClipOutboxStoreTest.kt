@@ -40,12 +40,70 @@ class ClipOutboxStoreTest {
     private fun store(dir: File = folder.root) = ClipOutboxStore(dir)
 
     @Test
-    fun anAppendedCaptureComesBackWithItsBodyAndItsOwnCaptureTime() {
+    fun anAppendedCaptureComesBackWithItsBodyAndItsOwnLocalId() {
         val outbox = store()
-        val id = outbox.append("the thing I copied", 1_700_000_000_123L)
+        val id = outbox.append("the thing I copied")
         assertEquals(
-            listOf(ClipOutbox.Pending(id, "the thing I copied", 1_700_000_000_123L)),
+            listOf(ClipOutbox.Pending(id, "the thing I copied")),
             outbox.pending(),
+        )
+    }
+
+    @Test
+    fun aQueueFileFromThePreviousBuildIsReadInFull() {
+        // 🔴 UPGRADE SAFETY for the only copy of the user's capture, and the
+        // reason deletion candidate D5 needed checking rather than just doing.
+        //
+        // Until this branch's audit round 0, every queued row was written with a
+        // `created_at` carrying `ClipOutbox.Pending.capturedAtMs`. That field is
+        // deleted (nothing read it) and the writer no longer emits the key — so
+        // the envelope below is exactly what an installed build leaves on disk,
+        // and an upgrade must find every one of those captures still there. A
+        // reader that rejected it would throw `ClipOutbox.Failed` and the
+        // flusher would report a failure forever; one that skipped
+        // unknown-shaped rows would destroy them silently.
+        //
+        // Written byte-for-byte rather than produced by the old writer, because
+        // the old writer no longer exists: this literal IS the fixture.
+        File(folder.root, ClipOutboxStore.FILE).writeText(
+            """{"next_id":4,"clips":[""" +
+                """{"id":1,"body":"captured before the upgrade","created_at":1700000000123},""" +
+                """{"id":2,"body":"and this one too","created_at":1700000000456},""" +
+                """{"id":3,"body":"third","created_at":1700000000789}]}"""
+        )
+        val outbox = store()
+        assertEquals(
+            "a queue file written by the previous build did not read back in " +
+                "full — an upgrade would lose captures that are still on disk",
+            listOf(
+                ClipOutbox.Pending(1L, "captured before the upgrade"),
+                ClipOutbox.Pending(2L, "and this one too"),
+                ClipOutbox.Pending(3L, "third"),
+            ),
+            outbox.pending(),
+        )
+
+        // 🔴 The counter survives the old envelope too: a `next_id` read as 0
+        // would reuse id 1 on top of a surviving row.
+        val next = outbox.append("captured after the upgrade")
+        assertTrue("id $next collides with a pre-upgrade row", next > 3L)
+
+        // The first rewrite drops the stale key and keeps every row, so the
+        // migration is one ordinary mutation with no step of its own.
+        assertFalse(
+            "the rewritten queue still carries `created_at`, which nothing " +
+                "reads or writes any more",
+            File(folder.root, ClipOutboxStore.FILE).readText()
+                .contains(ClipJson.KEY_CREATED_AT),
+        )
+        assertEquals(
+            listOf(
+                "captured before the upgrade",
+                "and this one too",
+                "third",
+                "captured after the upgrade",
+            ),
+            store().pending().map { it.body },
         )
     }
 
@@ -54,7 +112,7 @@ class ClipOutboxStoreTest {
         // 🔴 The actual requirement: `CaptureActivity` finishes immediately, so
         // the process that wrote the row is routinely gone before anything
         // reads it back. An in-memory queue would pass every other test here.
-        store().append("survives", 11L)
+        store().append("survives")
         assertEquals(listOf("survives"), store().pending().map { it.body })
     }
 
@@ -65,9 +123,9 @@ class ClipOutboxStoreTest {
         // make a clip the user copied first appear newer than one they copied
         // later — on every other device. ClipFlusher relies on this.
         val outbox = store()
-        outbox.append("first", 1L)
-        outbox.append("second", 2L)
-        outbox.append("third", 3L)
+        outbox.append("first")
+        outbox.append("second")
+        outbox.append("third")
         assertEquals(listOf("first", "second", "third"), store().pending().map { it.body })
     }
 
@@ -79,11 +137,11 @@ class ClipOutboxStoreTest {
         // live row, and `remove` would then delete the WRONG capture — the
         // user's text, gone, with no error anywhere.
         val outbox = store()
-        val a = outbox.append("a", 1L)
-        val b = outbox.append("b", 2L)
-        val c = outbox.append("c", 3L)
+        val a = outbox.append("a")
+        val b = outbox.append("b")
+        val c = outbox.append("c")
         outbox.remove(b)
-        val d = outbox.append("d", 4L)
+        val d = outbox.append("d")
 
         assertEquals(listOf(a, c, d), store().pending().map { it.id })
         assertTrue("the new id $d collides with a live row", d != a && d != c)
@@ -95,12 +153,12 @@ class ClipOutboxStoreTest {
         // A hand-edited or truncated-then-rewritten file with no `next_id` must
         // not restart at 1 on top of surviving rows. The floor is max(id)+1.
         val outbox = store()
-        outbox.append("a", 1L)
-        val second = outbox.append("b", 2L)
+        outbox.append("a")
+        val second = outbox.append("b")
         File(folder.root, ClipOutboxStore.FILE).writeText(
             """{"clips":[{"id":$second,"body":"b","created_at":2}]}"""
         )
-        val next = store().append("c", 3L)
+        val next = store().append("c")
         assertTrue("id $next collides with the surviving row $second", next > second)
     }
 
@@ -109,7 +167,7 @@ class ClipOutboxStoreTest {
         // The flusher removes by id after a POST it may retry, so a
         // double-remove is an ordinary event rather than a defect.
         val outbox = store()
-        val id = outbox.append("keep me", 1L)
+        val id = outbox.append("keep me")
         outbox.remove(id + 404L)
         assertEquals(listOf("keep me"), outbox.pending().map { it.body })
         outbox.remove(id)
@@ -123,7 +181,7 @@ class ClipOutboxStoreTest {
         // one would put an item in the outbox that can never leave except by
         // being dropped — and would block nothing else only because
         // ClipFlusher drops permanent refusals.
-        val thrown = runCatching { store().append("", 1L) }.exceptionOrNull()
+        val thrown = runCatching { store().append("") }.exceptionOrNull()
         assertTrue(
             "an empty capture was queued (got ${thrown?.javaClass?.simpleName})",
             thrown is ClipOutbox.Failed,
@@ -143,7 +201,7 @@ class ClipOutboxStoreTest {
         // that may ignore it.
         val blocked = File(folder.root, "blocked")
         blocked.writeText("I am a file, not a directory")
-        val thrown = runCatching { store(blocked).append("doomed", 1L) }.exceptionOrNull()
+        val thrown = runCatching { store(blocked).append("doomed") }.exceptionOrNull()
         assertTrue(
             "a failed write was reported as a success (got ${thrown?.javaClass?.simpleName})",
             thrown is ClipOutbox.Failed,
@@ -179,8 +237,8 @@ class ClipOutboxStoreTest {
     @Test
     fun noTemporaryFileIsLeftBehindForTheNextReadToTripOver() {
         val outbox = store()
-        outbox.append("a", 1L)
-        outbox.append("b", 2L)
+        outbox.append("a")
+        outbox.append("b")
         outbox.remove(outbox.pending().first().id)
         val leftovers = folder.root.listFiles().orEmpty().map { it.name }.sorted()
         assertEquals(listOf(ClipOutboxStore.FILE), leftovers)

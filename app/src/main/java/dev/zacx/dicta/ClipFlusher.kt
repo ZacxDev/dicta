@@ -53,8 +53,13 @@ class ClipFlusher(
     /**
      * What one flush did.
      *
-     * @param stored how many items the store accepted (deduped included — a
-     *   deduped clip is as stored as a new one; see [ClipPost.Stored.deduped]).
+     * @param stored how many items the store accepted. A clip the server
+     *   collapsed into an existing row by its `UNIQUE(body_sha256)` dedup is as
+     *   stored as a new one — it is on the server, so the local row must leave
+     *   the queue either way — and the client does not distinguish the two. (It
+     *   carried the server's `deduped` verdict as a field until this branch's
+     *   audit round 0; nothing ever read it, so it is deleted rather than left
+     *   looking like a thing that is checked.)
      * @param dropped how many were permanently refused and discarded.
      * @param kept how many are still queued, for any reason.
      * @param unreachable whether the drain stopped because the store did not
@@ -69,7 +74,34 @@ class ClipFlusher(
         val kept: Int = 0,
         val unreachable: Boolean = false,
         val failure: String? = null,
-    )
+    ) {
+
+        /**
+         * 🔴 Whether this pass **could not move the queue forward** — as
+         * opposed to having simply left work for the next tick.
+         *
+         * This is the one reading of a [Report] that a surface may act on, and
+         * it is deliberately NOT `kept > 0`. A flush that hit its
+         * [MAX_PER_FLUSH] ceiling also leaves items queued, and so does one
+         * that stored three of four; neither is a fault, and a bubble that
+         * showed one would cry wolf on every ordinary multi-item capture.
+         *
+         * Two things qualify, and both mean the queue is *stuck* rather than
+         * *busy*:
+         *
+         *  * [unreachable] — the POST got no usable answer. 🔴 Includes a
+         *    **401**: `ClipHttp.PERMANENT_STATUSES` deliberately excludes it,
+         *    so a typo'd token keeps every capture forever, with every toast
+         *    saying "queued". That is the defect this property exists for.
+         *  * [failure] — the outbox file itself could not be read, so captures
+         *    are on disk and nothing can be attempted at all.
+         *
+         * ONE pass saying so is still not a fault — the mesh drops for a
+         * minute at a time. Persistence is [ClipOutboxHealth]'s job, which
+         * folds a run of these into the verdict a surface renders.
+         */
+        val cannotDrain: Boolean get() = unreachable || failure != null
+    }
 
     /** One pass. Never throws. */
     fun flush(max: Int = MAX_PER_FLUSH): Report {
@@ -78,7 +110,15 @@ class ClipFlusher(
         } catch (e: ClipOutbox.Failed) {
             // 🔴 Reported, not swallowed into a zero Report. "Nothing to do"
             // and "the queue is unreadable" are the empty result that the most
-            // causes share, and the caller logs this one.
+            // causes share, and this one reaches the user.
+            //
+            // ⚠ This comment used to say *"and the caller logs this one"*. It
+            // did not: BOTH production callers built the Report and threw it
+            // away, so a 401 on a typo'd token kept every capture forever with
+            // nothing on screen. Round 0 of this branch's audit found it. Each
+            // caller now hands the Report to [ClipOutboxHealth], and
+            // `ClipSeamLedgerTest.everySiteThatDrainsTheOutboxCONSUMESItsReport`
+            // is red if a third one appears that does not.
             return Report(failure = e.message ?: e.javaClass.simpleName)
         }
         var stored = 0

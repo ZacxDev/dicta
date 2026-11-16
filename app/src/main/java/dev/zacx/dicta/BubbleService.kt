@@ -511,6 +511,11 @@ class BubbleService : Service() {
         wm = getSystemService(WindowManager::class.java)
         buildWindow()
         OverlayVisibility.register(visibilitySink)
+        // 🔴 AFTER buildWindow, so the sink can never arrive before the button
+        // it paints exists — and buildWindow has already applied the CURRENT
+        // verdict, so a service starting into an already-stuck queue shows it
+        // on the first long press instead of waiting for a change it missed.
+        ClipOutboxHealth.register(clipHealthSink)
         registerScreenReceiver()
         // 🔴 Immediately, not after one interval. The operator's first case is
         // "as soon as the bubble opens": a bubble that has been up for two
@@ -685,17 +690,26 @@ class BubbleService : Service() {
                 (CLIP_DP * density).toInt(),
             ).apply { topMargin = (CLIP_GAP_DP * density).toInt() }
             setImageResource(R.drawable.ic_clip)
-            imageTintList = android.content.res.ColorStateList
-                .valueOf(getColor(R.color.dicta_on_surface))
             background = getDrawable(R.drawable.bubble_bg)
-            val clipLabel = getString(R.string.bubble_clip)
-            contentDescription = clipLabel
-            tooltipText = clipLabel
+            // 🔴 NO contentDescription, tooltipText or imageTintList here,
+            // unlike its two siblings — all three are state-dependent on this
+            // button and are set by [applyClipHealth] below, which is their one
+            // spelling. Setting a default here as well would be a second
+            // opinion about what the button says, and the two would disagree
+            // the moment either changed.
             visibility = View.GONE
             setOnClickListener {
                 applyEffects(machine.on(BubbleDictation.Event.ClipTapped))
             }
         }
+        // 🔴 The description and the tint are applied from ONE place, here and
+        // in [renderClipHealth], rather than spelled in the `apply` block above
+        // like its two siblings' — because unlike them this button carries
+        // STATE, and two spellings of a state is how the two disagree. The
+        // initial read is [ClipOutboxHealth.isStuck] and not `false`: the
+        // service is restarted on every boot and every upgrade, and the queue
+        // does not become healthy because a process did.
+        applyClipHealth(clipButton, ClipOutboxHealth.isStuck())
 
         // 🔴 THE CHIP `ListView` WAS BUILT HERE AND IS DELETED, along with its
         // adapter, its chip views, `REVEAL_SLOTS`, `REVEAL_WIDTH_DP`,
@@ -776,6 +790,54 @@ class BubbleService : Service() {
     }
 
     /**
+     * 🔴 The shared clipboard's health, onto the button that opens it.
+     *
+     * The defect this closes is in [ClipOutboxHealth]'s kdoc: both flush sites
+     * built a [ClipFlusher.Report] carrying the failure and threw it away, so a
+     * wrong clip token queued every capture forever while every toast said
+     * "queued" and the picker rendered "nothing stored yet".
+     *
+     * 🔴 **Hopped onto the main looper**, because [ClipOutboxHealth.record] is
+     * called from [worker] — the flush runs off-main by construction — and a
+     * `View` may only be touched from the thread that created it. The hop is
+     * `root?.post` rather than `main.post` for [visibilitySink]'s reason: it
+     * drops the work when the window is already gone instead of posting into a
+     * dead service.
+     *
+     * 🔴 **Not routed through [BubbleDictation]**, and that is a decision. Every
+     * other thing that changes this window goes through the machine, but
+     * `on()` **prefixes [BubbleDictation.Effect.HideActions] to every event
+     * that is not a long press** — so an event raised by a background flush
+     * would slam the reveal shut under the operator's finger each time the mesh
+     * blipped, and the one moment they are looking at this button is the moment
+     * it would vanish. The reveal is a SURFACE and not a state, which is the
+     * argument [BubbleDictation.Effect.ShowActions] already records about
+     * itself; a surface's own appearance is the shell's, exactly as
+     * [showActions] and [renderPulse] are.
+     */
+    private val clipHealthSink: (Boolean) -> Unit = { stuck ->
+        root?.post { clip?.let { applyClipHealth(it, stuck) } }
+    }
+
+    /**
+     * Paints [button] for [stuck]. The ONE place the clip button's description,
+     * tooltip and tint are decided — see `buildWindow`.
+     *
+     * Description AND tooltip AND tint, every time, in both directions: a
+     * partial update is how a repaired queue keeps an ember button, or a stuck
+     * one is announced as healthy while looking wrong. `BubbleClipRevealTest`
+     * asserts the description and the tint together for exactly that reason —
+     * either one alone is satisfiable while the other lies.
+     */
+    private fun applyClipHealth(button: ImageButton, stuck: Boolean) {
+        val label = getString(BubbleChrome.clipLabelFor(stuck))
+        button.contentDescription = label
+        button.tooltipText = label
+        button.imageTintList = android.content.res.ColorStateList
+            .valueOf(getColor(BubbleChrome.clipTintFor(stuck)))
+    }
+
+    /**
      * The bubble is an always-on-top overlay, so it is composited into any
      * MediaProjection screenshot *and* drawn over [DictateActivity]'s card.
      * Both mechanisms take it off the screen through [OverlayVisibility],
@@ -849,6 +911,13 @@ class BubbleService : Service() {
 
     override fun onDestroy() {
         OverlayVisibility.unregister(visibilitySink)
+        // 🔴 Paired with the register in `onCreate`. [ClipOutboxHealth] is a
+        // process-wide object and the picker's flush-on-open records into it
+        // with no bubble running at all, so a sink left behind would hold this
+        // destroyed Service — and its views — alive for the life of the
+        // process. Harmless-looking because the sink's own `root?.post` would
+        // no-op; the leak is the reference, not the work.
+        ClipOutboxHealth.unregister(clipHealthSink)
         unregisterScreenReceiver()
         removeWarning()
         // Pre-existing, and it clears `maxDurationGuard` and the long-press
@@ -1821,11 +1890,18 @@ class BubbleService : Service() {
         if (!settings.isConfigured) return
         val token = settings.tokens.token() ?: return
         val http = ClipHttp(settings.baseUrl, token)
-        ClipFlusher(
+        val report = ClipFlusher(
             outbox = ClipOutboxStore(this),
             device = ClipDevice.of(),
             post = { body, device -> http.post(body, device) },
         ).flush()
+        // 🔴 CONSUMED, not discarded. This line is round 0's finding: the
+        // Report was built with the failure in it and dropped on the floor at
+        // both flush sites, which made a 401 on a mistyped token a queue that
+        // never drains and never says so. See [ClipOutboxHealth], and
+        // `ClipSeamLedgerTest.everySiteThatDrainsTheOutboxCONSUMESItsReport`,
+        // which goes red if a third drain appears without this.
+        ClipOutboxHealth.record(report)
     }
 
     /**

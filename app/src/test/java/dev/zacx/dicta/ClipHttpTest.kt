@@ -190,15 +190,24 @@ class ClipHttpTest {
     fun theLive201AndTheLive200DedupeAreBothStored() {
         // Both bodies are the live service's, measured. 201 is a new clip; an
         // identical body answers 200 with deduped:true and the SAME id.
+        //
+        // 🔴 The two outcomes are now EQUAL, and that is the point rather than a
+        // weakening. `ClipPost.Stored` carried the server's `deduped` verdict
+        // until this branch's audit round 0 (D4) and nothing ever read it, so
+        // what is asserted is what the client actually acts on: the store holds
+        // the body, therefore the local row leaves the queue — identically in
+        // both cases. Both fixtures still carry `deduped` and `bump_count`
+        // deliberately, because the server sends them and parsing must tolerate
+        // keys the client ignores.
         assertEquals(
-            ClipPost.Stored(id = 5L, deduped = false),
+            ClipPost.Stored(id = 5L),
             client(
                 status = 201,
                 body = """{"id":5,"body":"x","device":"d","created_at":1794779793374,"bump_count":0,"deduped":false}""",
             ).post("x", "d"),
         )
         assertEquals(
-            ClipPost.Stored(id = 5L, deduped = true),
+            ClipPost.Stored(id = 5L),
             client(
                 status = 200,
                 body = """{"id":5,"body":"x","device":"d","created_at":1794779793667,"bump_count":1,"deduped":true}""",

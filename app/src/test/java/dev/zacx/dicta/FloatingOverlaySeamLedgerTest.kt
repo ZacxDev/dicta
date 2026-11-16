@@ -103,9 +103,20 @@ class FloatingOverlaySeamLedgerTest {
         //
         // 🔴 `.CaptureActivity` is deliberately NOT here, and must not be: it
         // shows NO window at all, so it is not a floating surface and would owe
-        // a FloatingWindowSizeTest case for geometry it never has. Its manifest
-        // element carries no android:theme, which is what keeps the
-        // theme-derived set and this list in agreement.
+        // a FloatingWindowSizeTest case for geometry it never has.
+        //
+        // ⚠ It DOES carry an android:theme now, and this comment used to say it
+        // carried none — "which is what keeps the theme-derived set and this
+        // list in agreement". That was true, and it was also the wording that
+        // held audit round 0's finding #2 in place: with no theme the activity
+        // inherited the app's OPAQUE @style/Theme.Dicta and flashed a
+        // full-screen empty window over whatever the user was reading. It now
+        // declares @android:style/Theme.Translucent.NoTitleBar. What keeps the
+        // agreement is the narrower fact that [activitiesWithTheme] actually
+        // scans for: the element does not declare THIS ledger's theme,
+        // @style/Theme.Dicta.Overlay. A translucent platform theme is not a
+        // floating one, and the assertion below is what proves the scan agrees
+        // rather than this sentence.
         ".ClipPickerActivity",
         ".DictateActivity",
         ".HistoryPickerActivity",

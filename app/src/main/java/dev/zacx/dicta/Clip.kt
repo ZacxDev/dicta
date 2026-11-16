@@ -27,19 +27,29 @@ package dev.zacx.dicta
  *   gets the flush's timestamp, because the ordering the operator sees must be
  *   the store's own ordering and a client clock is not one the other devices
  *   can trust. The cost — a queued clip appears newer than it is — is stated
- *   here rather than discovered, and `ClipOutbox.Pending.capturedAtMs` keeps
- *   the real figure locally for anyone who later wants it.
- * @param bumpCount how many times this exact body has been re-copied. The
- *   server's dedup is `UNIQUE(body_sha256)` plus an `ON CONFLICT DO UPDATE`
- *   that refreshes `created_at` and increments this, so re-copying an old clip
- *   resurfaces it rather than duplicating it. Measured on the live service:
- *   an identical body answers **200** with `deduped:true` where a new one
- *   answers **201**.
+ *   here rather than discovered.
+ *
+ * ## 🔴 There is deliberately no `bumpCount`, and it was DELETED rather than
+ * never written
+ *
+ * The server's dedup is `UNIQUE(body_sha256)` plus an `ON CONFLICT DO UPDATE`
+ * that refreshes `created_at` and increments a `bump_count`, so re-copying an
+ * old clip resurfaces it rather than duplicating it (measured on the live
+ * service: an identical body answers **200** with `deduped:true` where a new
+ * one answers **201**). That field was parsed into this class and carried
+ * through the picker, and **nothing rendered it and nothing branched on it** —
+ * deletion candidate D4 of this branch's audit round 0, accepted.
+ *
+ * It is stated here because the next reader will reach for it: the *resurfacing*
+ * behaviour is real and visible — a re-copied clip moves to the top of the list
+ * — it is simply carried by [createdAtMs], which the server bumps. A count of
+ * how many times is a thing no surface has asked for, and a parsed-but-unread
+ * field reads as a fact the client checks. `ClipJson` tolerates unknown keys
+ * (`SnipCatalog`'s rule), so the server may keep sending it.
  */
 data class Clip(
     val id: Long,
     val body: String,
     val device: String,
     val createdAtMs: Long,
-    val bumpCount: Int,
 )

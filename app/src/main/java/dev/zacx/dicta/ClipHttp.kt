@@ -55,15 +55,19 @@ sealed interface ClipPost {
     /**
      * The store holds it.
      *
-     * @param deduped the server's own verdict: this exact body was already
-     *   there and its timestamp was bumped instead. Measured on the live
-     *   service as **200 + `deduped:true`** against **201 + `deduped:false`**.
-     *   Nothing in the client behaves differently — a deduped clip is as
-     *   stored as a new one, and the item leaves the outbox either way — but it
-     *   is carried because it is the only client-visible evidence that the
-     *   server's dedup ran at all.
+     * 🔴 **No `deduped` field, and it was DELETED rather than never written.**
+     * It carried the server's own verdict — this exact body was already there
+     * and its timestamp was bumped instead, measured on the live service as
+     * **200 + `deduped:true`** against **201 + `deduped:false`** — and the
+     * justification for carrying it was that it is "the only client-visible
+     * evidence that the server's dedup ran". Nothing read it: the row leaves
+     * the outbox either way, [ClipFlusher] counts both as `stored`, and no
+     * surface spells the word. Deletion candidate D4 of this branch's audit
+     * round 0, accepted. The dedup is still exercised and still asserted — by
+     * `ClipHttpTest`, over the STATUS CODE, which is what this client actually
+     * acts on.
      */
-    data class Stored(val id: Long, val deduped: Boolean) : ClipPost
+    data class Stored(val id: Long) : ClipPost
 
     /**
      * The server refused it and always will. **Drop the item.**
@@ -224,9 +228,12 @@ class ClipHttp(
                 // no "text".
                 return ClipPost.Unreachable("$status with no \"${ClipJson.KEY_ID}\"")
             }
-            // The status code decides, with the server's own field as the
-            // reading when it gives one — see [ClipPost.Stored.deduped].
-            return ClipPost.Stored(id, ClipJson.deduped(body) ?: (status == 200))
+            // 🔴 The id is the whole of the outcome. The server's `deduped`
+            // field WAS read here and folded into the Stored outcome; nothing
+            // consumed it, so both the field and `ClipJson.deduped` are gone
+            // (D4). A 200-deduped and a 201-new are the same thing to this
+            // client: the store holds the body, so the local row must go.
+            return ClipPost.Stored(id)
         }
         return if (status in PERMANENT_STATUSES) {
             ClipPost.Refused(status, ClipJson.detail(body))

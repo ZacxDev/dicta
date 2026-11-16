@@ -197,7 +197,7 @@ class FloatingWindowSizeTest {
         controller.get().flush = {}
         controller.get().remote = object : SharedClipSource {
             override fun rows(): List<Clip> = listOf(
-                Clip(1L, "a clip from another machine", "laptop", 1_700_000_000_000L, 0)
+                Clip(1L, "a clip from another machine", "laptop", 1_700_000_000_000L)
             )
             override fun delete(id: Long): Boolean = false
         }

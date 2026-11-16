@@ -29,15 +29,15 @@ class ClipFlusherTest {
     ) : ClipOutbox {
         private var nextId = 1L
         val items = bodies.mapIndexed { i, b ->
-            ClipOutbox.Pending(id = (i + 1).toLong(), body = b, capturedAtMs = (i + 1) * 10L)
+            ClipOutbox.Pending(id = (i + 1).toLong(), body = b)
         }.toMutableList()
         val removed = mutableListOf<Long>()
 
         init { nextId = items.size + 1L }
 
-        override fun append(body: String, capturedAtMs: Long): Long {
+        override fun append(body: String): Long {
             val id = nextId++
-            items += ClipOutbox.Pending(id, body, capturedAtMs)
+            items += ClipOutbox.Pending(id, body)
             return id
         }
 
@@ -76,7 +76,7 @@ class ClipFlusherTest {
         // "nothing to send" must cost nothing. A probe-then-send design would
         // make an idle phone talk to the mesh 1,440 times a day for no reason.
         val outbox = FakeOutbox()
-        val (flush, poster) = flusher(outbox, listOf(ClipPost.Stored(1L, false)))
+        val (flush, poster) = flusher(outbox, listOf(ClipPost.Stored(1L)))
         assertEquals(ClipFlusher.Report(), flush.flush())
         assertEquals(emptyList<Pair<String, String>>(), poster.sent)
     }
@@ -90,7 +90,7 @@ class ClipFlusherTest {
         val outbox = FakeOutbox(listOf("first", "second", "third"))
         val (flush, poster) = flusher(
             outbox,
-            listOf(ClipPost.Stored(1L, false), ClipPost.Stored(2L, false), ClipPost.Stored(3L, false)),
+            listOf(ClipPost.Stored(1L), ClipPost.Stored(2L), ClipPost.Stored(3L)),
         )
         val report = flush.flush()
         assertEquals(
@@ -109,7 +109,7 @@ class ClipFlusherTest {
         // the same clip every minute forever.
         val outbox = FakeOutbox(listOf("only"))
         val localId = outbox.items.single().id
-        val (flush, _) = flusher(outbox, listOf(ClipPost.Stored(id = 909L, deduped = false)))
+        val (flush, _) = flusher(outbox, listOf(ClipPost.Stored(id = 909L)))
         flush.flush()
         assertEquals(listOf(localId), outbox.removed)
     }
@@ -121,7 +121,7 @@ class ClipFlusherTest {
         // re-POST it every minute forever — bumping its timestamp each time and
         // shuffling it to the top of everyone's list.
         val outbox = FakeOutbox(listOf("same text"))
-        val (flush, _) = flusher(outbox, listOf(ClipPost.Stored(5L, deduped = true)))
+        val (flush, _) = flusher(outbox, listOf(ClipPost.Stored(5L)))
         assertEquals(ClipFlusher.Report(stored = 1), flush.flush())
         assertEquals(emptyList<ClipOutbox.Pending>(), outbox.items)
     }
@@ -135,7 +135,7 @@ class ClipFlusherTest {
         val outbox = FakeOutbox(listOf("unacceptable", "fine"))
         val (flush, poster) = flusher(
             outbox,
-            listOf(ClipPost.Refused(400, "`body` is required"), ClipPost.Stored(2L, false)),
+            listOf(ClipPost.Refused(400, "`body` is required"), ClipPost.Stored(2L)),
         )
         val report = flush.flush()
         assertEquals(ClipFlusher.Report(stored = 1, dropped = 1, kept = 0), report)
@@ -155,7 +155,7 @@ class ClipFlusherTest {
         val outbox = FakeOutbox(listOf("a", "b", "c"))
         val (flush, poster) = flusher(
             outbox,
-            listOf(ClipPost.Stored(1L, false), ClipPost.Unreachable("ECONNREFUSED")),
+            listOf(ClipPost.Stored(1L), ClipPost.Unreachable("ECONNREFUSED")),
         )
         val report = flush.flush()
         assertEquals(
@@ -185,7 +185,7 @@ class ClipFlusherTest {
         // and one flush that tries them all is a single foreground burst on a
         // metered radio. The next tick is a minute away.
         val outbox = FakeOutbox(List(7) { "item-$it" })
-        val (flush, poster) = flusher(outbox, listOf(ClipPost.Stored(1L, false)))
+        val (flush, poster) = flusher(outbox, listOf(ClipPost.Stored(1L)))
         val report = flush.flush(max = 3)
         assertEquals(3, poster.sent.size)
         assertEquals(ClipFlusher.Report(stored = 3, dropped = 0, kept = 4), report)
@@ -197,7 +197,7 @@ class ClipFlusherTest {
     fun theDefaultBudgetIsFiniteAndTheWholeQueueIsNotTheDefault() {
         assertEquals(25, ClipFlusher.MAX_PER_FLUSH)
         val outbox = FakeOutbox(List(30) { "item-$it" })
-        val (flush, poster) = flusher(outbox, listOf(ClipPost.Stored(1L, false)))
+        val (flush, poster) = flusher(outbox, listOf(ClipPost.Stored(1L)))
         val report = flush.flush()
         assertEquals(ClipFlusher.MAX_PER_FLUSH, poster.sent.size)
         assertEquals(5, report.kept)
@@ -211,7 +211,7 @@ class ClipFlusherTest {
         // failure one layer up from where ClipOutboxStore refuses it.
         val (flush, poster) = flusher(
             FakeOutbox(failOnRead = "the outbox file could not be read"),
-            listOf(ClipPost.Stored(1L, false)),
+            listOf(ClipPost.Stored(1L)),
         )
         val report = flush.flush()
         assertEquals("the outbox file could not be read", report.failure)
