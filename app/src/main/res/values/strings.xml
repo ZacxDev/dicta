@@ -594,4 +594,127 @@
          operator cannot tell apart from a lost tap. -->
     <string name="stt_snippets_import_no_file">the picker returned no file</string>
     <string name="stt_snippets_no_picker">No app on this phone can open a document.</string>
+
+    <!-- ===== The shared clipboard ========================================= -->
+
+    <!-- The third satellite button's label. @string/bubble_snip's template
+         exactly — it says what tapping DOES, not what the control IS — and it
+         must not announce the same thing as either sibling, which
+         BubbleClipRevealTest asserts. -->
+    <string name="bubble_clip">Shared clipboard — search and copy one from any device</string>
+
+    <!-- 🔴 The SAME button, announcing a queue that cannot drain. Not a second
+         control and not a badge: the reveal has three buttons and gains no
+         fourth, because the thing that is wrong IS the shared clipboard and the
+         shared clipboard already has an affordance. See ClipOutboxHealth for
+         what "cannot drain" means and why it is not "has pending work".
+
+         🔴 It must name the CONSEQUENCE, not the colour. The button also turns
+         @color/dicta_error, and the standing rule at the top of colors.xml is
+         that state is never carried by colour alone — a screen-reader user
+         hearing @string/bubble_clip over an ember icon learns nothing at all.
+         It must also DIFFER from @string/bubble_clip, which BubbleChromeTest
+         asserts as a set: a description copied from the ordinary label
+         satisfies "has a description" and tells nobody anything, which is the
+         half with teeth in SettingsThemingTest's destructive-control ledger.
+
+         "Not reaching" rather than "failed": the captures are safe on the phone
+         and will go when the mesh or the token is fixed, so a word suggesting
+         they were lost would be a worse lie than the silence it replaces. -->
+    <string name="bubble_clip_stuck">Shared clipboard — captures on this phone are not reaching your other devices. Open it to retry, or check the clip token in Settings</string>
+
+    <string name="clip_title">Shared clipboard</string>
+    <string name="clip_search_hint">Search clips</string>
+
+    <!-- 🔴 THREE distinct empty states, never one — @string/snip_empty_*'s and
+         @string/history_empty_*'s rule, and FloatingPickerActivity spends three
+         abstract members on it. "The store could not be reached", "it is empty"
+         and "nothing matches what you typed" are three different problems with
+         three different next steps, and one message for several of them is the
+         silent-empty failure moved into the UI.
+         PickerShellSeamLedgerTest.everyPickerDeclaresThreeDistinctEmptyStateResources
+         fails if any two of these point at one resource.
+
+         🔴 The unreachable one names the MESH, because that is the actionable
+         fact: this store has no public ingress by decision, so the overwhelming
+         cause of a failed read is being off-mesh — not an outage. It also
+         deliberately does NOT say "check the server": the operator's next act
+         is to reconnect, and a capture made meanwhile is queued anyway. -->
+    <string name="clip_empty_unreachable">Dicta could not reach the shared clipboard. It is mesh-only, so this is usually being off-mesh — anything you capture is queued until it is back.</string>
+    <string name="clip_empty_none">Nothing on the shared clipboard yet. Highlight text in any app and pick Send to Dicta.</string>
+    <string name="clip_empty_no_matches">No clips match that.</string>
+
+    <!-- The row's contentDescription, @string/history_row_desc's twin. It says
+         what tapping does, not only what the row is: a screen-reader user
+         meeting a row of free text has no way to know it is a button. -->
+    <string name="clip_row_desc">%1$s — copy this to the clipboard</string>
+
+    <!-- 🔴 Says NOTHING about the body, unlike @string/snip_copied which names
+         the snippet's label. A clip has no label (settled decision 1) and the
+         only thing available to name is the text itself — which is exactly what
+         ClipPickerActivity.sensitive exists to keep off the screen. A toast
+         echoing the body would undo that one line later. -->
+    <string name="clip_copied">Copied to the clipboard</string>
+
+    <!-- Shown beside a row whose device attribution is missing. The row still
+         renders and is still tappable: an unattributed clip is a clip, and a
+         row the user cannot see is one they cannot reach. -->
+    <string name="clip_device_unknown">unknown device</string>
+    <string name="clip_no_body">(empty)</string>
+
+    <!-- ===== What a capture tells the user =============================== -->
+
+    <!-- 🔴 "Queued", not "Sent". The upload is ALWAYS deferred — see
+         ClipOutbox's kdoc for why a POST from a finishing activity loses
+         captures silently — so "Sent" would be a claim the code cannot make.
+         The wording is what tells an off-mesh operator that nothing is lost.
+
+         🔴 And it does NOT echo the captured text, for @string/clip_copied's
+         reason, harder: a capture is more likely than a snippet to be material
+         the user would not want rendered over the app they are in. -->
+    <string name="clip_capture_queued">Captured — it will sync when Dicta is on the mesh</string>
+    <!-- The null-extra case. TextView.getSelectedText() returns null when
+         there is no selection and the platform fires the intent anyway, so this
+         is reachable without the user doing anything wrong. A silent return
+         would be indistinguishable from a lost tap. -->
+    <string name="clip_capture_nothing">Nothing was selected, so nothing was captured</string>
+    <!-- 🔴 The failed-write case, and it MUST exist. The outbox is the only
+         copy of the capture and the selection it came from is gone by the time
+         a toast appears, so a success report over a failed write leaves the
+         user believing they have something they do not. This is the opposite
+         posture from SnipUsageStore, which swallows its write failures. -->
+    <string name="clip_capture_failed">Dicta could not save that capture</string>
+
+    <!-- The two <intent-filter android:label>s. Short VERBS, because the label
+         is the one thing a receiver controls (resolveInfo.loadLabel) and the
+         icon is not — there is no loadIcon anywhere in
+         ProcessTextIntentActionsHandler. The toolbar one is shorter: it sits in
+         a ⋮ overflow beside Cut/Copy/Share. -->
+    <string name="capture_verb">Send to Dicta</string>
+    <string name="capture_verb_share">Send to Dicta’s shared clipboard</string>
+
+    <!-- ===== Settings: the clip store's own URL and token ================ -->
+
+    <string name="clip_settings_header">Shared clipboard</string>
+    <string name="clip_settings_desc">The mesh address of the clip store, and its bearer token. A separate token from the transcription one: they reach different services and rotating either must not rotate the other.</string>
+    <string name="clip_url_label">Clip store URL</string>
+    <string name="clip_url_hint">http://10.42.0.10:8139</string>
+    <!-- @string/stt_token_hint_* 's pair, for the clip token. The stored token
+         is NEVER rendered back into the field — see SettingsActivity's kdoc. -->
+    <string name="clip_token_hint_stored">A token is stored. Leave empty to keep it.</string>
+    <string name="clip_token_hint_empty">Paste the clipstore bearer token</string>
+    <string name="clip_clear_token">Clear clipboard token</string>
+    <!-- 🔴 The THIRD cue on the destructive control, for the reason
+         @string/stt_clear_token_desc carries: the error ring and the ✕ glyph
+         both identify it without colour vision, and this names the
+         CONSEQUENCE for a screen reader. Additive to the visible label, not a
+         replacement — SettingsThemingTest ledgers every destructive control
+         and requires all three. -->
+    <string name="clip_clear_token_desc">Clear the stored shared-clipboard token. The token is deleted and queued clips stay on this phone until you paste a new one.</string>
+    <string name="clip_token_cleared">Shared-clipboard token cleared.</string>
+    <!-- Carries the exception's CLASS NAME, never its message and never the
+         token: SettingsActivity's save() does the same for the transcription
+         token, because a "Saved" toast over a failed encryption leaves the user
+         sending no token and seeing an unexplained 401. -->
+    <string name="clip_token_save_failed">The shared-clipboard token could not be encrypted (%1$s). It was NOT saved.</string>
 </resources>

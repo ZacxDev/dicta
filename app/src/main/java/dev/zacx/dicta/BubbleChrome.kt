@@ -34,6 +34,44 @@ object BubbleChrome {
     }
 
     /**
+     * 🔴 The shared-clipboard button's `contentDescription` for a queue that
+     * either can or cannot drain.
+     *
+     * [labelFor]'s shape, for [labelFor]'s reason, applied to the one piece of
+     * state a reveal button carries. The fault is also drawn in
+     * `@color/dicta_error` ([clipTintFor]) — and that tint may not be the only
+     * thing saying so, which is the standing rule in the long header of
+     * `res/values/colors.xml` and the same rule
+     * `SettingsThemingTest.theDestructiveActionIsIdentifiableWithNoColourVision`
+     * enforces on the settings screen's three destructive controls. An ember
+     * ✕-less icon that a screen-reader user hears announced as *"Shared
+     * clipboard — search and copy one from any device"* conveys a fault by hue
+     * alone, which is a 1.4.1 failure and here also a data-loss one: the
+     * captures are still on the phone and the operator has no way to learn it.
+     *
+     * The two resources are required to be distinct by `BubbleChromeTest`,
+     * asserted as a *set* exactly as the three state labels are — so a copy
+     * edit is free and a mutation that points the fault at the ordinary label
+     * is not.
+     *
+     * @param stuck [ClipOutboxHealth.isStuck] — a run of failed drains, NOT
+     *   merely a non-empty queue. See that object's kdoc for why the
+     *   distinction is the whole design.
+     */
+    fun clipLabelFor(stuck: Boolean): Int =
+        if (stuck) R.string.bubble_clip_stuck else R.string.bubble_clip
+
+    /**
+     * The shared-clipboard button's icon tint for the same verdict.
+     *
+     * `dicta_error` rather than `dicta_live`: `colors.xml` states that the two
+     * exist precisely so that *recording* and *failed* do not share a colour,
+     * and a stuck outbox is a failure rather than an activity.
+     */
+    fun clipTintFor(stuck: Boolean): Int =
+        if (stuck) R.color.dicta_error else R.color.dicta_on_surface
+
+    /**
      * Whether the cancel button fits **below** the bubble.
      *
      * ## The known gap this closes, and why it was not left alone

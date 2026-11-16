@@ -23,13 +23,29 @@ import java.util.Locale
 class TokenStore(
     private val prefs: SharedPreferences,
     private val cipher: SecretCipher,
+    /**
+     * Which preference key this instance owns.
+     *
+     * 🔴 A PARAMETER since the shared clipboard arrived, defaulting to the
+     * transcription token's key so every existing caller is unchanged. The app
+     * now holds TWO independent bearer tokens — see [ClipSettings] — and they
+     * must be separately settable, clearable and rotatable, because they reach
+     * different services with different blast radii.
+     *
+     * One implementation with two instances, deliberately, rather than a second
+     * token class: the two invariants this file is pinned on (the plaintext
+     * never reaches the preferences XML; an undecryptable blob reads back as
+     * null) are ONE rule, and a predicate open-coded at N sites is wrong at
+     * N−1 of them.
+     */
+    private val key: String = KEY_TOKEN_CIPHERTEXT,
 ) {
 
     /**
      * @return the token, or null when none is stored or it will not decrypt.
      */
     fun token(): String? {
-        val blob = prefs.getString(KEY_TOKEN_CIPHERTEXT, null) ?: return null
+        val blob = prefs.getString(key, null) ?: return null
         return cipher.decrypt(blob)?.takeIf { it.isNotBlank() }
     }
 
@@ -49,12 +65,12 @@ class TokenStore(
             return
         }
         prefs.edit()
-            .putString(KEY_TOKEN_CIPHERTEXT, cipher.encrypt(trimmed))
+            .putString(key, cipher.encrypt(trimmed))
             .apply()
     }
 
     fun clearToken() {
-        prefs.edit().remove(KEY_TOKEN_CIPHERTEXT).apply()
+        prefs.edit().remove(key).apply()
     }
 
     companion object {
@@ -198,10 +214,21 @@ class SttSettings(
         const val KEY_LANGUAGE: String = "stt_language"
         private const val PREFS_NAME = "dicta_stt"
 
-        /** The one place the preferences file name is spelled. */
+        /**
+         * 🔴 The one place the preferences file name is spelled.
+         *
+         * [ClipSettings.create] goes through here rather than naming
+         * `PREFS_NAME` a second time: the shared clipboard keeps its own
+         * KEYS and its own keystore alias (which is the decision — see that
+         * class), but it has no reason to own a second preferences FILE, and a
+         * second spelling of the name is the drift this method exists to
+         * prevent.
+         */
+        fun prefs(context: Context): SharedPreferences =
+            context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+
         fun create(context: Context): SttSettings {
-            val prefs = context.applicationContext
-                .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            val prefs = prefs(context)
             return SttSettings(prefs, TokenStore(prefs, KeystoreCipher()))
         }
 

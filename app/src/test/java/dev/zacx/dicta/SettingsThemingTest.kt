@@ -114,6 +114,15 @@ class SettingsThemingTest {
         // own voice. The ledger GREW deliberately, which is exactly what its
         // failure message asks a new control to do.
         "stt_import_snippets" to "@drawable/outline_button_bg",
+        // The shared clipboard's own group. Its URL and token fields are
+        // @id/stt_url and @id/stt_token's elements attribute for attribute,
+        // and its clear button is @id/stt_clear_token's — the two controls
+        // destroy the same KIND of thing, so a difference in styling would
+        // read as a difference in consequence. The ledger GREW deliberately,
+        // which is what its failure message asks a new control to do.
+        "clip_url" to "@drawable/input_bg",
+        "clip_token" to "@drawable/input_bg",
+        "clip_clear_token" to "@drawable/destructive_button_bg",
     )
 
     /**
@@ -125,6 +134,13 @@ class SettingsThemingTest {
     private val destructiveActions: Map<String, Int> = mapOf(
         "stt_clear_token" to R.string.stt_clear_token_desc,
         "stt_clear_history" to R.string.stt_clear_history_desc,
+        // 🔴 THE THIRD destructive control, and ledgering it is what made the
+        // layout carry its contentDescription at all: the first draft of the
+        // shared-clipboard screen gave the button the error ring and the ✕
+        // glyph and no description, and this ledger's growth is what surfaced
+        // the missing third cue. The rule is a property of EVERY destructive
+        // control, which is the whole reason this is a list.
+        "clip_clear_token" to R.string.clip_clear_token_desc,
     )
 
     /** The group labels, which must all be accent labels and not body text. */
@@ -137,6 +153,10 @@ class SettingsThemingTest {
         // of this list is that the rule is a property of EVERY group, so a new
         // heading that is not in it is a heading nothing checks.
         R.string.stt_section_snippets,
+        // The shared clipboard's group, added here rather than left out for
+        // the reason above: a new heading that is not in this list is a
+        // heading nothing checks.
+        R.string.clip_settings_header,
     )
 
     private val controlTags = setOf("Button", "Spinner", "CheckBox", "EditText")
@@ -296,11 +316,17 @@ class SettingsThemingTest {
 
         // Positive control: a zero here would make the loop vacuous and
         // indistinguishable from a tree with no text-bearing controls at all.
+        // 🔴 RE-DERIVED at 8 by the shared-clipboard change, not loosened: the
+        // two clip fields are text-bearing and on-surface like their STT
+        // twins, and clip_clear_token is excluded with the other destructive
+        // controls because its label is deliberately the error colour. The
+        // eight are the checkbox, four fields (STT URL and token, clip URL and
+        // token) and the three outlined buttons.
         assertEquals(
-            "expected to examine the checkbox, both fields and all THREE " +
+            "expected to examine the checkbox, all FOUR fields and all THREE " +
                 "outlined buttons (Save, Test, Import snippets); examined " +
                 "$examined",
-            6,
+            8,
             examined.size
         )
     }
@@ -514,8 +540,8 @@ class SettingsThemingTest {
         // above vacuous, and a zero-iteration loop is indistinguishable from a
         // passing guard.
         assertEquals(
-            "the destructive ledger no longer names both destructive controls",
-            setOf("stt_clear_token", "stt_clear_history"),
+            "the destructive ledger no longer names every destructive control",
+            setOf("stt_clear_token", "stt_clear_history", "clip_clear_token"),
             destructiveActions.keys
         )
     }
@@ -536,13 +562,14 @@ class SettingsThemingTest {
         val buttons = descendants(inflate())
             .filterIsInstance<Button>()
             .filter { it !is android.widget.CompoundButton }
-        // 🔴 Five since issue #38 added @id/stt_import_snippets. RE-DERIVED
-        // from what the screen holds, not loosened: the four are Save, Test,
-        // Clear token and Delete all history, and the fifth is the import.
+        // 🔴 SIX since the shared clipboard added @id/clip_clear_token.
+        // RE-DERIVED from what the screen holds, not loosened: Save, Test,
+        // Clear token, Delete all history, the import, and the shared
+        // clipboard's own clear button.
         assertEquals(
-            "the screen no longer has the five buttons this guard was written " +
+            "the screen no longer has the six buttons this guard was written " +
                 "for; re-derive it rather than loosening it",
-            5,
+            6,
             buttons.size
         )
         for (button in buttons) {

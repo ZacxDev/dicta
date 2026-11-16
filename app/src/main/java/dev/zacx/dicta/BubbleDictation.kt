@@ -199,6 +199,31 @@ class BubbleDictation(
         object SnipTapped : Event
 
         /**
+         * The **shared-clipboard** button inside the long-press reveal.
+         *
+         * 🔴 Routed through the machine rather than wired straight from the
+         * view to `startActivity`, for [SnipTapped]'s and [HistoryTapped]'s
+         * reason exactly: `on()` already prefixes [Effect.HideActions] to every
+         * event that is not a long press, so "the buttons go away, then the
+         * picker opens" is expressed by adding an event with a one-effect arm
+         * instead of by a third dismissal path in the shell.
+         *
+         * 🔴 It can reach **no** microphone path. The arm emits
+         * [Effect.OpenClipPicker] and nothing else: no [Effect.StartRecording],
+         * no [Event.BubbleTapped], no session. The picker it opens fetches rows
+         * over the mesh and writes one to the clipboard; it starts no activity
+         * at all, which is a strictly smaller surface than either sibling. That
+         * is why `StartSurfaceLedgerTest`'s ledger does not grow for it.
+         *
+         * Reachable only from IDLE in practice, because the reveal that carries
+         * the button only opens in IDLE ([onLongPress]) — but the arm refuses
+         * the other two states anyway rather than relying on that, since "the
+         * only caller cannot reach it" is a claim about today's wiring and this
+         * is a claim about the machine.
+         */
+        object ClipTapped : Event
+
+        /**
          * Capture could not start at all, and [failure] says why — the shell
          * knows which of its own steps refused, and the user needs to be told
          * which.
@@ -327,6 +352,22 @@ class BubbleDictation(
          * floating over the picker's own window.
          */
         object OpenSnipPicker : Effect
+
+        /**
+         * Open the shared-clipboard picker.
+         *
+         * 🔴 **Not** a recording effect and not reached from any tap path. The
+         * shell carries it out by starting [ClipPickerActivity] through
+         * [ClipLaunch]; it opens no microphone, holds no session and asks for
+         * no permission. Unlike [OpenHistoryPicker] the picker it opens cannot
+         * start an activity at all, so there is not even a card to qualify.
+         *
+         * 🔴 Emitted **after** the [HideActions] that `on()` prefixes, so the
+         * reveal is down before the picker is on screen. Ordering is the
+         * assertion — membership alone would pass with three buttons left
+         * floating over the picker's own window.
+         */
+        object OpenClipPicker : Effect
     }
 
     var state: State = State.IDLE
@@ -375,6 +416,7 @@ class BubbleDictation(
             Event.CancelTapped -> onCancel()
             Event.SnipTapped -> onSnipTapped()
             Event.HistoryTapped -> onHistoryTapped()
+            Event.ClipTapped -> onClipTapped()
             is Event.CaptureFailed -> onCaptureFailed(event.failure)
             Event.MaxDurationReached -> onMaxDuration()
             Event.TranscriptSettled -> toIdle()
@@ -445,6 +487,26 @@ class BubbleDictation(
      */
     private fun onSnipTapped(): List<Effect> =
         if (state == State.IDLE) listOf(Effect.OpenSnipPicker) else emptyList()
+
+    /**
+     * The shared-clipboard button, honoured **only while idle** — and the state
+     * is left exactly as it was in all three cases.
+     *
+     * [onSnipTapped]'s and [onHistoryTapped]'s arm, verbatim in shape and for
+     * the same inherited reasons.
+     *
+     * 🔴 THREE arms with the same shape, and still NOT one arm taking a picker
+     * parameter. [onHistoryTapped]'s kdoc makes the argument at two; at three
+     * the pull toward collapsing them is stronger and the answer is unchanged.
+     * Collapsing them would put a value in the event — "which picker" — that
+     * the machine would then carry and the shell would switch on, i.e. a second
+     * place that decides what a button does. Each button's decision is its own,
+     * and `BubbleHistoryStateTest`, `BubbleSnipStateTest` and
+     * `BubbleClipStateTest` each pin one of them; the thing that is genuinely
+     * one rule, the [Effect.HideActions] prefix, is already in one place.
+     */
+    private fun onClipTapped(): List<Effect> =
+        if (state == State.IDLE) listOf(Effect.OpenClipPicker) else emptyList()
 
     private fun onTap(micGranted: Boolean): List<Effect> = when (state) {
         State.IDLE -> {

@@ -1,0 +1,133 @@
+# Mutant batch for the shared-clipboard change — Dicta's client for the
+# clipstore service: a capture receiver, an on-disk outbox, an HTTP client, a
+# flusher, a floating picker and a third button in the bubble's long-press
+# reveal.
+#
+#   scripts/mutate.sh batch scripts/mutants/shared-clipboard.tsv
+#
+# Tab-separated: NAME <TAB> FILE <TAB> FROM <TAB> TO [<TAB> TEST_FILTER]
+# FROM must occur EXACTLY ONCE in FILE or the mutant is REFUSED — and a
+# REFUSED row reads like a pass, so every FROM below was checked for single
+# occurrence before the row was written.
+#
+# 🔴 DEFINITIONS ONLY, NEVER RESULTS. A verdict is void the moment the
+# tree moves — see scripts/MUTATION-TESTING.md. The verdicts these produced
+# live in the pull request for this change, stamped with the commit they were
+# measured on.
+#
+# 🔴 WHY THIS BATCH EXISTS. NOTHING in this change is regression
+# coverage: every file is new, so there is no tree on which any of its tests
+# could be watched going red. Every one of them is an invariant guard or a
+# characterization test, and a guard nobody has broken on purpose is a guard
+# nobody has evidence for. This batch is that evidence.
+#
+# 🔴 THE HAZARD CLASS THESE TARGET is the SILENT one: a capture that
+# never leaves the phone, a failed read that renders as "your shared clipboard
+# is empty", a 401 that deletes the queue one item at a time, a reveal button
+# clamped off the bottom of the screen. None of those throws, none logs, and
+# each looks exactly like the feature working or the service being down.
+#
+# 🔴 m-clip24 IS THE POSITIVE CONTROL, and it is in the batch rather
+# than beside it on purpose: a batch in which EVERY mutant SURVIVED is
+# indistinguishable from a harness that ran nothing, so one row must be a
+# mutation whose kill is already known. Read its verdict first; if it survived,
+# every other verdict in the run is void.
+#
+# 🔴 Each row changes ONE expression and leaves the branch structure
+# intact, so a kill is attributable to that expression and nothing else. In
+# particular no row deletes a guard TOGETHER WITH its enclosing condition —
+# that proves nothing about the guard and dies for the wrong reason.
+#
+#
+# 🔴 TWO VERDICTS FROM THE FIRST RUN OF THIS BATCH DROVE EDITS HERE, and
+# both are findings about the HARNESS rather than about the code:
+#
+#   * m-clip02 was reported SURVIVED under `dev.zacx.dicta.BubbleClipRevealTest`.
+#     It is killed by `BubbleRevealGestureTest`, which MEASURES the container's
+#     own growth and compares it against the sum of the three dp-derived blocks
+#     — the only test that computes the two sides independently. The clip
+#     picker's own clamp tests build their expected sum FROM clipBlockPx, so an
+#     UNDERSTATED block is invisible to them by construction. A `-run` filter
+#     that excludes the killing test reports SURVIVED; the filter is widened to
+#     `dev.zacx.dicta.Bubble*Test`, not the test weakened.
+#
+#   * m-clip17's original mutation — rank-the-whole-list instead of
+#     filter-row-by-row — is an EQUIVALENT MUTANT, which is why it survived.
+#     `SnipMatcher.rank` partitions into declared-term hits and label hits and
+#     returns `declared + labeled`; `ClipPickerActivity.searchViewOf` builds its
+#     synthetic Snippet with `searchTerms = emptyList()`, so `declared` is
+#     ALWAYS empty and rank degrades to a stable filter. There is no ordering
+#     to leak. Replaced with a mutation that genuinely reorders
+#     (`rows.sortedBy { it.body }`), which the server-order test kills.
+#
+# 🔴 TEST_FILTER is an optimisation and the harness refuses a run that
+# executed zero tests, which is what makes a typo'd filter fail loudly instead
+# of reading as SURVIVED. Without that guard the column would be unsafe.
+m-clip01-the-clamp-forgets-the-third-button	app/src/main/java/dev/zacx/dicta/BubbleService.kt	(if (clip?.visibility == View.VISIBLE) clipBlockPx else 0)	0	dev.zacx.dicta.BubbleClipRevealTest
+m-clip02-the-third-block-has-no-gap	app/src/main/java/dev/zacx/dicta/BubbleService.kt	clipBlockPx = ((CLIP_DP + CLIP_GAP_DP) * density).toInt()	clipBlockPx = (CLIP_GAP_DP * density).toInt()	dev.zacx.dicta.Bubble*Test
+m-clip03-the-reveal-leaves-the-clip-button-up	app/src/main/java/dev/zacx/dicta/BubbleService.kt	clip?.visibility = visibility	clip?.visibility = View.VISIBLE	dev.zacx.dicta.BubbleClipRevealTest
+m-clip04-the-clip-button-opens-the-snip-picker	app/src/main/java/dev/zacx/dicta/BubbleDictation.kt	if (state == State.IDLE) listOf(Effect.OpenClipPicker) else emptyList()	if (state == State.IDLE) listOf(Effect.OpenSnipPicker) else emptyList()	dev.zacx.dicta.BubbleClipStateTest
+m-clip05-the-clip-button-works-while-recording	app/src/main/java/dev/zacx/dicta/BubbleDictation.kt	if (state == State.IDLE) listOf(Effect.OpenClipPicker) else emptyList()	listOf(Effect.OpenClipPicker)	dev.zacx.dicta.BubbleClipStateTest
+m-clip06-a-failed-list-read-reads-as-an-empty-store	app/src/main/java/dev/zacx/dicta/ClipHttp.kt	if (conn.responseCode != 200) return null	if (conn.responseCode != 200) return emptyList()	dev.zacx.dicta.ClipHttpTest
+m-clip07-a-malformed-body-reads-as-an-empty-store	app/src/main/java/dev/zacx/dicta/ClipJson.kt	throw Malformed("the response has no \"$KEY_CLIPS\" array")	return emptyList()	dev.zacx.dicta.ClipJsonTest
+m-clip08-a-401-drops-the-users-capture	app/src/main/java/dev/zacx/dicta/ClipHttp.kt	setOf(400, 404, 405, 413, 414, 415, 422)	setOf(400, 401, 403, 404, 405, 413, 414, 415, 422)	dev.zacx.dicta.ClipHttpTest
+m-clip09-a-2xx-with-no-id-counts-as-stored	app/src/main/java/dev/zacx/dicta/ClipHttp.kt	if (id <= 0L) {	if (false) {	dev.zacx.dicta.ClipHttpTest
+m-clip12-the-outbox-id-comes-from-the-list-size	app/src/main/java/dev/zacx/dicta/ClipOutbox.kt	val floor = (items.maxOfOrNull { it.id } ?: 0L) + 1L	val floor = items.size + 1L	dev.zacx.dicta.ClipOutboxStoreTest
+m-clip13-a-failed-capture-write-is-swallowed	app/src/main/java/dev/zacx/dicta/ClipOutbox.kt	throw ClipOutbox.Failed("the capture could not be saved", e)	Unit	dev.zacx.dicta.ClipOutboxStoreTest
+m-clip14-a-corrupt-outbox-reads-as-drained	app/src/main/java/dev/zacx/dicta/ClipOutbox.kt	throw ClipOutbox.Failed("the outbox file could not be read", e)	return State(nextId = 1L, items = emptyList())	dev.zacx.dicta.ClipOutboxStoreTest
+m-clip15-the-outbox-lives-in-the-backed-up-files-dir	app/src/main/java/dev/zacx/dicta/ClipOutbox.kt	File(context.noBackupFilesDir, DIR)	File(context.filesDir, DIR)	dev.zacx.dicta.ClipOutboxStoreTest
+m-clip17-the-picker-reorders-the-shared-list	app/src/main/java/dev/zacx/dicta/ClipPickerActivity.kt	rows.filter { SnipMatcher.rank(listOf(searchViewOf(it)), query).isNotEmpty() }	rows.sortedBy { it.body }.filter { SnipMatcher.rank(listOf(searchViewOf(it)), query).isNotEmpty() }	dev.zacx.dicta.ClipPickerActivityTest
+m-clip18-the-copied-clip-is-not-marked-sensitive	app/src/main/java/dev/zacx/dicta/ClipPickerActivity.kt	clipboard?.setPrimaryClip(sensitive(ClipData.newPlainText(null, row.body)))	clipboard?.setPrimaryClip(ClipData.newPlainText(null, row.body))	dev.zacx.dicta.ClipPickerActivityTest
+m-clip19-a-styled-selection-lands-nothing	app/src/main/java/dev/zacx/dicta/CaptureActivity.kt	intent.getCharSequenceExtra(Intent.EXTRA_PROCESS_TEXT)	intent.getStringExtra(Intent.EXTRA_PROCESS_TEXT)	dev.zacx.dicta.CaptureActivityTest
+m-clip20-the-receiver-replaces-the-users-selection	app/src/main/java/dev/zacx/dicta/CaptureActivity.kt	setResult(RESULT_CANCELED)	setResult(RESULT_OK)	dev.zacx.dicta.CaptureActivityTest
+m-clip21-a-failed-capture-toasts-success	app/src/main/java/dev/zacx/dicta/CaptureActivity.kt	toast(R.string.clip_capture_failed)	toast(R.string.clip_capture_queued)	dev.zacx.dicta.CaptureActivityTest
+m-clip22-the-two-tokens-share-a-preference-key	app/src/main/java/dev/zacx/dicta/ClipSettings.kt	KEY_TOKEN_CIPHERTEXT: String = "clip_token_ciphertext_v1"	KEY_TOKEN_CIPHERTEXT: String = TokenStore.KEY_TOKEN_CIPHERTEXT	dev.zacx.dicta.ClipSettingsTest
+m-clip23-the-clip-store-points-off-the-exempted-host	app/src/main/java/dev/zacx/dicta/ClipEndpoints.kt	DEFAULT_BASE_URL: String = "http://10.42.0.10:8139"	DEFAULT_BASE_URL: String = "http://10.42.0.11:8139"	dev.zacx.dicta.NetworkManifestTest
+m-clip24-POSITIVE-CONTROL-the-picker-title-is-the-snip-one	app/src/main/java/dev/zacx/dicta/ClipPickerActivity.kt	override val titleRes: Int = R.string.clip_title	override val titleRes: Int = R.string.snip_title	dev.zacx.dicta.ClipPickerActivityTest
+m-clip10-an-unreachable-flush-reports-nothing-kept	app/src/main/java/dev/zacx/dicta/ClipFlusher.kt	kept = queue.size - index,	kept = 0,	dev.zacx.dicta.ClipFlusherTest
+m-clip10b-an-unreachable-flush-does-not-say-so	app/src/main/java/dev/zacx/dicta/ClipFlusher.kt	unreachable = true,	unreachable = false,	dev.zacx.dicta.ClipFlusherTest
+m-clip11-a-permanent-refusal-blocks-the-queue-forever	app/src/main/java/dev/zacx/dicta/ClipFlusher.kt	dropped++	return Report(stored, dropped, kept = queue.size - index)	dev.zacx.dicta.ClipFlusherTest
+m-clip16-the-picker-never-flushes-the-outbox	app/src/main/java/dev/zacx/dicta/ClipPickerActivity.kt	runCatching { (flush ?: ::defaultFlush).invoke() }	Unit	dev.zacx.dicta.ClipPickerActivityTest
+#
+# ===========================================================================
+# AUDIT ROUND 0's FIXES. Added with the commit that makes a stuck outbox
+# visible, narrows the capture-theme guard and takes deletions D3/D4/D5.
+# ===========================================================================
+#
+# 🔴 THESE ARE THE ONLY ROWS IN THIS FILE THAT ARE REGRESSION MUTANTS rather
+# than invariant guards. m-clip25 restores the shipped defect exactly — the
+# Report built with the failure in it and dropped on the floor — so its kill is
+# evidence about the defect and not merely about a guard. Every row above was
+# written against new code with no tree to go red on, which the header says.
+#
+# 🔴 m-clip26 is the CRYING-WOLF direction, and it is as important as the
+# silent one: an indicator keyed on `kept > 0` lights after every ordinary
+# multi-item capture, and an indicator that is always on is one nobody reads.
+# A sweep that only mutated toward silence would certify half the requirement.
+m-clip25-REGRESSION-the-drain-discards-its-own-report	app/src/main/java/dev/zacx/dicta/BubbleService.kt	ClipOutboxHealth.record(report)	Unit	dev.zacx.dicta.ClipSeamLedgerTest
+m-clip25b-REGRESSION-the-picker-discards-its-own-report	app/src/main/java/dev/zacx/dicta/ClipPickerActivity.kt	ClipOutboxHealth.record(report)	Unit	dev.zacx.dicta.ClipSeamLedgerTest
+m-clip26-a-merely-pending-queue-reads-as-a-fault	app/src/main/java/dev/zacx/dicta/ClipOutboxHealth.kt	if (report.cannotDrain) {	if (report.kept > 0) {	dev.zacx.dicta.ClipOutboxHealthTest
+m-clip27-an-unreadable-outbox-reads-as-healthy	app/src/main/java/dev/zacx/dicta/ClipFlusher.kt	get() = unreachable || failure != null	get() = unreachable	dev.zacx.dicta.ClipOutboxHealthTest
+m-clip28-the-fault-threshold-is-off-by-one	app/src/main/java/dev/zacx/dicta/ClipOutboxHealth.kt	consecutiveFailures >= STUCK_AFTER_FAILURES	consecutiveFailures > STUCK_AFTER_FAILURES	dev.zacx.dicta.ClipOutboxHealthTest
+m-clip29-every-mesh-blip-is-a-fault	app/src/main/java/dev/zacx/dicta/ClipOutboxHealth.kt	const val STUCK_AFTER_FAILURES: Int = 3	const val STUCK_AFTER_FAILURES: Int = 1	dev.zacx.dicta.ClipOutboxHealthTest
+m-clip30-the-stuck-queue-is-announced-as-a-healthy-one	app/src/main/java/dev/zacx/dicta/BubbleChrome.kt	if (stuck) R.string.bubble_clip_stuck else R.string.bubble_clip	R.string.bubble_clip	dev.zacx.dicta.Bubble*Test
+m-clip31-the-fault-is-carried-by-colour-alone	app/src/main/java/dev/zacx/dicta/BubbleChrome.kt	if (stuck) R.color.dicta_error else R.color.dicta_on_surface	R.color.dicta_on_surface	dev.zacx.dicta.Bubble*Test
+m-clip32-a-service-starting-into-a-stuck-queue-shows-nothing	app/src/main/java/dev/zacx/dicta/BubbleService.kt	applyClipHealth(clipButton, ClipOutboxHealth.isStuck())	applyClipHealth(clipButton, false)	dev.zacx.dicta.BubbleClipRevealTest
+# 🔴 m-clip33's TO is the OPAQUE theme SPELLED OUT, not the attribute deleted, and
+# that is forced rather than chosen: a TO that repeats an attribute already on the
+# element gives aapt2 a duplicate and the manifest merge fails, so ZERO TESTS RUN
+# and the harness reports NO-RESULT. Measured on the first run of this row. The
+# substitution below is the shipped defect exactly — `Theme.Dicta` is what the
+# element inherited when it declared no theme at all.
+m-clip33-the-capture-receiver-raises-an-opaque-window	app/src/main/AndroidManifest.xml	android:theme="@android:style/Theme.Translucent.NoTitleBar"	android:theme="@style/Theme.Dicta"	dev.zacx.dicta.CaptureManifestTest
+m-clip34-the-capture-receiver-wears-the-overlay-theme	app/src/main/AndroidManifest.xml	android:theme="@android:style/Theme.Translucent.NoTitleBar"	android:theme="@style/Theme.Dicta.Overlay"	dev.zacx.dicta.CaptureManifestTest
+m-clip35-an-old-queue-file-loses-every-capture	app/src/main/java/dev/zacx/dicta/ClipOutbox.kt	if (id > 0L && body.isNotEmpty()) {	if (id > 0L && body.isNotEmpty() && row.has(ClipJson.KEY_CREATED_AT).not()) {	dev.zacx.dicta.ClipOutboxStoreTest
+#
+# 🔴 m-clip36 SURVIVED on its first run, and the GUARD was fine — the FILTER
+# was wrong. It pointed at `CaptureActivityTest`, whose assertion is on the
+# in-memory `ClipOutbox.Pending` a fake collected and never goes near the JSON
+# writer this mutant edits. The real guard is in `ClipOutboxStoreTest`, which
+# reads the file off disk. Worth keeping the note: a SURVIVED verdict names
+# "a guard worth a look", and the look can end at the TSV row rather than the
+# test. The test name is what misled the author, and it was renamed with this.
+m-clip36-the-queue-file-carries-a-key-nothing-reads	app/src/main/java/dev/zacx/dicta/ClipJson.kt	.put(KEY_BODY, item.body)	.put(KEY_BODY, item.body).put(KEY_CREATED_AT, 0L)	dev.zacx.dicta.ClipOutboxStoreTest

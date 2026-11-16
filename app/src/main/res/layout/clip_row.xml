@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  One shared-clipboard row: the age and which device captured it on the first
+  line, a truncated one-line body preview on the second.
+
+  🔴 Modelled on history_row.xml, NOT on snip_row.xml, and that is the one real
+  choice in this file. A snippet row's first line is `label · category`, where
+  the label IS the row's identity; a clip has no label at all (settled decision
+  1: chronological, unlabelled, searched over bodies). What a clip row needs is
+  exactly what a history row needs — "when, and from where" above the text —
+  which is why ClipPickerActivity reuses HistoryRow.title and HistoryLabel.age
+  rather than inventing a second age vocabulary. Same two-line shape, same
+  @drawable/row_bg, same ellipsize backstop.
+
+  Deliberately NOT the same FILE as history_row.xml: the two carry different
+  content with different ids, and forcing one row type is the coupling
+  FloatingPickerActivity's kdoc declines. Its own ids are also what make
+  ClipPickerActivity's recycling test about this row rather than about the
+  history one.
+
+  🔴 The body is NEVER rendered in full. A clipboard capture can be a whole
+  file — the platform truncates a selection at 100,000 characters — so a row
+  showing all of it would be many screenfuls per entry. The truncation is
+  HistoryRow.preview, a character budget, because this project's Robolectric
+  returns a flat 1.0 px per character from TextPaint.measureText and a
+  rendered-width claim could therefore be checked nowhere.
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:background="@drawable/row_bg"
+    android:layout_marginBottom="6dp"
+    android:orientation="vertical"
+    android:padding="12dp">
+
+    <TextView
+        android:id="@+id/clip_row_title"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:ellipsize="end"
+        android:maxLines="1"
+        android:textColor="@color/dicta_on_surface_variant"
+        android:textSize="13sp" />
+
+    <TextView
+        android:id="@+id/clip_row_preview"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:ellipsize="end"
+        android:maxLines="1"
+        android:textColor="@color/dicta_on_surface"
+        android:textSize="15sp" />
+</LinearLayout>
