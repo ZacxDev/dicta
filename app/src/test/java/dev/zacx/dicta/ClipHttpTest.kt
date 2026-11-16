@@ -275,11 +275,37 @@ class ClipHttpTest {
     }
 
     @Test
-    fun theOtherPermanentRefusalsAreTheOnesARETRYCannotFix() {
-        // Each of these is a property of the REQUEST — a route that does not
-        // exist, a method the route does not serve, a body the service will
-        // never accept — so the same bytes will be refused identically forever.
-        assertEquals(setOf(400, 404, 405, 413, 414, 415, 422), ClipHttp.PERMANENT_STATUSES)
+    fun theOnlyPermanentRefusalsAreTheOnesABODYCannotBeFixedOutOf() {
+        // 🔴 THIS COMMENT IS THE DEFECT'S OWN REASONING, CORRECTED. It read:
+        //
+        //   "Each of these is a property of the REQUEST — a route that does
+        //    not exist, a method the route does not serve, a body the service
+        //    will never accept — so the same bytes will be refused
+        //    identically forever."
+        //
+        // against `setOf(400, 404, 405, 413, 414, 415, 422)`. A route that
+        // does not exist is NOT a property of the request: it is a property
+        // of the base URL in Settings, which was free text saved with no
+        // validation. The identical bytes succeed the moment the field is
+        // corrected — which is word for word the argument
+        // `aMissingTokenIsUNREACHABLEAndNOTRefused` above uses to keep 401 and
+        // 403 OUT of this set, applied to the five statuses it was not
+        // applied to.
+        //
+        // The consequence, measured: a POST to the transcription service's
+        // port (`…:8118`, four digits from the clip store's `…:8139`) answers
+        // 404, so every queued capture was posted, refused and DELETED from
+        // the only place it existed, one flush per minute, while the capture
+        // toast said "it will sync when Dicta is on the mesh".
+        //
+        // 🔴 The membership test is therefore "is it a property of the
+        // BYTES", not "is it a 4xx". Only two statuses pass it: 400 (measured
+        // live as `empty_body`) and 422 (the body parsed and was semantically
+        // rejected). Nothing in Settings changes what the body says. Read
+        // `ClipHttp.PERMANENT_STATUSES`'s kdoc before adding to this set — it
+        // states, per status, why each of the five that moved out is a
+        // CONFIGURATION fault.
+        assertEquals(setOf(400, 422), ClipHttp.PERMANENT_STATUSES)
         for (status in ClipHttp.PERMANENT_STATUSES) {
             val outcome = client(status = status, body = "").post("x", "d")
             assertTrue(
@@ -288,6 +314,65 @@ class ClipHttpTest {
             )
             assertEquals(status, (outcome as ClipPost.Refused).status)
         }
+    }
+
+    @Test
+    fun aMISCONFIGUREDBaseUrlIsUNREACHABLEAndNEVERDestroysTheCapture() {
+        // 🔴 REGRESSION. Every status here was in PERMANENT_STATUSES at
+        // `d3efcd0` and therefore DELETED the user's capture. Each is a
+        // property of the URL the operator typed, not of the bytes:
+        //
+        //   404  the route does not exist AT THAT BASE URL
+        //   405  the path exists but does not serve POST — not the clip store
+        //   415  this client always sends application/json, so a 415 can only
+        //        come from something that is not the clip store
+        //   414  URI too long. The body is NEVER in the URI — it is
+        //        `baseUrl + /v1/clips` — so this is only reachable through an
+        //        absurd base URL, which ClipEndpoints.rejectionFor now bounds
+        //
+        // Asserted over the MEMBERSHIP as well as the outcome: putting one
+        // back in the set is the exact regression, and the outcome assertion
+        // alone is satisfiable by a set that grew a status this loop does not
+        // name.
+        for (status in listOf(404, 405, 414, 415)) {
+            val outcome = client(status = status, body = """{"error":"not_found"}""")
+                .post("x", "d")
+            assertTrue(
+                "HTTP $status DESTROYED the user's capture. It is a property " +
+                    "of the clip store URL in Settings, not of the bytes, so " +
+                    "the identical capture succeeds once the field is fixed: " +
+                    "$outcome",
+                outcome is ClipPost.Unreachable,
+            )
+            assertFalse(
+                "HTTP $status is back in PERMANENT_STATUSES",
+                status in ClipHttp.PERMANENT_STATUSES,
+            )
+        }
+    }
+
+    @Test
+    fun aPAYLOADTOOLARGEIsUNREACHABLEBecauseTheSelectionMayBeLEGITIMATE() {
+        // 🔴 REGRESSION, and the one member of the old set that is about the
+        // body and still must not destroy it. `ACTION_PROCESS_TEXT` delivers
+        // up to `TextUtils.PARCEL_SAFE_TEXT_LENGTH` = 100,000 characters (see
+        // CaptureActivity's kdoc), so a 413 can be a perfectly legitimate
+        // large selection meeting a server-side limit the operator is free to
+        // raise. That limit is a property of the DEPLOYMENT, not of the bytes.
+        //
+        // The capture-time half of the decision is
+        // `ClipOutboxStore.MAX_BODY_CHARS`, driven by ClipOutboxStoreTest.
+        // The two close different halves: that one stops an oversized row
+        // sitting at the head of the queue and reports where the operator can
+        // still see the selection, this one stops the text being deleted.
+        val outcome = client(status = 413, body = """{"error":"too_large"}""")
+            .post("x".repeat(200), "d")
+        assertTrue(
+            "HTTP 413 DESTROYED a capture that may be a legitimate 100,000 " +
+                "character selection: $outcome",
+            outcome is ClipPost.Unreachable,
+        )
+        assertFalse(413 in ClipHttp.PERMANENT_STATUSES)
     }
 
     @Test

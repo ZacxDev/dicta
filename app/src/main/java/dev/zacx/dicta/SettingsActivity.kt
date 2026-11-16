@@ -212,6 +212,13 @@ class SettingsActivity : Activity() {
     }
 
     private fun save() {
+        // 🔴 FIRST, before a single preference is written — see
+        // [clipUrlRejection]. A rejection here must leave the screen exactly
+        // as it was, so that the message can truthfully say nothing was saved.
+        clipUrlRejection()?.let { reason ->
+            statusLine.text = getString(R.string.clip_url_invalid, reason)
+            return
+        }
         settings.baseUrl = urlField.text.toString()
         settings.remoteEnabled = remoteToggle.isChecked
         // 🔴 Without this line the picker renders, moves, and changes nothing —
@@ -287,6 +294,27 @@ class SettingsActivity : Activity() {
      * token and seeing an unexplained 401 on every flush — `save()`'s own
      * token arm makes exactly this call about the transcription token.
      */
+    /**
+     * Why the typed clip store URL cannot be saved, or `null` when it can.
+     *
+     * 🔴 Checked by [save] **before anything at all is written**, unlike
+     * [saveClip] which runs last. The ordering rule [save] records is about a
+     * clip *encryption* failure not discarding a transcription token the
+     * operator just pasted; this check is pure, cheap and has no side effect,
+     * so it can run first — which is what lets its message honestly say that
+     * nothing was saved.
+     *
+     * This field was free text saved with no check at all, and it is the field
+     * the capture-loss defect was reached through: point it at anything that
+     * is not the clip store and every POST answers 404, which the flusher used
+     * to treat as permanent and DELETE the capture for. The refusal is
+     * SURFACED and nothing is normalised — see [ClipEndpoints.rejectionFor],
+     * which also states plainly what it cannot catch (a well-formed URL for
+     * the wrong service, which is the scenario that was actually measured).
+     */
+    private fun clipUrlRejection(): String? =
+        ClipEndpoints.rejectionFor(clipUrlField.text.toString())
+
     private fun saveClip(): Boolean {
         clipSettings.baseUrl = clipUrlField.text.toString()
         val typed = clipTokenField.text.toString()

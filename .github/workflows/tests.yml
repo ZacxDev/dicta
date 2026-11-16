@@ -36,37 +36,44 @@ jobs:
       # measured nothing is worse than no gate — so the count is asserted, not
       # inferred from the task's exit status.
       #
-      # BASELINE: 933 against a suite of 1073 tests / 100 classes on
-      # `feat/shared-clipboard` — Dicta's client for the clipstore
-      # shared-clipboard service.
+      # BASELINE: 959 against a suite of 1103 tests / 102 classes on
+      # `fix/clip-capture-loss` — the capture-loss fix for the shared
+      # clipboard (PERMANENT_STATUSES, the DESTROYED verdict, base-URL
+      # validation, the torn-queue recovery).
       #
-      # 1073 * 500 / 575 = 933.04 -> 933, which is 13.05% slack.
+      # 1103 * 500 / 575 = 959.13 -> 959, which is 13.05% slack.
       #
-      # 🔴 COMMIT COUNTED ON: the audit-round-0 fix commit on this branch, i.e.
-      # the commit this comment is part of, whose parent is 5794805. Counted on
-      # that tree and nothing else — see the CORRECTION note below for why a
-      # date does not identify a tree while a branch is moving.
+      # 🔴 COMMIT COUNTED ON: the single commit of `fix/clip-capture-loss`,
+      # i.e. the commit this comment is part of, whose parent is d3efcd0.
+      # Counted on that tree and nothing else — see the CORRECTION note below
+      # for why a date does not identify a tree while a branch is moving.
       #
-      # 🔴 LEFT AT 783 THIS GATE WOULD HAVE GONE RED, and did: 783 against 1073
-      # is 27.0% slack, past TestCountFloorTest's 20% ceiling. That test is what
-      # produces the number above — it prints the formula's result in its own
-      # failure message, which is the eviction playbook working rather than a
-      # number picked by hand.
+      # 🔴 LEFT AT 933 THIS GATE WOULD NOT HAVE GONE RED: 933 against 1103 is
+      # 15.4% slack, still inside TestCountFloorTest's 20% ceiling. Raised
+      # here rather than discovered later, which is this block's own rule —
+      # the ceiling exists so drift fails a test eventually, not so the floor
+      # is only ever raised when it does.
       #
-      # Accounted for PER CLASS against 901 / 86, not asserted:
-      #   +12  ClipJsonTest (new)            +13  ClipOutboxStoreTest (new)
-      #   +19  ClipHttpTest (new)            +12  ClipFlusherTest (new)
-      #   +20  ClipPickerActivityTest (new)  +12  CaptureActivityTest (new)
-      #   +12  CaptureManifestTest (new)      +8  ClipSeamLedgerTest (new)
-      #   +11  ClipSettingsTest (new)         +6  BubbleClipStateTest (new)
-      #   +18  BubbleClipRevealTest (new)     +6  ClipDeviceTest (new)
-      #    +5  ClipEndpointsTest (new)       +12  ClipOutboxHealthTest (new)
-      #    +1  NetworkManifestTest (9 -> 10)
-      #    +4  FloatingWindowSizeTest (13 -> 17)
-      #    +1  BubbleChromeTest (13 -> 14)
-      #   = +166 (new) + 6 (modified) = +172 tests and +14 classes.
-      #   901 + 172 = 1073, and 86 + 14 = 100. BOTH SIDES CHECKED, which is the
-      #   step the version of this block below used to skip.
+      # Accounted for PER CLASS against 1073 / 100, not asserted:
+      #   +6  ClipCaptureSurvivalTest (new)   +4  SettingsClipUrlValidationTest (new)
+      #   +8  ClipOutboxHealthTest (12 -> 20)
+      #   +4  ClipEndpointsTest (5 -> 9)
+      #   +4  ClipOutboxStoreTest (13 -> 17)
+      #   +2  ClipHttpTest (19 -> 21)
+      #   +1  ClipPickerActivityTest (20 -> 21)
+      #   +1  ClipSettingsTest (11 -> 12)
+      #   = +10 (new) + 20 (modified) = +30 tests and +2 classes.
+      #   1073 + 30 = 1103, and 100 + 2 = 102. BOTH SIDES CHECKED, which is
+      #   the step a previous version of this block skipped.
+      #
+      # 🔴 THE INSTRUMENT WAS POSITIVE-CONTROLLED BEFORE ITS ANSWER WAS USED.
+      # The count comes from TestCountFloorTest's own `countTests` — raw
+      # strings, then plain strings, then block comments, then line comments
+      # stripped, in that order — reimplemented and run over BOTH trees. It
+      # reproduces the asserted 1073 / 100 at d3efcd0 EXACTLY, which is what
+      # makes its 1103 / 102 here worth quoting, and the per-class diff above
+      # is the diff of those two runs rather than a hand tally. 🔴 Do NOT
+      # count `@Test` by hand and do NOT grep for it unstripped.
       #
       # 🔴 THE PER-CLASS RECONCILIATION IS THE CHECK, AND IT DID NOT ADD UP.
       # Audit round 0 of this branch found that these line items summed to +144
@@ -84,17 +91,16 @@ jobs:
       # it — the cost was entirely to the next maintainer, who reconciles their
       # own entry from these numbers.
       #
-      # 🔴 EVERY ROW ABOVE WAS RE-DERIVED FROM THE TREE, and the total was NOT
-      # adjusted to match the rows. The instrument is TestCountFloorTest's own
-      # `countTests` — @Test occurrences with raw strings, then plain strings,
-      # then block comments, then line comments stripped, in that order — which
-      # is the repo's own definition of the count and is validated in both
-      # directions by `bothInstrumentsAreValidated`. It reproduces the asserted
-      # 1052 / 99 on 5794805 exactly, which is the positive control that makes
-      # its 1073 / 100 here worth quoting. 🔴 Do NOT count `@Test` by hand and
-      # do NOT grep for it unstripped: this file's history records a hand count
-      # of 29 against an XML 28, and an unstripped grep reads 1053 against the
-      # same tree's real 1052.
+      # 🔴 EVERY ROW IN A RECONCILIATION IS RE-DERIVED FROM THE TREE, and the
+      # total is NOT adjusted to match the rows. The instrument is
+      # TestCountFloorTest's own `countTests`, validated in both directions by
+      # `bothInstrumentsAreValidated`. 🔴 Do NOT count `@Test` by hand and do
+      # NOT grep for it unstripped: this file's history records a hand count
+      # of 29 against an XML 28, and an unstripped grep reading 1053 against
+      # the same tree's real 1052. (The 1052 / 99 figures this paragraph used
+      # to quote for commit 5794805 are deleted rather than re-derived against
+      # whatever tree is checked out — which is the rule the CORRECTION note
+      # below states about numbers that have gone out of scope.)
       #
       # 🔴 COMMIT COUNTED ON: the commit that adds SnipUsageStore and its tests.
       # This comment and the --min argument land in the SAME commit as the
@@ -134,10 +140,10 @@ jobs:
       # 🔴 THREE PREVIOUS ENTRIES, AND NO MORE — see the trim note at the top of
       # this block. Add yours, drop the oldest; `git log -p -- <this file>` has
       # the rest.
-      # (Previous entries: 901 * 500 / 575 = 783.48 -> 783, 13.10% slack;
-      #  871 * 500 / 575 = 757.39 -> 757, 13.09% slack;
-      #  825 * 500 / 575 = 717.39 -> 717, 13.09% slack.)
-      # 826 -> 718 was DROPPED as the oldest when the shared-clipboard entry was
+      # (Previous entries: 1073 * 500 / 575 = 933.04 -> 933, 13.05% slack;
+      #  901 * 500 / 575 = 783.48 -> 783, 13.10% slack;
+      #  871 * 500 / 575 = 757.39 -> 757, 13.09% slack.)
+      # 825 -> 717 was DROPPED as the oldest when the capture-loss entry was
       # added, which is the eviction rule this block states. The full history is
       # in this file's own log.
       #
@@ -166,7 +172,7 @@ jobs:
       # one place.
       - name: Assert tests actually ran
         if: always()
-        run: python3 scripts/assert-tests-ran.py --min 933
+        run: python3 scripts/assert-tests-ran.py --min 959
 
       - name: Upload test reports
         if: always()

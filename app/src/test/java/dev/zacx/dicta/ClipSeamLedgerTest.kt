@@ -245,6 +245,26 @@ class ClipSeamLedgerTest {
             "HistoryStore",
             "SnipStore",
             "TokenStore",
+            // 🔴 THE HOLE THIS TEST HAD, AND IT WAS LOAD-BEARING.
+            // `CaptureActivity.kt:22-25` calls this "the highest-value test in
+            // this feature", and the sentence this method asserts claims the
+            // receiver is "incapable of reaching … either token". The list
+            // held `TokenStore` ONLY — while `ClipSettings.create(context)` is
+            // a PUBLIC FACTORY that returns one. Demonstrated: a mutant that
+            // read the clip token via `ClipSettings.create(this).tokens
+            // .token()` left this test GREEN, while a control mutant
+            // (`startActivity(ClipLaunch.intent(this))`) turned it red. So the
+            // guard read as coverage for the token claim while providing
+            // none, which is worse than providing none because it stops
+            // anyone looking.
+            //
+            // All three routes, not only the one demonstrated:
+            // `SttSettings.create` hands back the transcription token's store
+            // by the identical shape, and `KeystoreCipher` is the layer under
+            // both — a file that names it is unwrapping something itself.
+            "ClipSettings",
+            "SttSettings",
+            "KeystoreCipher",
         )) {
             assertFalse(
                 "🔴 CaptureActivity.kt names `$forbidden`. It is the only " +

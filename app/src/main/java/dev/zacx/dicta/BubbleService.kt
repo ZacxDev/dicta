@@ -706,10 +706,10 @@ class BubbleService : Service() {
         // in [renderClipHealth], rather than spelled in the `apply` block above
         // like its two siblings' — because unlike them this button carries
         // STATE, and two spellings of a state is how the two disagree. The
-        // initial read is [ClipOutboxHealth.isStuck] and not `false`: the
+        // initial read is [ClipOutboxHealth.state] and not `OK`: the
         // service is restarted on every boot and every upgrade, and the queue
         // does not become healthy because a process did.
-        applyClipHealth(clipButton, ClipOutboxHealth.isStuck())
+        applyClipHealth(clipButton, ClipOutboxHealth.state())
 
         // 🔴 THE CHIP `ListView` WAS BUILT HERE AND IS DELETED, along with its
         // adapter, its chip views, `REVEAL_SLOTS`, `REVEAL_WIDTH_DP`,
@@ -815,26 +815,26 @@ class BubbleService : Service() {
      * itself; a surface's own appearance is the shell's, exactly as
      * [showActions] and [renderPulse] are.
      */
-    private val clipHealthSink: (Boolean) -> Unit = { stuck ->
-        root?.post { clip?.let { applyClipHealth(it, stuck) } }
+    private val clipHealthSink: (ClipOutboxHealth.State) -> Unit = { state ->
+        root?.post { clip?.let { applyClipHealth(it, state) } }
     }
 
     /**
-     * Paints [button] for [stuck]. The ONE place the clip button's description,
-     * tooltip and tint are decided — see `buildWindow`.
+     * Paints [button] for [state]. The ONE place the clip button's
+     * description, tooltip and tint are decided — see `buildWindow`.
      *
-     * Description AND tooltip AND tint, every time, in both directions: a
+     * Description AND tooltip AND tint, every time, in every direction: a
      * partial update is how a repaired queue keeps an ember button, or a stuck
      * one is announced as healthy while looking wrong. `BubbleClipRevealTest`
      * asserts the description and the tint together for exactly that reason —
      * either one alone is satisfiable while the other lies.
      */
-    private fun applyClipHealth(button: ImageButton, stuck: Boolean) {
-        val label = getString(BubbleChrome.clipLabelFor(stuck))
+    private fun applyClipHealth(button: ImageButton, state: ClipOutboxHealth.State) {
+        val label = getString(BubbleChrome.clipLabelFor(state))
         button.contentDescription = label
         button.tooltipText = label
         button.imageTintList = android.content.res.ColorStateList
-            .valueOf(getColor(BubbleChrome.clipTintFor(stuck)))
+            .valueOf(getColor(BubbleChrome.clipTintFor(state)))
     }
 
     /**
@@ -1860,7 +1860,19 @@ class BubbleService : Service() {
         }
         val flush = clipFlush ?: ::defaultClipFlush
         val executor = clipFlushExecutor ?: worker
-        runCatching { executor.execute { runCatching { flush() } } }
+        // 🔴 Each `runCatching` now has a CONSEQUENCE. Both used to swallow a
+        // `Throwable` into nothing: anything thrown before `flush()` returned
+        // — the keystore refusing, `ClipSettings.create` failing, the executor
+        // rejecting the task on shutdown — left no Report, so the health
+        // counter was never fed and the queue could be dead with the bubble
+        // reporting healthy. An absence is the observable the most causes
+        // share; a drain that threw is a drain that failed, and it is recorded
+        // as one.
+        runCatching {
+            executor.execute {
+                runCatching { flush() }.onFailure { recordClipFlushThrew(it) }
+            }
+        }.onFailure { recordClipFlushThrew(it) }
         // 🔴 Rescheduled unconditionally and WITHOUT waiting for the flush to
         // finish, unlike `runProbe` which re-arms from inside its own
         // completion. The difference is deliberate: a probe's result is a
@@ -1874,12 +1886,27 @@ class BubbleService : Service() {
     }
 
     /**
+     * One spelling of "the drain threw before it could produce a Report".
+     *
+     * 🔴 Never rethrown: this runs on [worker] and on the tick chain, and an
+     * escaping throw there kills the chain for the rest of the service's life.
+     * The point is that it is REPORTED, not that it propagates.
+     */
+    private fun recordClipFlushThrew(t: Throwable) {
+        ClipOutboxHealth.record(
+            ClipFlusher.Report(failure = t.message ?: t.javaClass.simpleName)
+        )
+    }
+
+    /**
      * The production drain: the real outbox, the real HTTP client, this
      * handset's attribution.
      *
      * Runs on [worker]. Returns immediately when no clip token is configured —
      * which is the ordinary state of a fresh install, and a flush then would be
-     * a 401 per queued item per minute.
+     * a 401 per queued item per minute. 🔴 But a token that is STORED and will
+     * not decrypt is NOT that state, and is reported; see
+     * [ClipSettings.tokenIsUnusable].
      *
      * 🔴 It does NOT clear the outbox when unconfigured. The capture is the
      * user's and the token is a setting they can paste at any time; the queue
@@ -1887,7 +1914,19 @@ class BubbleService : Service() {
      */
     private fun defaultClipFlush() {
         val settings = ClipSettings.create(this)
-        if (!settings.isConfigured) return
+        if (!settings.isConfigured) {
+            // 🔴 A STORED-BUT-UNDECRYPTABLE token is not "unconfigured", and
+            // treating it as one made a full queue permanently invisible. See
+            // [ClipSettings.tokenIsUnusable]: after a keystore invalidation
+            // the operator has been capturing for days, `hasToken` is false,
+            // and this `return` used to mean no Report and so no fault — ever.
+            if (settings.tokenIsUnusable) {
+                ClipOutboxHealth.record(
+                    ClipFlusher.Report(failure = ClipSettings.UNUSABLE_TOKEN_REASON)
+                )
+            }
+            return
+        }
         val token = settings.tokens.token() ?: return
         val http = ClipHttp(settings.baseUrl, token)
         val report = ClipFlusher(

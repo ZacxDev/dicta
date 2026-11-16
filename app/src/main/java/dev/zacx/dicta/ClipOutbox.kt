@@ -128,7 +128,32 @@ interface ClipOutbox {
     data class Pending(val id: Long, val body: String)
 
     /** The queue could not be written, or could not be read. */
-    class Failed(reason: String, cause: Throwable? = null) : Exception(reason, cause)
+    open class Failed(reason: String, cause: Throwable? = null) : Exception(reason, cause)
+
+    /**
+     * The body is larger than [ClipOutboxStore.MAX_BODY_CHARS] and was refused
+     * at CAPTURE time.
+     *
+     * 🔴 Its own type so [CaptureActivity] can say which failure it was. A
+     * capture is refused at exactly one moment when the operator can still see
+     * and re-take the selection — now — and the alternative is a row that
+     * queues happily and is refused by the server at flush time, minutes
+     * later, somewhere the operator is not looking.
+     */
+    class TooLarge(reason: String) : Failed(reason)
+
+    /**
+     * The queue file was damaged, has been set aside, and a fresh queue has
+     * been started.
+     *
+     * 🔴 A distinct type because the RECOVERY is the news. The old behaviour
+     * for a torn file was [Failed] forever: `readState` threw on every call,
+     * so `append` threw for **every future capture** and `pending` threw so
+     * the queue could never drain — a permanently bricked feature whose only
+     * remedy was clearing app data, which also destroys dictation history and
+     * snippets. See [ClipOutboxStore.quarantine].
+     */
+    class Quarantined(reason: String, cause: Throwable? = null) : Failed(reason, cause)
 }
 
 /**
@@ -163,6 +188,14 @@ class ClipOutboxStore internal constructor(
             // put an item in the outbox that can never leave it — and the user
             // would have been told it was taken.
             throw ClipOutbox.Failed("there was nothing to capture")
+        }
+        if (body.length > MAX_BODY_CHARS) {
+            // 🔴 Refused HERE rather than at flush time, which is the whole
+            // point of the bound. See [MAX_BODY_CHARS].
+            throw ClipOutbox.TooLarge(
+                "that selection is ${body.length} characters, over the " +
+                    "$MAX_BODY_CHARS this can queue"
+            )
         }
         val state = readState()
         val id = state.nextId
@@ -208,10 +241,10 @@ class ClipOutboxStore internal constructor(
         val root = try {
             JSONObject(file.readText())
         } catch (e: Exception) {
-            throw ClipOutbox.Failed("the outbox file could not be read", e)
+            throw quarantine("the outbox file could not be read", e)
         }
         val array = root.optJSONArray(ClipJson.KEY_CLIPS)
-            ?: throw ClipOutbox.Failed("the outbox file has no items array")
+            ?: throw quarantine("the outbox file has no items array", null)
         val items = ArrayList<ClipOutbox.Pending>(array.length())
         for (i in 0 until array.length()) {
             val row = array.optJSONObject(i) ?: continue
@@ -237,6 +270,52 @@ class ClipOutboxStore internal constructor(
     }
 
     /**
+     * Moves an unreadable queue file aside and returns the exception to throw.
+     *
+     * ## 🔴 The defect this closes: ONE torn write bricked capture forever
+     *
+     * The primary write path is temp-then-`renameTo` and is atomic. The
+     * documented in-place fallback at [write] — `file.writeText` — is **not**,
+     * and its own kdoc admits the branch is unreachable in the suite. A kill
+     * inside it leaves truncated JSON, and before this method the consequence
+     * was permanent: [readState] threw on every call, so [append] threw for
+     * **every future capture**, [pending] threw so the queue could never
+     * drain, and the only remedy was clearing app data — which also destroys
+     * the dictation history and the snippets.
+     *
+     * So the damaged file is **renamed aside and KEPT**, never deleted: it is
+     * the only copy of whatever captures were in it, it may be recoverable by
+     * hand, and silently discarding the user's text to make the feature work
+     * again is the trade this whole file exists to refuse. The next call finds
+     * no queue file and starts a fresh one, so capture works on the very next
+     * attempt.
+     *
+     * 🔴 It still **throws**, exactly once per corruption, rather than
+     * returning an empty state. The operator must learn that this happened:
+     * through [CaptureActivity]'s failure toast if they were capturing, and
+     * through [ClipFlusher.Report.failure] → [ClipOutboxHealth] if a drain
+     * found it. An empty state here would be the "nothing to do" that reads as
+     * a drained queue — precisely what [ClipOutbox.pending]'s kdoc forbids.
+     *
+     * 🔴 If the rename itself fails there is nothing honest left to do, so the
+     * original failure is thrown unchanged: that is the old behaviour, which
+     * is bad, and it is strictly better than deleting the file to escape it.
+     */
+    private fun quarantine(reason: String, cause: Throwable?): ClipOutbox.Failed {
+        val aside = File(dir, "$FILE$DAMAGED_INFIX${System.currentTimeMillis()}")
+        val moved = try {
+            file.renameTo(aside)
+        } catch (_: Exception) {
+            false
+        }
+        if (!moved) return ClipOutbox.Failed(reason, cause)
+        return ClipOutbox.Quarantined(
+            "$reason; it has been set aside as ${aside.name} and a new queue started",
+            cause,
+        )
+    }
+
+    /**
      * Replaces the queue file.
      *
      * Write-temp-then-rename for [DictationHistoryStore]'s reason: a rename
@@ -247,7 +326,9 @@ class ClipOutboxStore internal constructor(
      * ⚠ That fallback is **not reachable in the suite** — the tests run on a
      * filesystem where `renameTo` succeeds — which is the same thing
      * `SnipUsageStore` records measuring about its own copy. Stated so it is
-     * not read as covered.
+     * not read as covered. 🔴 It is also the one branch that can leave a TORN
+     * file, and the consequence of that is no longer permanent: see
+     * [quarantine].
      */
     private fun write(nextId: Long, items: List<ClipOutbox.Pending>) {
         try {
@@ -297,7 +378,35 @@ class ClipOutboxStore internal constructor(
         /** The queue file name, inside [DIR]. */
         const val FILE: String = "outbox.json"
 
+        /**
+         * The longest body [append] will queue, in characters.
+         *
+         * 🔴 **The platform's own number, not one invented here.**
+         * `TextUtils.PARCEL_SAFE_TEXT_LENGTH` is 100,000 and
+         * `Editor.fireIntent` truncates an `ACTION_PROCESS_TEXT` selection to
+         * exactly that — silently, with no ellipsis and no flag (see
+         * [CaptureActivity]). So this bound **cannot reject anything the
+         * selection toolbar can deliver**; what it bounds is the `ACTION_SEND`
+         * path, which has no platform cap at all.
+         *
+         * 🔴 Why a capture-time bound exists when `ClipHttp` already treats a
+         * 413 as [ClipPost.Unreachable]: the two close different halves. The
+         * 413 rule stops an oversized body being DESTROYED; this one stops it
+         * silently occupying the head of the queue forever, and it reports at
+         * the one moment the operator can still see the selection it came
+         * from. Refusing at flush time is refusing somewhere nobody is
+         * looking.
+         *
+         * Picking the platform's own constant also means the number is
+         * checkable against something rather than being a round figure chosen
+         * to look safe.
+         */
+        const val MAX_BODY_CHARS: Int = 100_000
+
         private const val TMP_SUFFIX = ".tmp"
         private const val KEY_NEXT_ID = "next_id"
+
+        /** Infix for a file [quarantine] has set aside, before the stamp. */
+        const val DAMAGED_INFIX: String = ".damaged-"
     }
 }

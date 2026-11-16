@@ -101,6 +101,30 @@ class ClipFlusher(
          * folds a run of these into the verdict a surface renders.
          */
         val cannotDrain: Boolean get() = unreachable || failure != null
+
+        /**
+         * 🔴 Whether this pass **DESTROYED** one or more of the user's
+         * captures.
+         *
+         * A [dropped] row left the outbox without reaching the store, and the
+         * outbox was the only copy — so this is not "the queue is stuck", it
+         * is "text the user was told had been taken no longer exists
+         * anywhere". It is strictly worse than [cannotDrain] and, until this
+         * branch, it had **less visibility than nothing**: `dropped` had no
+         * consumer in the whole tree, and because a dropping pass is not a
+         * `cannotDrain` pass it also *reset* [ClipOutboxHealth]'s fault
+         * counter to zero. Ten capture-destroying flushes left the indicator
+         * dark while ten harmless 401 flushes lit it.
+         *
+         * Deliberately SEPARATE from [cannotDrain] rather than folded into it.
+         * They are different facts with different remedies — a stuck queue
+         * waits for the mesh or a corrected setting, a destroyed capture
+         * cannot be retried at all — and [ClipOutboxHealth] renders them with
+         * different words for that reason. Folding them would also have made
+         * `ClipOutboxHealthTest.cannotDrainIsTHEReadingAndItIsNotKeptGreaterThanZero`
+         * assert the opposite of what it says.
+         */
+        val destroyed: Boolean get() = dropped > 0
     }
 
     /** One pass. Never throws. */
@@ -133,13 +157,21 @@ class ClipFlusher(
                     stored++
                 }
                 is ClipPost.Refused -> {
-                    // 🔴 DROPPED. The server will refuse this body forever, and
-                    // the flush stops at the first unreachable item — so a
+                    // 🔴 DROPPED, WHICH DESTROYS THE USER'S ONLY COPY. The
+                    // server will refuse these BYTES forever, and the flush
+                    // stops at the first unreachable item — so a
                     // permanently-refused head is a dead queue for every clip
-                    // behind it. The only reachable case measured is a 400 on
-                    // an empty body, which [ClipOutboxStore.append] already
-                    // refuses to queue, so this is belt-and-braces against a
-                    // server-side rule this client does not know about.
+                    // behind it. That trade is only defensible while
+                    // `ClipHttp.PERMANENT_STATUSES` holds nothing a corrected
+                    // setting could fix; read that set's kdoc before adding to
+                    // it, because until this branch it held five statuses that
+                    // a mistyped base URL produced.
+                    //
+                    // 🔴 Counted, and now CONSUMED: [Report.destroyed] reaches
+                    // [ClipOutboxHealth] and raises a fault of its own. Until
+                    // this branch `dropped` had no consumer anywhere in the
+                    // tree, so this line destroyed a capture and left the
+                    // indicator DARKER than a harmless 401 did.
                     outbox.remove(item.id)
                     dropped++
                 }

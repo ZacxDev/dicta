@@ -65,18 +65,96 @@ import java.util.concurrent.CopyOnWriteArrayList
  * `ClipSeamLedgerTest.everySiteThatDrainsTheOutboxCONSUMESItsReport` is what
  * makes a site that forgets a red test rather than a review catch.
  *
+ * ## 🔴 A DESTROYED capture is a third state, not a louder second one
+ *
+ * [ClipFlusher.Report.dropped] counts captures that left the outbox without
+ * reaching the store. The outbox is the only copy, so a drop is **permanent
+ * data loss** — strictly worse than a stuck queue, which still holds the text.
+ *
+ * Until this branch `dropped` had **no consumer anywhere in the tree**, and the
+ * consequence was the exact inversion of what an indicator is for: a dropping
+ * pass is not a [ClipFlusher.Report.cannotDrain] pass, so it fell into the
+ * `else` arm below and **reset the fault counter to zero**. Ten
+ * capture-destroying flushes left this object reporting healthy while ten
+ * harmless 401 flushes lit it.
+ *
+ * So [State] has three values, and the two faults are not the same fault:
+ *
+ *  * [State.STUCK] — the queue cannot drain, the captures are still on the
+ *    phone, and fixing the mesh or the setting drains them. Needs
+ *    [STUCK_AFTER_FAILURES] consecutive failures, because one carries no
+ *    information.
+ *  * [State.DESTROYED] — at least one capture is **gone**. Raised on the
+ *    FIRST occurrence: there is no "it may recover next minute" reading of a
+ *    row that no longer exists, so a threshold would only delay telling the
+ *    operator about something already irreversible. It outranks [State.STUCK]
+ *    and it LATCHES — a later successful drain says nothing about the captures
+ *    that were destroyed. [acknowledgeDestroyed] is the one thing that clears
+ *    it, called when the operator opens the picker, i.e. when they have been
+ *    shown it and are looking at the feature. A fault that no act of the
+ *    operator's can clear is the permanently-red gate this repository has a
+ *    rule about.
+ *
+ * A drop also **does not reset** the stuck counter: a pass that destroyed a
+ * capture is not evidence that the queue is healthy.
+ *
  * ## ⚠ What this cannot see, stated rather than discovered
  *
  * A queue on a handset with **no clip token configured at all** never produces
  * a [ClipFlusher.Report] — both call sites return before building a flusher, by
  * design (a flush then would be a 401 per queued row per minute). So the
- * no-token case is invisible here. That is the ordinary state of a fresh
- * install, where the queue is also empty; and a missing token is visible on the
- * settings screen, which is where it is fixed. The case this exists for is the
- * WRONG token, which looks identical to a working install from every other
- * surface.
+ * genuinely-no-token case is invisible here. That is the ordinary state of a
+ * fresh install, where the queue is also empty; and a missing token is visible
+ * on the settings screen, which is where it is fixed.
+ *
+ * 🔴 **That paragraph used to cover one more case than it was entitled to.** It
+ * dismissed the blind spot partly because *"the queue is also empty"* — which
+ * is **false** for a token that is STORED but will not decrypt. After a
+ * keystore invalidation (the lock screen removed, a restore onto a new device)
+ * `TokenStore.token()` returns null, `hasToken` is false, and both drain sites
+ * returned before building a flusher — on a handset where the operator has been
+ * capturing for days and the queue is full. That case now reaches here: see
+ * [ClipSettings.tokenIsUnusable] and the two call sites, which record a
+ * [ClipFlusher.Report] with a failure rather than returning silently.
  */
 object ClipOutboxHealth {
+
+    /**
+     * What a surface should render. Ordered by severity; [DESTROYED] wins.
+     *
+     * 🔴 **Named `State`/[state] and NOT `Verdict`/`verdict()`, deliberately
+     * and permanently.** This type was written as `Verdict` with a `verdict()`
+     * reader and CI went red on
+     * `SttReachabilityLedgerTest.exactlyOneSiteInTheWholeTreeReadsTheVerdict`,
+     * which counts `.verdict(` call sites **across the whole of
+     * `app/src/main`** and asserts exactly one. That ledger keys on the dot and
+     * the bare word, receiver-spelling-insensitive **by construction** — its
+     * own kdoc records that a ledger keyed on an identifier was once blind to
+     * the single file it existed to protect — so the word `verdict` is
+     * effectively RESERVED tree-wide for `SttReachability`.
+     *
+     * It was a name collision and not a second reader: `SttReachability`'s
+     * verdict is still read in exactly one place, `BubbleService`'s
+     * `shouldWarnUnreachable`, and nothing here touches reachability at all.
+     * The fix was therefore to rename **this** type, never to widen, bump or
+     * exempt anything in that ledger — [ClipOutbox]'s own kdoc already said of
+     * those two ledgers, *"those are tests to obey, not to widen"*. Renaming a
+     * brand-new internal type costs nothing; weakening a guard that caught a
+     * real consolidation defect once costs the next person the defect.
+     *
+     * ⚠ So: do not "tidy" this back to `Verdict`. It compiles, and CI goes red
+     * for a reason that reads as unrelated to whatever you were doing.
+     */
+    enum class State {
+        /** Draining, or merely busy. Nothing to say. */
+        OK,
+
+        /** [STUCK_AFTER_FAILURES] consecutive failed drains. Text is safe. */
+        STUCK,
+
+        /** At least one capture was dropped and no longer exists. */
+        DESTROYED,
+    }
 
     /**
      * How many consecutive failed drains make the queue *stuck*.
@@ -95,16 +173,23 @@ object ClipOutboxHealth {
      */
     const val STUCK_AFTER_FAILURES: Int = 3
 
-    private val sinks = CopyOnWriteArrayList<(Boolean) -> Unit>()
+    private val sinks = CopyOnWriteArrayList<(State) -> Unit>()
 
     /** Guarded by this object's monitor. */
     private var consecutiveFailures = 0
 
-    fun register(sink: (Boolean) -> Unit) {
+    /**
+     * Guarded by this object's monitor. **Latched** — see the class kdoc: a
+     * later success says nothing about a capture that no longer exists. Only
+     * [acknowledgeDestroyed] clears it.
+     */
+    private var destroyedCaptures = false
+
+    fun register(sink: (State) -> Unit) {
         sinks.add(sink)
     }
 
-    fun unregister(sink: (Boolean) -> Unit) {
+    fun unregister(sink: (State) -> Unit) {
         sinks.remove(sink)
     }
 
@@ -116,38 +201,65 @@ object ClipOutboxHealth {
      */
     @Synchronized
     fun record(report: ClipFlusher.Report) {
-        val was = isStuckUnsynchronized()
+        val was = stateUnsynchronized()
+        // 🔴 FIRST, and unconditionally: a destroyed capture is the fact that
+        // outranks everything else this Report carries.
+        if (report.destroyed) destroyedCaptures = true
         if (report.cannotDrain) {
             // Saturating rather than unbounded: the only question asked of this
             // counter is whether it has reached the threshold, and a phone left
             // off the mesh for a month would otherwise count to 40,000.
             if (consecutiveFailures < STUCK_AFTER_FAILURES) consecutiveFailures++
-        } else {
+        } else if (!report.destroyed) {
+            // 🔴 `&& !report.destroyed`, which is the defect this branch
+            // closes at its source. A pass that destroyed a capture is NOT
+            // evidence the queue is healthy, and without this clause a run of
+            // capture-destroying flushes held the counter at zero forever.
             consecutiveFailures = 0
         }
-        val now = isStuckUnsynchronized()
+        val now = stateUnsynchronized()
         if (was != now) broadcast(now)
     }
 
     /**
-     * True when the last [STUCK_AFTER_FAILURES] drains all failed.
+     * the state a surface renders.
      *
      * Read at window-build time as well as pushed through [register], because a
      * service that starts while the queue is already stuck must show it on the
      * first long press rather than wait for a change it has already missed.
      */
     @Synchronized
-    fun isStuck(): Boolean = isStuckUnsynchronized()
+    fun state(): State = stateUnsynchronized()
 
-    private fun isStuckUnsynchronized(): Boolean =
-        consecutiveFailures >= STUCK_AFTER_FAILURES
+    /**
+     * Clears a latched [State.DESTROYED].
+     *
+     * 🔴 Called when the operator OPENS the shared clipboard — the one moment
+     * they have demonstrably seen the indicator and are looking at the feature.
+     * It clears only the latch: a drain in the same session that destroys
+     * another capture re-raises it immediately, and a [State.STUCK] queue
+     * stays stuck because nothing about it has been repaired.
+     */
+    @Synchronized
+    fun acknowledgeDestroyed() {
+        val was = stateUnsynchronized()
+        destroyedCaptures = false
+        val now = stateUnsynchronized()
+        if (was != now) broadcast(now)
+    }
 
-    private fun broadcast(stuck: Boolean) {
+    private fun stateUnsynchronized(): State = when {
+        destroyedCaptures -> State.DESTROYED
+        consecutiveFailures >= STUCK_AFTER_FAILURES -> State.STUCK
+        else -> State.OK
+    }
+
+    private fun broadcast(verdict: State) {
         // Never let one misbehaving sink stop the others — OverlayVisibility's
         // reason, and here the sink posts to a looper that may be gone.
         for (sink in sinks) {
             try {
-                sink(stuck)
+                sink(verdict)
             } catch (_: Throwable) {
             }
         }
@@ -158,5 +270,6 @@ object ClipOutboxHealth {
     fun clearForTest() {
         sinks.clear()
         consecutiveFailures = 0
+        destroyedCaptures = false
     }
 }

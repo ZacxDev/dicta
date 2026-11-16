@@ -623,6 +623,23 @@
          they were lost would be a worse lie than the silence it replaces. -->
     <string name="bubble_clip_stuck">Shared clipboard — captures on this phone are not reaching your other devices. Open it to retry, or check the clip token in Settings</string>
 
+    <!-- 🔴 The SAME button again, announcing DATA LOSS rather than a stalled
+         queue. A third label and not a reuse of @string/bubble_clip_stuck,
+         because that one ends "Open it to retry" and there is nothing to
+         retry: the capture left the outbox without reaching the store, and the
+         outbox was the only copy. Announcing a destroyed capture with the
+         recovery instructions for a stuck one is a guard that is SPELLED
+         rather than structural.
+
+         It must differ from BOTH siblings, which BubbleChromeTest asserts as a
+         set of three.
+
+         "Could not be sent and have been lost" rather than "failed to sync":
+         the whole defect this branch fixes is that the operator was told
+         captures were queued while they were being deleted, so the wording
+         here has to be the one that cannot be read optimistically. -->
+    <string name="bubble_clip_destroyed">Shared clipboard — some captures on this phone could not be sent and have been lost. Check the clip store URL in Settings</string>
+
     <string name="clip_title">Shared clipboard</string>
     <string name="clip_search_hint">Search clips</string>
 
@@ -684,6 +701,15 @@
          user believing they have something they do not. This is the opposite
          posture from SnipUsageStore, which swallows its write failures. -->
     <string name="clip_capture_failed">Dicta could not save that capture</string>
+    <!-- 🔴 Its OWN string, not @string/clip_capture_failed. The generic one is
+         true for an oversized selection and useless: it gives the operator no
+         reason not to retry the identical selection. This is also the only
+         moment the selection still exists on screen, which is the argument for
+         bounding at capture time at all — see ClipOutboxStore.MAX_BODY_CHARS.
+         The number is deliberately NOT interpolated: it is 100,000, the
+         platform's own PARCEL_SAFE_TEXT_LENGTH, and a six-digit figure in a
+         toast is noise where "too long to send" is the actionable part. -->
+    <string name="clip_capture_too_large">That selection is too long for the shared clipboard, so it was not captured</string>
 
     <!-- The two <intent-filter android:label>s. Short VERBS, because the label
          is the one thing a receiver controls (resolveInfo.loadLabel) and the
@@ -699,6 +725,16 @@
     <string name="clip_settings_desc">The mesh address of the clip store, and its bearer token. A separate token from the transcription one: they reach different services and rotating either must not rotate the other.</string>
     <string name="clip_url_label">Clip store URL</string>
     <string name="clip_url_hint">http://10.42.0.10:8139</string>
+    <!-- 🔴 The REJECTION, and nothing was saved. The clip store URL was free
+         text with no validation, and it is the field the capture-loss defect
+         was reached through — a URL that is not the clip store answers 404 to
+         every POST. %1$s is ClipEndpoints.rejectionFor's reason, which is
+         deliberately specific ("it must start with http://") rather than
+         "invalid": a field that says only "invalid" is one the operator
+         retypes at random. The sentence states the consequence too, because
+         the save button also stores the token and the operator must know
+         which half did not happen. -->
+    <string name="clip_url_invalid">The clip store URL was not saved — %1$s. Nothing on this screen was saved; fix the URL and press Save again.</string>
     <!-- @string/stt_token_hint_* 's pair, for the clip token. The stored token
          is NEVER rendered back into the field — see SettingsActivity's kdoc. -->
     <string name="clip_token_hint_stored">A token is stored. Leave empty to keep it.</string>

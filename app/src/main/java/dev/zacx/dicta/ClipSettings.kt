@@ -59,7 +59,34 @@ class ClipSettings(
      */
     val isConfigured: Boolean get() = tokens.hasToken
 
+    /**
+     * A token is STORED but cannot be decrypted — so the app is configured and
+     * nevertheless cannot flush.
+     *
+     * 🔴 This is not a hypothetical state. [KeystoreCipher] fails closed, so
+     * removing the lock screen or restoring onto a new handset invalidates the
+     * `AndroidKeyStore` key and leaves the ciphertext behind:
+     * [TokenStore.token] returns null, [isConfigured] is false, and the
+     * operator has been capturing for days. Both drain sites return before
+     * building a flusher on `!isConfigured`, so this case produced **no
+     * [ClipFlusher.Report] at all** and the queue was permanently invisible —
+     * the blind spot [ClipOutboxHealth]'s kdoc used to dismiss on the grounds
+     * that *"the queue is also empty"*, which is exactly what it is not here.
+     *
+     * The remedy is the operator's: paste the token again. The job of this
+     * property is only that they are told to.
+     */
+    val tokenIsUnusable: Boolean get() = !tokens.hasToken && tokens.hasCiphertext
+
     companion object {
+
+        /**
+         * One spelling of [tokenIsUnusable]'s reason, shared by the two drain
+         * sites so the operator cannot be told two different things about one
+         * state.
+         */
+        const val UNUSABLE_TOKEN_REASON: String =
+            "the shared-clipboard token is stored but could not be decrypted"
 
         const val KEY_BASE_URL: String = "clip_base_url"
 

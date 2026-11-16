@@ -49,27 +49,44 @@ object BubbleChrome {
      * alone, which is a 1.4.1 failure and here also a data-loss one: the
      * captures are still on the phone and the operator has no way to learn it.
      *
-     * The two resources are required to be distinct by `BubbleChromeTest`,
+     * The three resources are required to be distinct by `BubbleChromeTest`,
      * asserted as a *set* exactly as the three state labels are — so a copy
      * edit is free and a mutation that points the fault at the ordinary label
      * is not.
      *
-     * @param stuck [ClipOutboxHealth.isStuck] — a run of failed drains, NOT
-     *   merely a non-empty queue. See that object's kdoc for why the
-     *   distinction is the whole design.
+     * @param state [ClipOutboxHealth.state] — a run of failed drains or a
+     *   DESTROYED capture, NOT merely a non-empty queue. See that object's
+     *   kdoc for why the distinction is the whole design.
+     *
+     * 🔴 **Three labels rather than two, since the capture-loss fix.** A
+     * destroyed capture must not be announced with
+     * `@string/bubble_clip_stuck`: that string says *"Open it to retry, or
+     * check the clip token in Settings"*, and there is nothing to retry — the
+     * text no longer exists. Announcing data loss with the recovery
+     * instructions for a different fault is a guard that is SPELLED rather
+     * than structural, in one resource id.
      */
-    fun clipLabelFor(stuck: Boolean): Int =
-        if (stuck) R.string.bubble_clip_stuck else R.string.bubble_clip
+    fun clipLabelFor(state: ClipOutboxHealth.State): Int = when (state) {
+        ClipOutboxHealth.State.DESTROYED -> R.string.bubble_clip_destroyed
+        ClipOutboxHealth.State.STUCK -> R.string.bubble_clip_stuck
+        ClipOutboxHealth.State.OK -> R.string.bubble_clip
+    }
 
     /**
      * The shared-clipboard button's icon tint for the same verdict.
      *
      * `dicta_error` rather than `dicta_live`: `colors.xml` states that the two
      * exist precisely so that *recording* and *failed* do not share a colour,
-     * and a stuck outbox is a failure rather than an activity.
+     * and a stuck outbox is a failure rather than an activity. Both faults
+     * draw in `dicta_error`; they are told apart by the LABEL, which is the
+     * point of the rule above — the tint is never the only thing saying so.
      */
-    fun clipTintFor(stuck: Boolean): Int =
-        if (stuck) R.color.dicta_error else R.color.dicta_on_surface
+    fun clipTintFor(state: ClipOutboxHealth.State): Int =
+        if (state == ClipOutboxHealth.State.OK) {
+            R.color.dicta_on_surface
+        } else {
+            R.color.dicta_error
+        }
 
     /**
      * Whether the cancel button fits **below** the bubble.
