@@ -54,7 +54,7 @@ object BubbleChrome {
      * edit is free and a mutation that points the fault at the ordinary label
      * is not.
      *
-     * @param verdict [ClipOutboxHealth.verdict] — a run of failed drains or a
+     * @param state [ClipOutboxHealth.state] — a run of failed drains or a
      *   DESTROYED capture, NOT merely a non-empty queue. See that object's
      *   kdoc for why the distinction is the whole design.
      *
@@ -66,10 +66,10 @@ object BubbleChrome {
      * instructions for a different fault is a guard that is SPELLED rather
      * than structural, in one resource id.
      */
-    fun clipLabelFor(verdict: ClipOutboxHealth.Verdict): Int = when (verdict) {
-        ClipOutboxHealth.Verdict.DESTROYED -> R.string.bubble_clip_destroyed
-        ClipOutboxHealth.Verdict.STUCK -> R.string.bubble_clip_stuck
-        ClipOutboxHealth.Verdict.OK -> R.string.bubble_clip
+    fun clipLabelFor(state: ClipOutboxHealth.State): Int = when (state) {
+        ClipOutboxHealth.State.DESTROYED -> R.string.bubble_clip_destroyed
+        ClipOutboxHealth.State.STUCK -> R.string.bubble_clip_stuck
+        ClipOutboxHealth.State.OK -> R.string.bubble_clip
     }
 
     /**
@@ -81,8 +81,8 @@ object BubbleChrome {
      * draw in `dicta_error`; they are told apart by the LABEL, which is the
      * point of the rule above — the tint is never the only thing saying so.
      */
-    fun clipTintFor(verdict: ClipOutboxHealth.Verdict): Int =
-        if (verdict == ClipOutboxHealth.Verdict.OK) {
+    fun clipTintFor(state: ClipOutboxHealth.State): Int =
+        if (state == ClipOutboxHealth.State.OK) {
             R.color.dicta_on_surface
         } else {
             R.color.dicta_error

@@ -296,8 +296,8 @@ class ClipCaptureSurvivalTest {
             "🔴 ten capture-DESTROYING flushes left the shared-clipboard " +
                 "indicator dark, while ten capture-KEEPING 401 flushes light " +
                 "it. The destructive case had LESS visibility than nothing.",
-            ClipOutboxHealth.Verdict.DESTROYED,
-            ClipOutboxHealth.verdict(),
+            ClipOutboxHealth.State.DESTROYED,
+            ClipOutboxHealth.state(),
         )
     }
 
@@ -331,8 +331,8 @@ class ClipCaptureSurvivalTest {
             outbox.pending().size,
         )
         assertEquals(
-            ClipOutboxHealth.Verdict.STUCK,
-            ClipOutboxHealth.verdict(),
+            ClipOutboxHealth.State.STUCK,
+            ClipOutboxHealth.state(),
         )
     }
 }

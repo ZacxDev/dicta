@@ -78,16 +78,16 @@ import java.util.concurrent.CopyOnWriteArrayList
  * capture-destroying flushes left this object reporting healthy while ten
  * harmless 401 flushes lit it.
  *
- * So [Verdict] has three values, and the two faults are not the same fault:
+ * So [State] has three values, and the two faults are not the same fault:
  *
- *  * [Verdict.STUCK] — the queue cannot drain, the captures are still on the
+ *  * [State.STUCK] — the queue cannot drain, the captures are still on the
  *    phone, and fixing the mesh or the setting drains them. Needs
  *    [STUCK_AFTER_FAILURES] consecutive failures, because one carries no
  *    information.
- *  * [Verdict.DESTROYED] — at least one capture is **gone**. Raised on the
+ *  * [State.DESTROYED] — at least one capture is **gone**. Raised on the
  *    FIRST occurrence: there is no "it may recover next minute" reading of a
  *    row that no longer exists, so a threshold would only delay telling the
- *    operator about something already irreversible. It outranks [Verdict.STUCK]
+ *    operator about something already irreversible. It outranks [State.STUCK]
  *    and it LATCHES — a later successful drain says nothing about the captures
  *    that were destroyed. [acknowledgeDestroyed] is the one thing that clears
  *    it, called when the operator opens the picker, i.e. when they have been
@@ -121,8 +121,31 @@ object ClipOutboxHealth {
 
     /**
      * What a surface should render. Ordered by severity; [DESTROYED] wins.
+     *
+     * 🔴 **Named `State`/[state] and NOT `Verdict`/`verdict()`, deliberately
+     * and permanently.** This type was written as `Verdict` with a `verdict()`
+     * reader and CI went red on
+     * `SttReachabilityLedgerTest.exactlyOneSiteInTheWholeTreeReadsTheVerdict`,
+     * which counts `.verdict(` call sites **across the whole of
+     * `app/src/main`** and asserts exactly one. That ledger keys on the dot and
+     * the bare word, receiver-spelling-insensitive **by construction** — its
+     * own kdoc records that a ledger keyed on an identifier was once blind to
+     * the single file it existed to protect — so the word `verdict` is
+     * effectively RESERVED tree-wide for `SttReachability`.
+     *
+     * It was a name collision and not a second reader: `SttReachability`'s
+     * verdict is still read in exactly one place, `BubbleService`'s
+     * `shouldWarnUnreachable`, and nothing here touches reachability at all.
+     * The fix was therefore to rename **this** type, never to widen, bump or
+     * exempt anything in that ledger — [ClipOutbox]'s own kdoc already said of
+     * those two ledgers, *"those are tests to obey, not to widen"*. Renaming a
+     * brand-new internal type costs nothing; weakening a guard that caught a
+     * real consolidation defect once costs the next person the defect.
+     *
+     * ⚠ So: do not "tidy" this back to `Verdict`. It compiles, and CI goes red
+     * for a reason that reads as unrelated to whatever you were doing.
      */
-    enum class Verdict {
+    enum class State {
         /** Draining, or merely busy. Nothing to say. */
         OK,
 
@@ -150,7 +173,7 @@ object ClipOutboxHealth {
      */
     const val STUCK_AFTER_FAILURES: Int = 3
 
-    private val sinks = CopyOnWriteArrayList<(Verdict) -> Unit>()
+    private val sinks = CopyOnWriteArrayList<(State) -> Unit>()
 
     /** Guarded by this object's monitor. */
     private var consecutiveFailures = 0
@@ -162,11 +185,11 @@ object ClipOutboxHealth {
      */
     private var destroyedCaptures = false
 
-    fun register(sink: (Verdict) -> Unit) {
+    fun register(sink: (State) -> Unit) {
         sinks.add(sink)
     }
 
-    fun unregister(sink: (Verdict) -> Unit) {
+    fun unregister(sink: (State) -> Unit) {
         sinks.remove(sink)
     }
 
@@ -178,7 +201,7 @@ object ClipOutboxHealth {
      */
     @Synchronized
     fun record(report: ClipFlusher.Report) {
-        val was = verdictUnsynchronized()
+        val was = stateUnsynchronized()
         // 🔴 FIRST, and unconditionally: a destroyed capture is the fact that
         // outranks everything else this Report carries.
         if (report.destroyed) destroyedCaptures = true
@@ -194,44 +217,44 @@ object ClipOutboxHealth {
             // capture-destroying flushes held the counter at zero forever.
             consecutiveFailures = 0
         }
-        val now = verdictUnsynchronized()
+        val now = stateUnsynchronized()
         if (was != now) broadcast(now)
     }
 
     /**
-     * The verdict a surface renders.
+     * the state a surface renders.
      *
      * Read at window-build time as well as pushed through [register], because a
      * service that starts while the queue is already stuck must show it on the
      * first long press rather than wait for a change it has already missed.
      */
     @Synchronized
-    fun verdict(): Verdict = verdictUnsynchronized()
+    fun state(): State = stateUnsynchronized()
 
     /**
-     * Clears a latched [Verdict.DESTROYED].
+     * Clears a latched [State.DESTROYED].
      *
      * 🔴 Called when the operator OPENS the shared clipboard — the one moment
      * they have demonstrably seen the indicator and are looking at the feature.
      * It clears only the latch: a drain in the same session that destroys
-     * another capture re-raises it immediately, and a [Verdict.STUCK] queue
+     * another capture re-raises it immediately, and a [State.STUCK] queue
      * stays stuck because nothing about it has been repaired.
      */
     @Synchronized
     fun acknowledgeDestroyed() {
-        val was = verdictUnsynchronized()
+        val was = stateUnsynchronized()
         destroyedCaptures = false
-        val now = verdictUnsynchronized()
+        val now = stateUnsynchronized()
         if (was != now) broadcast(now)
     }
 
-    private fun verdictUnsynchronized(): Verdict = when {
-        destroyedCaptures -> Verdict.DESTROYED
-        consecutiveFailures >= STUCK_AFTER_FAILURES -> Verdict.STUCK
-        else -> Verdict.OK
+    private fun stateUnsynchronized(): State = when {
+        destroyedCaptures -> State.DESTROYED
+        consecutiveFailures >= STUCK_AFTER_FAILURES -> State.STUCK
+        else -> State.OK
     }
 
-    private fun broadcast(verdict: Verdict) {
+    private fun broadcast(verdict: State) {
         // Never let one misbehaving sink stop the others — OverlayVisibility's
         // reason, and here the sink posts to a looper that may be gone.
         for (sink in sinks) {

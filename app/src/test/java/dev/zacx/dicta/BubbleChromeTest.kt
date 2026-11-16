@@ -79,13 +79,13 @@ class BubbleChromeTest {
         // gone. The set assertion is over all three for that reason, and it
         // is what makes a `when` arm pointed at the wrong string red.
         val healthy = ctx.getString(
-            BubbleChrome.clipLabelFor(ClipOutboxHealth.Verdict.OK)
+            BubbleChrome.clipLabelFor(ClipOutboxHealth.State.OK)
         )
         val stuck = ctx.getString(
-            BubbleChrome.clipLabelFor(ClipOutboxHealth.Verdict.STUCK)
+            BubbleChrome.clipLabelFor(ClipOutboxHealth.State.STUCK)
         )
         val destroyed = ctx.getString(
-            BubbleChrome.clipLabelFor(ClipOutboxHealth.Verdict.DESTROYED)
+            BubbleChrome.clipLabelFor(ClipOutboxHealth.State.DESTROYED)
         )
 
         assertTrue("the clip button's healthy label is blank", healthy.isNotBlank())
@@ -109,11 +109,11 @@ class BubbleChromeTest {
             "the clip button's healthy tint is not the on-surface one its two " +
                 "siblings use, so a healthy reveal has one odd button in it",
             R.color.dicta_on_surface,
-            BubbleChrome.clipTintFor(ClipOutboxHealth.Verdict.OK),
+            BubbleChrome.clipTintFor(ClipOutboxHealth.State.OK),
         )
         for (fault in listOf(
-            ClipOutboxHealth.Verdict.STUCK,
-            ClipOutboxHealth.Verdict.DESTROYED,
+            ClipOutboxHealth.State.STUCK,
+            ClipOutboxHealth.State.DESTROYED,
         )) {
             assertEquals(
                 "a $fault shared clipboard is not drawn in @color/dicta_error. " +
@@ -126,7 +126,7 @@ class BubbleChromeTest {
                 "the $fault clip tint is the same colour resource as the " +
                     "healthy one",
                 BubbleChrome.clipTintFor(fault) ==
-                    BubbleChrome.clipTintFor(ClipOutboxHealth.Verdict.OK),
+                    BubbleChrome.clipTintFor(ClipOutboxHealth.State.OK),
             )
         }
     }

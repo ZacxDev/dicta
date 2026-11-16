@@ -110,9 +110,9 @@ m-clip26-a-merely-pending-queue-reads-as-a-fault	app/src/main/java/dev/zacx/dict
 m-clip27-an-unreadable-outbox-reads-as-healthy	app/src/main/java/dev/zacx/dicta/ClipFlusher.kt	get() = unreachable || failure != null	get() = unreachable	dev.zacx.dicta.ClipOutboxHealthTest
 m-clip28-the-fault-threshold-is-off-by-one	app/src/main/java/dev/zacx/dicta/ClipOutboxHealth.kt	consecutiveFailures >= STUCK_AFTER_FAILURES	consecutiveFailures > STUCK_AFTER_FAILURES	dev.zacx.dicta.ClipOutboxHealthTest
 m-clip29-every-mesh-blip-is-a-fault	app/src/main/java/dev/zacx/dicta/ClipOutboxHealth.kt	const val STUCK_AFTER_FAILURES: Int = 3	const val STUCK_AFTER_FAILURES: Int = 1	dev.zacx.dicta.ClipOutboxHealthTest
-m-clip30-the-stuck-queue-is-announced-as-a-healthy-one	app/src/main/java/dev/zacx/dicta/BubbleChrome.kt	ClipOutboxHealth.Verdict.STUCK -> R.string.bubble_clip_stuck	ClipOutboxHealth.Verdict.STUCK -> R.string.bubble_clip	dev.zacx.dicta.Bubble*Test
-m-clip31-the-fault-is-carried-by-colour-alone	app/src/main/java/dev/zacx/dicta/BubbleChrome.kt	if (verdict == ClipOutboxHealth.Verdict.OK) {	if (true) {	dev.zacx.dicta.Bubble*Test
-m-clip32-a-service-starting-into-a-stuck-queue-shows-nothing	app/src/main/java/dev/zacx/dicta/BubbleService.kt	applyClipHealth(clipButton, ClipOutboxHealth.verdict())	applyClipHealth(clipButton, ClipOutboxHealth.Verdict.OK)	dev.zacx.dicta.BubbleClipRevealTest
+m-clip30-the-stuck-queue-is-announced-as-a-healthy-one	app/src/main/java/dev/zacx/dicta/BubbleChrome.kt	ClipOutboxHealth.State.STUCK -> R.string.bubble_clip_stuck	ClipOutboxHealth.State.STUCK -> R.string.bubble_clip	dev.zacx.dicta.Bubble*Test
+m-clip31-the-fault-is-carried-by-colour-alone	app/src/main/java/dev/zacx/dicta/BubbleChrome.kt	if (state == ClipOutboxHealth.State.OK) {	if (true) {	dev.zacx.dicta.Bubble*Test
+m-clip32-a-service-starting-into-a-stuck-queue-shows-nothing	app/src/main/java/dev/zacx/dicta/BubbleService.kt	applyClipHealth(clipButton, ClipOutboxHealth.state())	applyClipHealth(clipButton, ClipOutboxHealth.State.OK)	dev.zacx.dicta.BubbleClipRevealTest
 # 🔴 m-clip33's TO is the OPAQUE theme SPELLED OUT, not the attribute deleted, and
 # that is forced rather than chosen: a TO that repeats an attribute already on the
 # element gives aapt2 a duplicate and the manifest merge fails, so ZERO TESTS RUN

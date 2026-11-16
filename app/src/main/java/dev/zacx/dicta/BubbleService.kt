@@ -706,10 +706,10 @@ class BubbleService : Service() {
         // in [renderClipHealth], rather than spelled in the `apply` block above
         // like its two siblings' — because unlike them this button carries
         // STATE, and two spellings of a state is how the two disagree. The
-        // initial read is [ClipOutboxHealth.verdict] and not `OK`: the
+        // initial read is [ClipOutboxHealth.state] and not `OK`: the
         // service is restarted on every boot and every upgrade, and the queue
         // does not become healthy because a process did.
-        applyClipHealth(clipButton, ClipOutboxHealth.verdict())
+        applyClipHealth(clipButton, ClipOutboxHealth.state())
 
         // 🔴 THE CHIP `ListView` WAS BUILT HERE AND IS DELETED, along with its
         // adapter, its chip views, `REVEAL_SLOTS`, `REVEAL_WIDTH_DP`,
@@ -815,12 +815,12 @@ class BubbleService : Service() {
      * itself; a surface's own appearance is the shell's, exactly as
      * [showActions] and [renderPulse] are.
      */
-    private val clipHealthSink: (ClipOutboxHealth.Verdict) -> Unit = { verdict ->
-        root?.post { clip?.let { applyClipHealth(it, verdict) } }
+    private val clipHealthSink: (ClipOutboxHealth.State) -> Unit = { state ->
+        root?.post { clip?.let { applyClipHealth(it, state) } }
     }
 
     /**
-     * Paints [button] for [verdict]. The ONE place the clip button's
+     * Paints [button] for [state]. The ONE place the clip button's
      * description, tooltip and tint are decided — see `buildWindow`.
      *
      * Description AND tooltip AND tint, every time, in every direction: a
@@ -829,12 +829,12 @@ class BubbleService : Service() {
      * asserts the description and the tint together for exactly that reason —
      * either one alone is satisfiable while the other lies.
      */
-    private fun applyClipHealth(button: ImageButton, verdict: ClipOutboxHealth.Verdict) {
-        val label = getString(BubbleChrome.clipLabelFor(verdict))
+    private fun applyClipHealth(button: ImageButton, state: ClipOutboxHealth.State) {
+        val label = getString(BubbleChrome.clipLabelFor(state))
         button.contentDescription = label
         button.tooltipText = label
         button.imageTintList = android.content.res.ColorStateList
-            .valueOf(getColor(BubbleChrome.clipTintFor(verdict)))
+            .valueOf(getColor(BubbleChrome.clipTintFor(state)))
     }
 
     /**

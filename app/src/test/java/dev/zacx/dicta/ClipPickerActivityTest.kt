@@ -384,8 +384,8 @@ class ClipPickerActivityTest {
             ClipOutboxHealth.record(ClipFlusher.Report(dropped = 1))
             assertEquals(
                 "precondition: the latch is up",
-                ClipOutboxHealth.Verdict.DESTROYED,
-                ClipOutboxHealth.verdict(),
+                ClipOutboxHealth.State.DESTROYED,
+                ClipOutboxHealth.state(),
             )
 
             val throwingFlush = { throw ClipOutbox.Failed("the outbox file could not be read") }
@@ -393,7 +393,7 @@ class ClipPickerActivityTest {
 
             // The acknowledgement cleared the latch, and the throw was
             // recorded as ONE failed drain — below the threshold, so OK.
-            assertEquals(ClipOutboxHealth.Verdict.OK, ClipOutboxHealth.verdict())
+            assertEquals(ClipOutboxHealth.State.OK, ClipOutboxHealth.state())
 
             // 🔴 And the count really is advancing rather than the
             // acknowledgement merely having run: an unrecorded throw also
@@ -405,8 +405,8 @@ class ClipPickerActivityTest {
             assertEquals(
                 "🔴 a flush that THREW produced no health signal at all, so " +
                     "a picker that cannot drain reports healthy forever",
-                ClipOutboxHealth.Verdict.STUCK,
-                ClipOutboxHealth.verdict(),
+                ClipOutboxHealth.State.STUCK,
+                ClipOutboxHealth.state(),
             )
         } finally {
             ClipOutboxHealth.clearForTest()

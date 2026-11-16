@@ -59,7 +59,7 @@ class ClipOutboxHealthTest {
      * them would let every case below pass for the wrong reason.
      */
     private fun stuck(): Boolean =
-        ClipOutboxHealth.verdict() == ClipOutboxHealth.Verdict.STUCK
+        ClipOutboxHealth.state() == ClipOutboxHealth.State.STUCK
 
     /** An unreachable store, which is what a 401 and a dead mesh both produce. */
     private fun unreachable(kept: Int = 1) =
@@ -230,20 +230,20 @@ class ClipOutboxHealthTest {
         // a phone that has been off the mesh for an hour would otherwise do
         // sixty of them to say the same thing. OverlayVisibility makes the same
         // promise for the same reason.
-        val seen = mutableListOf<ClipOutboxHealth.Verdict>()
-        val sink: (ClipOutboxHealth.Verdict) -> Unit = { seen += it }
+        val seen = mutableListOf<ClipOutboxHealth.State>()
+        val sink: (ClipOutboxHealth.State) -> Unit = { seen += it }
         ClipOutboxHealth.register(sink)
 
         drain(unreachable(), times = ClipOutboxHealth.STUCK_AFTER_FAILURES + 20)
         assertEquals(
             "a sink was told more than once that the queue is stuck",
-            listOf(ClipOutboxHealth.Verdict.STUCK),
+            listOf(ClipOutboxHealth.State.STUCK),
             seen,
         )
 
         ClipOutboxHealth.record(ClipFlusher.Report(stored = 1))
         assertEquals(
-            listOf(ClipOutboxHealth.Verdict.STUCK, ClipOutboxHealth.Verdict.OK),
+            listOf(ClipOutboxHealth.State.STUCK, ClipOutboxHealth.State.OK),
             seen,
         )
 
@@ -251,7 +251,7 @@ class ClipOutboxHealthTest {
         // is the crying-wolf case at the channel rather than at the verdict.
         drain(ClipFlusher.Report(stored = 25, kept = 175), times = 10)
         assertEquals(
-            listOf(ClipOutboxHealth.Verdict.STUCK, ClipOutboxHealth.Verdict.OK),
+            listOf(ClipOutboxHealth.State.STUCK, ClipOutboxHealth.State.OK),
             seen,
         )
 
@@ -259,7 +259,7 @@ class ClipOutboxHealthTest {
         drain(unreachable(), times = ClipOutboxHealth.STUCK_AFTER_FAILURES)
         assertEquals(
             "an unregistered sink was still called",
-            listOf(ClipOutboxHealth.Verdict.STUCK, ClipOutboxHealth.Verdict.OK),
+            listOf(ClipOutboxHealth.State.STUCK, ClipOutboxHealth.State.OK),
             seen,
         )
     }
@@ -269,14 +269,14 @@ class ClipOutboxHealthTest {
         // The sink posts into a Service's looper and may be reached after that
         // Service is gone. One misbehaving sink must not cost the rest their
         // notification — OverlayVisibility.broadcast's rule.
-        val reached = mutableListOf<ClipOutboxHealth.Verdict>()
-        val bad: (ClipOutboxHealth.Verdict) -> Unit = { error("this sink is broken") }
-        val good: (ClipOutboxHealth.Verdict) -> Unit = { reached += it }
+        val reached = mutableListOf<ClipOutboxHealth.State>()
+        val bad: (ClipOutboxHealth.State) -> Unit = { error("this sink is broken") }
+        val good: (ClipOutboxHealth.State) -> Unit = { reached += it }
         ClipOutboxHealth.register(bad)
         ClipOutboxHealth.register(good)
 
         drain(unreachable(), times = ClipOutboxHealth.STUCK_AFTER_FAILURES)
-        assertEquals(listOf(ClipOutboxHealth.Verdict.STUCK), reached)
+        assertEquals(listOf(ClipOutboxHealth.State.STUCK), reached)
 
         ClipOutboxHealth.unregister(bad)
         ClipOutboxHealth.unregister(good)
@@ -300,8 +300,8 @@ class ClipOutboxHealthTest {
         ClipOutboxHealth.record(destroyedPass())
         assertEquals(
             "one destroyed capture did not raise a fault at all",
-            ClipOutboxHealth.Verdict.DESTROYED,
-            ClipOutboxHealth.verdict(),
+            ClipOutboxHealth.State.DESTROYED,
+            ClipOutboxHealth.state(),
         )
     }
 
@@ -315,8 +315,8 @@ class ClipOutboxHealthTest {
         drain(destroyedPass(), times = 10)
         assertEquals(
             "ten consecutive capture-destroying flushes read as healthy",
-            ClipOutboxHealth.Verdict.DESTROYED,
-            ClipOutboxHealth.verdict(),
+            ClipOutboxHealth.State.DESTROYED,
+            ClipOutboxHealth.state(),
         )
     }
 
@@ -353,8 +353,8 @@ class ClipOutboxHealthTest {
             "forty successful drains erased the record that a capture was " +
                 "destroyed, so an operator who was not looking at the phone " +
                 "in that minute is never told",
-            ClipOutboxHealth.Verdict.DESTROYED,
-            ClipOutboxHealth.verdict(),
+            ClipOutboxHealth.State.DESTROYED,
+            ClipOutboxHealth.state(),
         )
     }
 
@@ -366,8 +366,8 @@ class ClipOutboxHealthTest {
         drain(unreachable(), times = ClipOutboxHealth.STUCK_AFTER_FAILURES)
         ClipOutboxHealth.record(destroyedPass())
         assertEquals(
-            ClipOutboxHealth.Verdict.DESTROYED,
-            ClipOutboxHealth.verdict(),
+            ClipOutboxHealth.State.DESTROYED,
+            ClipOutboxHealth.state(),
         )
     }
 
@@ -387,16 +387,16 @@ class ClipOutboxHealthTest {
         assertEquals(
             "acknowledging a destroyed capture also cleared a stuck queue " +
                 "that nothing had repaired",
-            ClipOutboxHealth.Verdict.STUCK,
-            ClipOutboxHealth.verdict(),
+            ClipOutboxHealth.State.STUCK,
+            ClipOutboxHealth.state(),
         )
 
         // And a later destruction re-raises it: the acknowledgement is of the
         // captures already lost, not a permanent opt-out.
         ClipOutboxHealth.record(destroyedPass())
         assertEquals(
-            ClipOutboxHealth.Verdict.DESTROYED,
-            ClipOutboxHealth.verdict(),
+            ClipOutboxHealth.State.DESTROYED,
+            ClipOutboxHealth.state(),
         )
     }
 
@@ -405,20 +405,20 @@ class ClipOutboxHealthTest {
         // The channel, for the third verdict. A latch that nothing broadcast
         // would leave a bubble that is already built showing the old label
         // until something else changed.
-        val seen = mutableListOf<ClipOutboxHealth.Verdict>()
-        val sink: (ClipOutboxHealth.Verdict) -> Unit = { seen += it }
+        val seen = mutableListOf<ClipOutboxHealth.State>()
+        val sink: (ClipOutboxHealth.State) -> Unit = { seen += it }
         ClipOutboxHealth.register(sink)
 
         drain(destroyedPass(), times = 5)
         assertEquals(
             "a sink was told five times about one latched fault",
-            listOf(ClipOutboxHealth.Verdict.DESTROYED),
+            listOf(ClipOutboxHealth.State.DESTROYED),
             seen,
         )
 
         ClipOutboxHealth.acknowledgeDestroyed()
         assertEquals(
-            listOf(ClipOutboxHealth.Verdict.DESTROYED, ClipOutboxHealth.Verdict.OK),
+            listOf(ClipOutboxHealth.State.DESTROYED, ClipOutboxHealth.State.OK),
             seen,
         )
 
@@ -426,7 +426,7 @@ class ClipOutboxHealthTest {
         // nothing — the picker calls it on every open.
         ClipOutboxHealth.acknowledgeDestroyed()
         assertEquals(
-            listOf(ClipOutboxHealth.Verdict.DESTROYED, ClipOutboxHealth.Verdict.OK),
+            listOf(ClipOutboxHealth.State.DESTROYED, ClipOutboxHealth.State.OK),
             seen,
         )
 
