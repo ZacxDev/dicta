@@ -507,7 +507,7 @@ class BubbleClipRevealTest {
         assertFalse(
             "a successful drain after the bubble was destroyed left the " +
                 "verdict stuck",
-            ClipOutboxHealth.isStuck(),
+            ClipOutboxHealth.verdict() != ClipOutboxHealth.Verdict.OK,
         )
     }
 

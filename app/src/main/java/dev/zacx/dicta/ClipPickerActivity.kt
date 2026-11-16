@@ -135,7 +135,23 @@ class ClipPickerActivity : FloatingPickerActivity<Clip>() {
      * `runCatching`, which is the unreadable state and is correct.
      */
     override fun readRows(): List<Clip>? {
+        // 🔴 ACKNOWLEDGED FIRST, before the flush. Opening the shared
+        // clipboard is the one moment the operator has demonstrably seen the
+        // bubble's DESTROYED indicator and acted on it, so this is where the
+        // latch clears — and clearing it BEFORE the drain means a flush in
+        // this same open that destroys another capture re-raises it, rather
+        // than being wiped by the acknowledgement that preceded it.
+        ClipOutboxHealth.acknowledgeDestroyed()
         runCatching { (flush ?: ::defaultFlush).invoke() }
+            .onFailure {
+                // The drain threw before producing a Report. Same reasoning as
+                // `BubbleService.recordClipFlushThrew`: an absence is the
+                // observable the most causes share, so a drain that threw is
+                // recorded as a drain that failed rather than as silence.
+                ClipOutboxHealth.record(
+                    ClipFlusher.Report(failure = it.message ?: it.javaClass.simpleName)
+                )
+            }
         return (remote ?: defaultRemote()).rows()
     }
 
@@ -271,7 +287,19 @@ class ClipPickerActivity : FloatingPickerActivity<Clip>() {
      */
     private fun defaultFlush() {
         val settings = ClipSettings.create(this)
-        if (!settings.isConfigured) return
+        if (!settings.isConfigured) {
+            // 🔴 The same blind spot as [BubbleService.defaultClipFlush], at
+            // the second of the two drain sites. A token that is STORED but
+            // will not decrypt reads as "unconfigured" here, and this `return`
+            // used to produce no Report at all — on a handset whose queue is
+            // full of days of captures. See [ClipSettings.tokenIsUnusable].
+            if (settings.tokenIsUnusable) {
+                ClipOutboxHealth.record(
+                    ClipFlusher.Report(failure = ClipSettings.UNUSABLE_TOKEN_REASON)
+                )
+            }
+            return
+        }
         val token = settings.tokens.token() ?: return
         val http = ClipHttp(settings.baseUrl, token)
         val report = ClipFlusher(

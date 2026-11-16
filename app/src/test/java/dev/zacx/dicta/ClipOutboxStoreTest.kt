@@ -216,14 +216,148 @@ class ClipOutboxStoreTest {
     fun anUnreadableOutboxFileTHROWSRatherThanDegradingToAnEmptyQueue() {
         // 🔴 The read half of the same posture. Returning `[]` for a corrupt
         // file would make the flusher believe the queue had drained and the
-        // picker show "nothing queued" — and nothing would ever retry. A throw
-        // keeps the file, and the flusher reports the failure.
+        // picker show "nothing queued" — and nothing would ever retry. The
+        // throw is what carries the news: to CaptureActivity's failure toast,
+        // and to ClipOutboxHealth through ClipFlusher.Report.failure.
+        //
+        // ⚠ This comment used to end "A throw keeps the file". It no longer
+        // does, and the change is the recovery below: the damaged file is
+        // renamed aside and KEPT under a different name, so the next call
+        // starts a fresh queue instead of throwing forever.
         File(folder.root, ClipOutboxStore.FILE).writeText("}{ not json")
         val thrown = runCatching { store().pending() }.exceptionOrNull()
         assertTrue(
             "a corrupt outbox read as empty (got ${thrown?.javaClass?.simpleName})",
             thrown is ClipOutbox.Failed,
         )
+    }
+
+    @Test
+    fun aTornQueueFileIsQUARANTINEDSoCaptureIsNotBrickedFOREVER() {
+        // 🔴 REGRESSION for a permanent brick. The primary write is
+        // temp-then-renameTo and is atomic, but the documented in-place
+        // fallback (`file.writeText`) is not, and its own kdoc admits the
+        // branch is unreachable in the suite. A kill inside it leaves
+        // truncated JSON — and before this branch the consequence was
+        // forever: `readState` threw on every call, so `append` threw for
+        // EVERY FUTURE CAPTURE and `pending` threw so the queue could never
+        // drain. The only remedy was clearing app data, which also destroys
+        // the dictation history and the snippets.
+        //
+        // Three claims, and all three matter:
+        //   1. the first touch still THROWS, so the operator is told;
+        //   2. the damaged bytes are KEPT, under a new name — they are the
+        //      only copy of whatever captures were in them, and silently
+        //      discarding the user's text to make the feature work again is
+        //      the trade this whole file exists to refuse;
+        //   3. the NEXT capture succeeds.
+        val file = File(folder.root, ClipOutboxStore.FILE)
+        val torn = """{"next_id":4,"clips":[{"id":3,"body":"half a c"""
+        file.writeText(torn)
+
+        val thrown = runCatching { store().pending() }.exceptionOrNull()
+        assertTrue(
+            "a torn queue file did not report itself (got " +
+                "${thrown?.javaClass?.simpleName})",
+            thrown is ClipOutbox.Quarantined,
+        )
+
+        val aside = folder.root.listFiles().orEmpty()
+            .filter { it.name.startsWith(ClipOutboxStore.FILE + ClipOutboxStore.DAMAGED_INFIX) }
+        assertEquals(
+            "the damaged file was not set aside exactly once: " +
+                folder.root.listFiles().orEmpty().map { it.name },
+            1,
+            aside.size,
+        )
+        assertEquals(
+            "🔴 the damaged bytes were DISCARDED rather than kept. They are " +
+                "the only copy of whatever captures were in them.",
+            torn,
+            aside.single().readText(),
+        )
+        assertTrue(
+            "the damaged file is still in place under its own name, so the " +
+                "next read throws again and capture stays bricked",
+            !file.exists(),
+        )
+
+        // 3. And capture works on the very next attempt, which is the whole
+        //    point — a fresh queue, not a repaired one.
+        val fresh = store()
+        val id = fresh.append("the capture after the corruption")
+        assertEquals(
+            listOf(ClipOutbox.Pending(id, "the capture after the corruption")),
+            fresh.pending(),
+        )
+    }
+
+    @Test
+    fun aQueueFileWithNoItemsArrayIsQuarantinedTOO() {
+        // The second corruption shape readState knows about: valid JSON whose
+        // envelope is wrong. It used to throw ClipOutbox.Failed forever for
+        // the same reason, so it gets the same recovery.
+        File(folder.root, ClipOutboxStore.FILE).writeText("""{"next_id":2}""")
+        val thrown = runCatching { store().pending() }.exceptionOrNull()
+        assertTrue(
+            "an envelope with no items array was not quarantined (got " +
+                "${thrown?.javaClass?.simpleName})",
+            thrown is ClipOutbox.Quarantined,
+        )
+        assertEquals(emptyList<ClipOutbox.Pending>(), store().pending())
+    }
+
+    @Test
+    fun anOVERSIZEDBodyIsRefusedATCAPTURETimeAndSaysSoDistinctly() {
+        // 🔴 (d) of the capture-loss fix, and it is about WHERE the operator
+        // finds out. An oversized body refused at FLUSH time is refused
+        // minutes later, off-screen, with the selection it came from long
+        // gone; refused here it is refused while they can still see and
+        // re-take it.
+        //
+        // 🔴 Its own exception type, so CaptureActivity can toast
+        // @string/clip_capture_too_large rather than "Dicta could not save
+        // that capture" — which is true and gives the operator no reason not
+        // to retry the identical selection.
+        val outbox = store()
+        val thrown = runCatching {
+            outbox.append("x".repeat(ClipOutboxStore.MAX_BODY_CHARS + 1))
+        }.exceptionOrNull()
+        assertTrue(
+            "an oversized body was queued (got ${thrown?.javaClass?.simpleName})",
+            thrown is ClipOutbox.TooLarge,
+        )
+        assertEquals(
+            "the oversized body was written to the queue anyway",
+            emptyList<ClipOutbox.Pending>(),
+            outbox.pending(),
+        )
+    }
+
+    @Test
+    fun theBoundCannotRejectAnythingTheSelectionToolbarCanDELIVER() {
+        // 🔴 THE BOUNDARY, AND THE DIRECTION THAT MATTERS. The hazard of a
+        // size bound on the only copy of a capture is that it refuses a
+        // LEGITIMATE selection. `Editor.fireIntent` truncates an
+        // ACTION_PROCESS_TEXT selection to TextUtils.PARCEL_SAFE_TEXT_LENGTH
+        // = 100,000 characters, so the bound is the platform's own number and
+        // the longest thing that path can deliver lands exactly ON it.
+        //
+        // Asserted at the bound itself rather than at some value below it:
+        // `>` versus `>=` is the whole of what this comparison can get wrong,
+        // and at `>=` every maximum-length selection the toolbar produces
+        // would be destroyed.
+        assertEquals(100_000, ClipOutboxStore.MAX_BODY_CHARS)
+        val outbox = store()
+        val id = outbox.append("y".repeat(ClipOutboxStore.MAX_BODY_CHARS))
+        assertEquals(
+            "a selection of exactly PARCEL_SAFE_TEXT_LENGTH characters — the " +
+                "longest the selection toolbar can deliver — was refused",
+            1,
+            outbox.pending().size,
+        )
+        assertEquals(ClipOutboxStore.MAX_BODY_CHARS, outbox.pending().single().body.length)
+        assertEquals(id, outbox.pending().single().id)
     }
 
     @Test

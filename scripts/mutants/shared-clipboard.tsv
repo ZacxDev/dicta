@@ -70,11 +70,11 @@ m-clip04-the-clip-button-opens-the-snip-picker	app/src/main/java/dev/zacx/dicta/
 m-clip05-the-clip-button-works-while-recording	app/src/main/java/dev/zacx/dicta/BubbleDictation.kt	if (state == State.IDLE) listOf(Effect.OpenClipPicker) else emptyList()	listOf(Effect.OpenClipPicker)	dev.zacx.dicta.BubbleClipStateTest
 m-clip06-a-failed-list-read-reads-as-an-empty-store	app/src/main/java/dev/zacx/dicta/ClipHttp.kt	if (conn.responseCode != 200) return null	if (conn.responseCode != 200) return emptyList()	dev.zacx.dicta.ClipHttpTest
 m-clip07-a-malformed-body-reads-as-an-empty-store	app/src/main/java/dev/zacx/dicta/ClipJson.kt	throw Malformed("the response has no \"$KEY_CLIPS\" array")	return emptyList()	dev.zacx.dicta.ClipJsonTest
-m-clip08-a-401-drops-the-users-capture	app/src/main/java/dev/zacx/dicta/ClipHttp.kt	setOf(400, 404, 405, 413, 414, 415, 422)	setOf(400, 401, 403, 404, 405, 413, 414, 415, 422)	dev.zacx.dicta.ClipHttpTest
+m-clip08-a-401-drops-the-users-capture	app/src/main/java/dev/zacx/dicta/ClipHttp.kt	setOf(400, 422)	setOf(400, 401, 403, 422)	dev.zacx.dicta.ClipHttpTest
 m-clip09-a-2xx-with-no-id-counts-as-stored	app/src/main/java/dev/zacx/dicta/ClipHttp.kt	if (id <= 0L) {	if (false) {	dev.zacx.dicta.ClipHttpTest
 m-clip12-the-outbox-id-comes-from-the-list-size	app/src/main/java/dev/zacx/dicta/ClipOutbox.kt	val floor = (items.maxOfOrNull { it.id } ?: 0L) + 1L	val floor = items.size + 1L	dev.zacx.dicta.ClipOutboxStoreTest
 m-clip13-a-failed-capture-write-is-swallowed	app/src/main/java/dev/zacx/dicta/ClipOutbox.kt	throw ClipOutbox.Failed("the capture could not be saved", e)	Unit	dev.zacx.dicta.ClipOutboxStoreTest
-m-clip14-a-corrupt-outbox-reads-as-drained	app/src/main/java/dev/zacx/dicta/ClipOutbox.kt	throw ClipOutbox.Failed("the outbox file could not be read", e)	return State(nextId = 1L, items = emptyList())	dev.zacx.dicta.ClipOutboxStoreTest
+m-clip14-a-corrupt-outbox-reads-as-drained	app/src/main/java/dev/zacx/dicta/ClipOutbox.kt	throw quarantine("the outbox file could not be read", e)	return State(nextId = 1L, items = emptyList())	dev.zacx.dicta.ClipOutboxStoreTest
 m-clip15-the-outbox-lives-in-the-backed-up-files-dir	app/src/main/java/dev/zacx/dicta/ClipOutbox.kt	File(context.noBackupFilesDir, DIR)	File(context.filesDir, DIR)	dev.zacx.dicta.ClipOutboxStoreTest
 m-clip17-the-picker-reorders-the-shared-list	app/src/main/java/dev/zacx/dicta/ClipPickerActivity.kt	rows.filter { SnipMatcher.rank(listOf(searchViewOf(it)), query).isNotEmpty() }	rows.sortedBy { it.body }.filter { SnipMatcher.rank(listOf(searchViewOf(it)), query).isNotEmpty() }	dev.zacx.dicta.ClipPickerActivityTest
 m-clip18-the-copied-clip-is-not-marked-sensitive	app/src/main/java/dev/zacx/dicta/ClipPickerActivity.kt	clipboard?.setPrimaryClip(sensitive(ClipData.newPlainText(null, row.body)))	clipboard?.setPrimaryClip(ClipData.newPlainText(null, row.body))	dev.zacx.dicta.ClipPickerActivityTest
@@ -110,9 +110,9 @@ m-clip26-a-merely-pending-queue-reads-as-a-fault	app/src/main/java/dev/zacx/dict
 m-clip27-an-unreadable-outbox-reads-as-healthy	app/src/main/java/dev/zacx/dicta/ClipFlusher.kt	get() = unreachable || failure != null	get() = unreachable	dev.zacx.dicta.ClipOutboxHealthTest
 m-clip28-the-fault-threshold-is-off-by-one	app/src/main/java/dev/zacx/dicta/ClipOutboxHealth.kt	consecutiveFailures >= STUCK_AFTER_FAILURES	consecutiveFailures > STUCK_AFTER_FAILURES	dev.zacx.dicta.ClipOutboxHealthTest
 m-clip29-every-mesh-blip-is-a-fault	app/src/main/java/dev/zacx/dicta/ClipOutboxHealth.kt	const val STUCK_AFTER_FAILURES: Int = 3	const val STUCK_AFTER_FAILURES: Int = 1	dev.zacx.dicta.ClipOutboxHealthTest
-m-clip30-the-stuck-queue-is-announced-as-a-healthy-one	app/src/main/java/dev/zacx/dicta/BubbleChrome.kt	if (stuck) R.string.bubble_clip_stuck else R.string.bubble_clip	R.string.bubble_clip	dev.zacx.dicta.Bubble*Test
-m-clip31-the-fault-is-carried-by-colour-alone	app/src/main/java/dev/zacx/dicta/BubbleChrome.kt	if (stuck) R.color.dicta_error else R.color.dicta_on_surface	R.color.dicta_on_surface	dev.zacx.dicta.Bubble*Test
-m-clip32-a-service-starting-into-a-stuck-queue-shows-nothing	app/src/main/java/dev/zacx/dicta/BubbleService.kt	applyClipHealth(clipButton, ClipOutboxHealth.isStuck())	applyClipHealth(clipButton, false)	dev.zacx.dicta.BubbleClipRevealTest
+m-clip30-the-stuck-queue-is-announced-as-a-healthy-one	app/src/main/java/dev/zacx/dicta/BubbleChrome.kt	ClipOutboxHealth.Verdict.STUCK -> R.string.bubble_clip_stuck	ClipOutboxHealth.Verdict.STUCK -> R.string.bubble_clip	dev.zacx.dicta.Bubble*Test
+m-clip31-the-fault-is-carried-by-colour-alone	app/src/main/java/dev/zacx/dicta/BubbleChrome.kt	if (verdict == ClipOutboxHealth.Verdict.OK) {	if (true) {	dev.zacx.dicta.Bubble*Test
+m-clip32-a-service-starting-into-a-stuck-queue-shows-nothing	app/src/main/java/dev/zacx/dicta/BubbleService.kt	applyClipHealth(clipButton, ClipOutboxHealth.verdict())	applyClipHealth(clipButton, ClipOutboxHealth.Verdict.OK)	dev.zacx.dicta.BubbleClipRevealTest
 # 🔴 m-clip33's TO is the OPAQUE theme SPELLED OUT, not the attribute deleted, and
 # that is forced rather than chosen: a TO that repeats an attribute already on the
 # element gives aapt2 a duplicate and the manifest merge fails, so ZERO TESTS RUN
@@ -131,3 +131,56 @@ m-clip35-an-old-queue-file-loses-every-capture	app/src/main/java/dev/zacx/dicta/
 # "a guard worth a look", and the look can end at the TSV row rather than the
 # test. The test name is what misled the author, and it was renamed with this.
 m-clip36-the-queue-file-carries-a-key-nothing-reads	app/src/main/java/dev/zacx/dicta/ClipJson.kt	.put(KEY_BODY, item.body)	.put(KEY_BODY, item.body).put(KEY_CREATED_AT, 0L)	dev.zacx.dicta.ClipOutboxStoreTest
+#
+# ===========================================================================
+# THE CAPTURE-LOSS FIX. Added with the commit that reclassifies
+# PERMANENT_STATUSES, surfaces a destroyed capture, validates the base URL and
+# recovers a torn queue file.
+# ===========================================================================
+#
+# 🔴 WHY THESE EXIST, AND WHAT THE 38-MUTANT BATCH ABOVE MISSED. Every row
+# above certifies the MECHANISM — that a Refused drops, that an Unreachable
+# keeps, that a run of failures lights the bubble. Not one of them asks
+# whether the SET IS RIGHT, and that is exactly where the defect was: 404,
+# 405, 413, 414 and 415 were all classified as permanent, so a mistyped base
+# URL deleted the operator's captures one flush per minute with a fully green
+# sweep. m-clip08 mutated the set by ADDING 401 — which the tests catch — and
+# nothing ever mutated the five that were already wrong. A sweep is only a
+# claim about the mutations you IMAGINED.
+#
+# 🔴 m-clip37..m-clip40 are therefore MEMBERSHIP mutants in BOTH directions:
+# three that put a configuration fault back in (the capture is destroyed) and
+# one that takes a genuine body fault out (the queue blocks forever behind a
+# row that can never be accepted). A set guarded only against growth is half
+# a guard.
+#
+# 🔴 m-clip41..m-clip43 are REGRESSION mutants for the second half of the
+# defect: `ClipFlusher.Report.dropped` had NO CONSUMER anywhere in the tree,
+# and because a dropping pass is not a `cannotDrain` pass it also RESET the
+# fault counter. Ten capture-destroying flushes left the indicator dark while
+# ten harmless 401 flushes lit it.
+#
+# 🔴 m-clip49b IS A SECOND POSITIVE CONTROL, beside m-clip24, and it is in
+# this batch for a specific reason: it is the control that showed
+# ClipSeamLedgerTest's forbidden-name list had a hole. The ledger claims
+# CaptureActivity "is incapable of reaching either token", and m-clip49 —
+# reading the clip token through the public factory `ClipSettings.create` —
+# left it GREEN while m-clip49b turned it red. Both are kept so the pair can
+# be re-run together: a guard that reads as coverage while providing none is
+# worse than no guard.
+
+m-clip37-MEMBERSHIP-a-404-destroys-the-capture-again	app/src/main/java/dev/zacx/dicta/ClipHttp.kt	setOf(400, 422)	setOf(400, 404, 422)	dev.zacx.dicta.ClipHttpTest
+m-clip38-MEMBERSHIP-a-413-destroys-a-large-selection-again	app/src/main/java/dev/zacx/dicta/ClipHttp.kt	setOf(400, 422)	setOf(400, 413, 422)	dev.zacx.dicta.ClipHttpTest
+m-clip39-MEMBERSHIP-the-whole-shipped-set-comes-back	app/src/main/java/dev/zacx/dicta/ClipHttp.kt	setOf(400, 422)	setOf(400, 404, 405, 413, 414, 415, 422)	dev.zacx.dicta.ClipHttpTest
+m-clip40-MEMBERSHIP-a-genuine-body-fault-blocks-the-queue-forever	app/src/main/java/dev/zacx/dicta/ClipHttp.kt	setOf(400, 422)	setOf(422)	dev.zacx.dicta.ClipHttpTest
+m-clip41-REGRESSION-a-destroyed-capture-reaches-nothing	app/src/main/java/dev/zacx/dicta/ClipOutboxHealth.kt	if (report.destroyed) destroyedCaptures = true	Unit	dev.zacx.dicta.Clip*Test
+m-clip42-REGRESSION-a-drop-RESETS-the-fault-counter	app/src/main/java/dev/zacx/dicta/ClipOutboxHealth.kt	} else if (!report.destroyed) {	} else {	dev.zacx.dicta.ClipOutboxHealthTest
+m-clip43-a-dropped-capture-is-not-a-destroyed-one	app/src/main/java/dev/zacx/dicta/ClipFlusher.kt	val destroyed: Boolean get() = dropped > 0	val destroyed: Boolean get() = false	dev.zacx.dicta.Clip*Test
+m-clip44-the-damaged-queue-file-is-DISCARDED-not-kept	app/src/main/java/dev/zacx/dicta/ClipOutbox.kt	file.renameTo(aside)	file.delete()	dev.zacx.dicta.ClipOutboxStoreTest
+m-clip45-the-size-bound-destroys-a-maximum-length-selection	app/src/main/java/dev/zacx/dicta/ClipOutbox.kt	if (body.length > MAX_BODY_CHARS) {	if (body.length >= MAX_BODY_CHARS) {	dev.zacx.dicta.ClipOutboxStoreTest
+m-clip46-the-settings-field-accepts-anything-with-no-scheme	app/src/main/java/dev/zacx/dicta/ClipEndpoints.kt	return "it must start with http:// or https://"	return null	dev.zacx.dicta.Clip*Test
+m-clip47-the-settings-field-accepts-the-full-endpoint	app/src/main/java/dev/zacx/dicta/ClipEndpoints.kt	if (afterHost.any { it == '/' || it == '?' || it == '#' }) {	if (afterHost.any { it == '?' || it == '#' }) {	dev.zacx.dicta.Clip*Test
+m-clip48-an-undecryptable-token-reads-as-no-token-again	app/src/main/java/dev/zacx/dicta/ClipSettings.kt	val tokenIsUnusable: Boolean get() = !tokens.hasToken && tokens.hasCiphertext	val tokenIsUnusable: Boolean get() = false	dev.zacx.dicta.ClipSettingsTest
+m-clip49-LEDGER-the-exported-receiver-reads-the-clip-token	app/src/main/java/dev/zacx/dicta/CaptureActivity.kt	(outbox ?: ClipOutboxStore(this)).append(text.toString())	(outbox ?: ClipOutboxStore(this)).append(ClipSettings.create(this).tokens.token() ?: text.toString())	dev.zacx.dicta.ClipSeamLedgerTest
+m-clip49b-LEDGER-CONTROL-the-exported-receiver-starts-an-activity	app/src/main/java/dev/zacx/dicta/CaptureActivity.kt	(outbox ?: ClipOutboxStore(this)).append(text.toString())	startActivity(ClipLaunch.intent(this)).also { (outbox ?: ClipOutboxStore(this)).append(text.toString()) }	dev.zacx.dicta.ClipSeamLedgerTest
+m-clip50-the-picker-never-acknowledges-a-destroyed-capture	app/src/main/java/dev/zacx/dicta/ClipPickerActivity.kt	ClipOutboxHealth.acknowledgeDestroyed()	Unit	dev.zacx.dicta.ClipPickerActivityTest

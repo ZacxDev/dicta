@@ -72,17 +72,33 @@ class BubbleChromeTest {
         // the settings screen's three destructive controls, where a description
         // copied from the visible label satisfies "has a description" and tells
         // nobody anything they did not already have.
-        val healthy = ctx.getString(BubbleChrome.clipLabelFor(stuck = false))
-        val stuck = ctx.getString(BubbleChrome.clipLabelFor(stuck = true))
+        //
+        // 🔴 THREE values, not two, since the capture-loss fix. A DESTROYED
+        // capture may not be announced with the STUCK label: that one ends
+        // "Open it to retry", and there is nothing to retry — the text is
+        // gone. The set assertion is over all three for that reason, and it
+        // is what makes a `when` arm pointed at the wrong string red.
+        val healthy = ctx.getString(
+            BubbleChrome.clipLabelFor(ClipOutboxHealth.Verdict.OK)
+        )
+        val stuck = ctx.getString(
+            BubbleChrome.clipLabelFor(ClipOutboxHealth.Verdict.STUCK)
+        )
+        val destroyed = ctx.getString(
+            BubbleChrome.clipLabelFor(ClipOutboxHealth.Verdict.DESTROYED)
+        )
 
         assertTrue("the clip button's healthy label is blank", healthy.isNotBlank())
         assertTrue("the clip button's stuck label is blank", stuck.isNotBlank())
+        assertTrue("the clip button's destroyed label is blank", destroyed.isNotBlank())
         assertEquals(
-            "a stuck shared clipboard announces the SAME text as a healthy " +
-                "one, so the fault is conveyed by the icon tint and nothing " +
-                "else. Labels: [$healthy], [$stuck]",
-            2,
-            setOf(healthy, stuck).size,
+            "two of the three shared-clipboard verdicts announce the SAME " +
+                "text, so at least one fault is conveyed by the icon tint and " +
+                "nothing else — or a destroyed capture is announced with the " +
+                "stuck queue's 'Open it to retry', which is advice for a " +
+                "different fault. Labels: [$healthy], [$stuck], [$destroyed]",
+            3,
+            setOf(healthy, stuck, destroyed).size,
         )
 
         // And the tints, decided in the same one place. Either half alone is
@@ -93,20 +109,26 @@ class BubbleChromeTest {
             "the clip button's healthy tint is not the on-surface one its two " +
                 "siblings use, so a healthy reveal has one odd button in it",
             R.color.dicta_on_surface,
-            BubbleChrome.clipTintFor(stuck = false),
+            BubbleChrome.clipTintFor(ClipOutboxHealth.Verdict.OK),
         )
-        assertEquals(
-            "a stuck shared clipboard is not drawn in @color/dicta_error. " +
-                "colors.xml states that dicta_live and dicta_error exist " +
-                "precisely so that *recording* and *failed* do not share a hue",
-            R.color.dicta_error,
-            BubbleChrome.clipTintFor(stuck = true),
-        )
-        assertFalse(
-            "the two clip tints are the same colour resource",
-            BubbleChrome.clipTintFor(stuck = true) ==
-                BubbleChrome.clipTintFor(stuck = false),
-        )
+        for (fault in listOf(
+            ClipOutboxHealth.Verdict.STUCK,
+            ClipOutboxHealth.Verdict.DESTROYED,
+        )) {
+            assertEquals(
+                "a $fault shared clipboard is not drawn in @color/dicta_error. " +
+                    "colors.xml states that dicta_live and dicta_error exist " +
+                    "precisely so that *recording* and *failed* do not share a hue",
+                R.color.dicta_error,
+                BubbleChrome.clipTintFor(fault),
+            )
+            assertFalse(
+                "the $fault clip tint is the same colour resource as the " +
+                    "healthy one",
+                BubbleChrome.clipTintFor(fault) ==
+                    BubbleChrome.clipTintFor(ClipOutboxHealth.Verdict.OK),
+            )
+        }
     }
 
     @Test

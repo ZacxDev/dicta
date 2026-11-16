@@ -79,9 +79,99 @@ object ClipEndpoints {
      *
      * The base URL is typed by a human into a settings field, so a trailing
      * slash is expected rather than exceptional; without the `trimEnd` the
-     * result is `.../8139//v1/clips`, which the service's router does not
-     * match.
+     * result is `.../8139//v1/clips`.
+     *
+     * ⚠ **CORRECTION.** This sentence used to end *"which the service's router
+     * does not match"*, marked 🔴. **Measured false** against the live service:
+     * `…:8139//v1/clips` answers **307**, because Go's `http.ServeMux`
+     * path-cleans and redirects. Nothing depends on the claim — the `trimEnd`
+     * makes the doubled slash unreachable — and the `trimEnd` is still right,
+     * because a 307 is a wasted round trip and `HttpURLConnection` does not
+     * follow a redirect across a method-preserving POST by default. But a
+     * comment is a claim, and this one was a confident statement about another
+     * service's behaviour that was never checked.
      */
     private fun join(baseUrl: String, path: String): String =
         baseUrl.trim().trimEnd('/') + path
+
+    /**
+     * Why [baseUrl] cannot be a clip-store base URL, or `null` when it can.
+     *
+     * ## 🔴 Why this exists at all
+     *
+     * `SettingsActivity` saved this field as **free text with no validation**,
+     * and the capture-loss defect this branch fixes was reached through it:
+     * paste something that is not the clip store and every `POST /v1/clips`
+     * answers 404, which [ClipHttp.PERMANENT_STATUSES] used to treat as
+     * permanent and the flusher therefore DELETED the capture for.
+     *
+     * 🔴 **This is defence in depth and NOT the fix.** The scenario measured —
+     * the operator pasting the *transcription* base URL, `…:8118`, four digits
+     * from the clip store's `…:8139` — produces a string this function accepts,
+     * because it is a perfectly well-formed base URL. No syntactic check can
+     * tell two valid mesh addresses apart. The fix is that a 404 no longer
+     * destroys anything; this only closes the cases that are detectable, and
+     * says so rather than claiming more.
+     *
+     * ## What is rejected, and why each
+     *
+     *  * **A scheme that is not `http`/`https`.** Anything else is not a URL
+     *    this client can open, so it would surface as a transport failure —
+     *    i.e. as "the mesh is down", which is the wrong diagnosis forever.
+     *  * **No host.** `http://` and `http:///v1` parse and reach nothing.
+     *  * **A path, query or fragment.** This is a BASE url: [clips] appends
+     *    `/v1/clips` to it. Pasting the full endpoint — the single most likely
+     *    paste, since it is what a `curl` line contains — yields
+     *    `…/v1/clips/v1/clips`, a 404 on every POST.
+     *  * **Over [MAX_BASE_URL_CHARS].** A base URL that is a kilobyte long is
+     *    the only way the request URI can get near a 414, since the body is
+     *    never in the URI. 2,048 is the conventional URI bound and is three
+     *    orders of magnitude above any real mesh address.
+     *
+     * 🔴 **It does NOT normalise.** An input that is wrong is refused and
+     * reported; nothing is silently rewritten into something that works,
+     * because a field that quietly edits what the operator typed is how they
+     * come to believe a setting says something it does not. The sole exception
+     * is surrounding whitespace, which is a property of pasting and not of
+     * what was pasted.
+     *
+     * @return a short reason suitable for the settings status line, or `null`
+     *   when [baseUrl] is acceptable. An EMPTY string is acceptable: it means
+     *   "clear the setting and use [DEFAULT_BASE_URL]", which is how the
+     *   operator resets the field.
+     */
+    fun rejectionFor(baseUrl: String): String? {
+        val trimmed = baseUrl.trim()
+        if (trimmed.isEmpty()) return null
+        if (trimmed.length > MAX_BASE_URL_CHARS) {
+            return "it is longer than $MAX_BASE_URL_CHARS characters"
+        }
+        val scheme = trimmed.substringBefore("://", missingDelimiterValue = "")
+        if (scheme != "http" && scheme != "https") {
+            return "it must start with http:// or https://"
+        }
+        val authority = trimmed.substringAfter("://")
+        if (authority.isEmpty()) return "it has no host"
+        // Everything after the authority is a path, a query or a fragment, and
+        // none of the three belongs in a base URL. A single trailing slash is
+        // allowed because [join] already trims it and a human types it.
+        val afterHost = authority.trimEnd('/')
+        if (afterHost.isEmpty()) return "it has no host"
+        if (afterHost.any { it == '/' || it == '?' || it == '#' }) {
+            return "it must be a host and port only, with no path — " +
+                "Dicta appends $CLIPS_PATH itself"
+        }
+        if (afterHost.any { it.isWhitespace() }) return "it contains a space"
+        return null
+    }
+
+    /**
+     * The longest base URL the settings field will accept.
+     *
+     * 🔴 The point is not tidiness: the request URI is `baseUrl + /v1/clips`
+     * and **the capture body is never in it**, so an over-long base URL is the
+     * only route to an HTTP 414 — which, as [ClipHttp.PERMANENT_STATUSES]
+     * records, used to destroy the capture.
+     */
+    const val MAX_BASE_URL_CHARS: Int = 2_048
 }

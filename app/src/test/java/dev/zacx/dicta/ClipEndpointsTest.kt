@@ -112,4 +112,92 @@ class ClipEndpointsTest {
             SttEndpoints.authorization(fixtureToken),
         )
     }
+
+    // --- the base-URL validator ----------------------------------------------
+
+    @Test
+    fun anAcceptableBaseUrlIsNOTRejected() {
+        // 🔴 THE DIRECTION THAT MATTERS FIRST. A validator that refused
+        // everything would make every case below pass while bricking the
+        // settings screen, and the default is the value the field ships with.
+        for (good in listOf(
+            "",
+            ClipEndpoints.DEFAULT_BASE_URL,
+            "http://10.42.0.10:8139",
+            "http://10.42.0.10:8139/",
+            "  http://10.42.0.10:8139  ",
+            "https://clips.example.test",
+            "http://clipstore",
+        )) {
+            assertEquals(
+                "the settings field refuses [$good], which is a usable base URL",
+                null,
+                ClipEndpoints.rejectionFor(good),
+            )
+        }
+    }
+
+    @Test
+    fun theFullENDPOINTIsRejectedRatherThanSilentlyDoubled() {
+        // 🔴 The most likely wrong paste there is: the URL out of a curl line.
+        // ClipEndpoints.clips appends /v1/clips itself, so accepting this
+        // yields `…/v1/clips/v1/clips` — a 404 on every POST, which until this
+        // branch DELETED the capture.
+        //
+        // Rejected and REPORTED, never normalised: a field that quietly edits
+        // what the operator typed is how they come to believe a setting says
+        // something it does not.
+        val rejection = ClipEndpoints.rejectionFor("http://10.42.0.10:8139/v1/clips")
+        assertTrue(
+            "the full endpoint was accepted as a base URL",
+            rejection != null,
+        )
+        assertTrue(
+            "the rejection does not say what is wrong, so the operator " +
+                "retypes at random: [$rejection]",
+            rejection!!.contains(ClipEndpoints.CLIPS_PATH),
+        )
+    }
+
+    @Test
+    fun whatCannotBeABaseUrlIsRejectedWithAReason() {
+        // Each of these reaches nothing, and each would surface as a transport
+        // failure — i.e. as "the mesh is down", which is the wrong diagnosis
+        // forever. The over-long one is the 414 route: the body is never in
+        // the URI, so an absurd base URL is the ONLY way to reach that status.
+        for (bad in listOf(
+            "10.42.0.10:8139",
+            "ftp://10.42.0.10:8139",
+            "http://",
+            "http:///v1",
+            "http://10.42.0.10:8139?limit=3",
+            "http://10.42.0.10:8139#frag",
+            "http://10.42.0 .10:8139",
+            "http://" + "a".repeat(ClipEndpoints.MAX_BASE_URL_CHARS),
+        )) {
+            assertTrue(
+                "[$bad] was accepted as a clip store base URL",
+                ClipEndpoints.rejectionFor(bad) != null,
+            )
+        }
+    }
+
+    @Test
+    fun theValidatorCannotCatchAVALIDUrlForTheWRONGService() {
+        // 🔴 STATED AS A LIMIT, not discovered later. The capture-loss defect
+        // was reached by pasting the TRANSCRIPTION base URL — `…:8118`, four
+        // digits from `…:8139` — into the clip field, and that string is a
+        // perfectly well-formed base URL. No syntactic check can tell two
+        // valid mesh addresses apart.
+        //
+        // This case exists so nobody reads the validator as the fix. The fix
+        // is that a 404 no longer destroys anything
+        // (ClipHttp.PERMANENT_STATUSES); the validator only closes the cases
+        // that are detectable.
+        assertEquals(
+            "the validator claims to catch a URL it cannot possibly catch",
+            null,
+            ClipEndpoints.rejectionFor("http://10.42.0.10:8118"),
+        )
+    }
 }

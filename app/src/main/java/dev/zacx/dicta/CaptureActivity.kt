@@ -231,6 +231,14 @@ class CaptureActivity : Activity() {
         try {
             (outbox ?: ClipOutboxStore(this)).append(text.toString())
             toast(R.string.clip_capture_queued)
+        } catch (_: ClipOutbox.TooLarge) {
+            // 🔴 Its own toast. "Dicta could not save that capture" over an
+            // oversized selection is true and useless — the operator would
+            // retry the identical selection. This is also the ONLY moment the
+            // selection still exists on screen, which is the whole argument
+            // for bounding at capture time rather than at flush time; see
+            // [ClipOutboxStore.MAX_BODY_CHARS].
+            toast(R.string.clip_capture_too_large)
         } catch (_: Exception) {
             toast(R.string.clip_capture_failed)
         }

@@ -52,6 +52,24 @@ class TokenStore(
     val hasToken: Boolean get() = token() != null
 
     /**
+     * Whether a ciphertext blob is stored **at all**, whether or not it will
+     * decrypt.
+     *
+     * 🔴 Distinct from [hasToken], and the gap between the two is a real
+     * device state rather than a hypothetical: [KeystoreCipher] fails closed,
+     * so removing the lock screen or restoring onto a new handset invalidates
+     * the key and [token] returns null for a blob that is still sitting in the
+     * preferences. `hasToken` is then false on a phone the operator configured
+     * weeks ago and has been capturing on ever since.
+     *
+     * The consumer is [ClipSettings.tokenIsUnusable]: both clip drain sites
+     * return early on `!isConfigured`, so without this distinction a full
+     * capture queue on a keystore-invalidated handset produced no
+     * [ClipFlusher.Report] at all, and therefore no fault, forever.
+     */
+    val hasCiphertext: Boolean get() = prefs.getString(key, null) != null
+
+    /**
      * Stores [token], or clears it when blank.
      *
      * @throws RuntimeException propagated from the cipher. Deliberately not

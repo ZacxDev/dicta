@@ -70,21 +70,31 @@ sealed interface ClipPost {
     data class Stored(val id: Long) : ClipPost
 
     /**
-     * The server refused it and always will. **Drop the item.**
+     * The server refused it and always will. **Drop the item — which DESTROYS
+     * the user's only copy of it.**
      *
-     * Reachable: a 400 `empty_body`, measured. An item that cannot be accepted
-     * must leave the queue or it blocks every clip behind it forever — the
-     * flush stops at the first [Unreachable], so a permanently-refused head is
-     * a dead queue.
+     * 🔴 Reaching this is a capture-loss event and is reported as one. See
+     * [ClipFlusher.Report.destroyed] and [ClipOutboxHealth]: a drop raises a
+     * fault in its own right rather than resetting the stuck counter, because
+     * a destroyed capture is strictly worse than a stuck queue and until this
+     * branch it had **less** visibility than nothing.
+     *
+     * An item that cannot be accepted must leave the queue or it blocks every
+     * clip behind it forever — the flush stops at the first [Unreachable], so
+     * a permanently-refused head is a dead queue. That is why the membership of
+     * [ClipHttp.PERMANENT_STATUSES] is now only the two statuses that are a
+     * property of the BYTES.
      */
     data class Refused(val status: Int, val detail: String?) : ClipPost
 
     /**
      * No usable answer. **Keep the item.**
      *
-     * Transport failures, 5xx, and 401 — a wrong or missing token is a
-     * configuration fault the operator fixes, not a reason to destroy the
-     * capture.
+     * Transport failures, 5xx, 401/403 — and, since this branch, every status
+     * that is a property of the URL CONFIGURATION rather than of the bytes
+     * (404, 405, 414, 415) plus 413. A configuration fault is one the operator
+     * fixes in Settings; destroying the capture for it is a five-second repair
+     * paid for with the user's data.
      */
     data class Unreachable(val reason: String) : ClipPost
 }
@@ -261,16 +271,72 @@ class ClipHttp(
         const val DEFAULT_LIMIT: Int = 100
 
         /**
-         * Statuses that mean "this request is wrong and always will be", so the
-         * item must be DROPPED rather than retried forever.
+         * Statuses that mean **these BYTES are wrong and always will be**, so
+         * the item must be DROPPED rather than retried forever.
          *
-         * 🔴 **401 is deliberately NOT in here**, and nor is 403: a missing or
-         * stale token is a configuration fault the operator fixes in Settings,
-         * and dropping the queue over it would destroy captures for a
-         * five-second repair. 429 and 408 are absent for the obvious reason —
-         * they are the two statuses that explicitly mean "try again".
+         * 🔴 **The membership test is "is it a property of the BODY", not "is
+         * it a 4xx".** Dropping is how a capture is destroyed — the outbox is
+         * the only copy — so a status earns a place here only if correcting
+         * the app's own configuration could not possibly make the same bytes
+         * succeed.
+         *
+         * 🔴 **CAPTURE-LOSS DEFECT, FIXED HERE (was live on `main` at
+         * `d3efcd0`).** This set read
+         * `setOf(400, 404, 405, 413, 414, 415, 422)` and its justification —
+         * `ClipHttpTest.theOtherPermanentRefusalsAreTheOnesARETRYCannotFix` —
+         * called *"a route that does not exist"* a property of the request.
+         * It is not: it is a property of the **URL in Settings**, which is
+         * free text saved with no validation. The operator pasting the
+         * transcription base URL (`…:8118`, four digits away) into the clip
+         * field makes every `POST /v1/clips` a **404**, and every queued
+         * capture was then posted, refused and deleted from the only place it
+         * existed, one flush per minute, while the capture toast said *"it
+         * will sync when Dicta is on the mesh"*. That is word for word the
+         * reasoning [aMissingTokenIsUNREACHABLEAndNOTRefused] already used to
+         * keep 401/403 out, applied to the statuses it was not applied to.
+         *
+         * What is in, and why each is a BODY fault:
+         *
+         *  * **400** — measured live as `empty_body`, i.e. the bytes. The one
+         *    reachable member the design ever reasoned about, and
+         *    [ClipOutboxStore.append] already refuses to queue that body, so
+         *    this is belt-and-braces against a server-side body rule this
+         *    client does not know.
+         *  * **422** — the body parsed and was semantically rejected. Nothing
+         *    in Settings changes what the body says.
+         *
+         * What moved OUT, and why each is a CONFIGURATION fault:
+         *
+         *  * **404** — the route does not exist *at the base URL that is
+         *    configured*. The identical bytes succeed the moment the field is
+         *    corrected.
+         *  * **405** — the path exists but does not serve `POST`. Same cause:
+         *    the base URL points at something that is not the clip store.
+         *  * **415** — this client always sends `Content-Type: application/json`
+         *    (see [post]), so a 415 cannot be produced by the bytes. It means
+         *    something that is not the clip store — a proxy, a gateway, the
+         *    transcription service — is answering.
+         *  * **414** — URI too long. The request URI is
+         *    `baseUrl + /v1/clips`; **the body is never in it**. A 414 is
+         *    therefore only reachable through an absurd base URL, which is
+         *    configuration by construction. [ClipEndpoints.rejectionFor] now
+         *    bounds that field, so it should not be reachable at all.
+         *  * **413** — payload too large. `ACTION_PROCESS_TEXT` delivers up to
+         *    `PARCEL_SAFE_TEXT_LENGTH` = 100,000 characters (see
+         *    [CaptureActivity]), so a legitimate large selection can hit a
+         *    server-side limit the operator may raise. Destroying the text for
+         *    it is the worst available outcome, and the server's limit is not
+         *    a property of the bytes — it is a property of the deployment.
+         *    The *capture-time* half of this is
+         *    [ClipOutboxStore.MAX_BODY_CHARS], which refuses an oversized body
+         *    while the operator can still see the selection it came from.
+         *
+         * 🔴 **401 and 403 remain deliberately absent**, as before: a missing
+         * or stale token is a configuration fault the operator fixes in
+         * Settings. 429 and 408 are absent for the obvious reason — they are
+         * the two statuses that explicitly mean "try again".
          */
-        val PERMANENT_STATUSES: Set<Int> = setOf(400, 404, 405, 413, 414, 415, 422)
+        val PERMANENT_STATUSES: Set<Int> = setOf(400, 422)
 
         /**
          * 🔴 Not [SttRetryPolicy.readTimeoutMs]. That function scales the wait

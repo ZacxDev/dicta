@@ -364,6 +364,56 @@ class ClipPickerActivityTest {
     }
 
     @Test
+    fun openingThePickerACKNOWLEDGESADestroyedCaptureAndRecordsAThrownFlush() {
+        // 🔴 TWO relationships this activity owns that no component test can
+        // see, both added by the capture-loss fix.
+        //
+        // 1. ACKNOWLEDGEMENT. ClipOutboxHealth.DESTROYED is LATCHED, because
+        //    nothing proves a destroyed capture back into existence — so
+        //    something has to clear it or the bubble stays ember forever,
+        //    which is the permanently-red gate everyone learns to ignore.
+        //    Opening the shared clipboard is the moment the operator has
+        //    demonstrably seen it.
+        //
+        // 2. A THROWN flush is RECORDED. `readRows` wraps the drain in
+        //    runCatching, and it used to swallow the throw entirely: no
+        //    Report, no health signal, nothing on screen. An absence is the
+        //    observable the most causes share.
+        ClipOutboxHealth.clearForTest()
+        try {
+            ClipOutboxHealth.record(ClipFlusher.Report(dropped = 1))
+            assertEquals(
+                "precondition: the latch is up",
+                ClipOutboxHealth.Verdict.DESTROYED,
+                ClipOutboxHealth.verdict(),
+            )
+
+            val throwingFlush = { throw ClipOutbox.Failed("the outbox file could not be read") }
+            start(serverRows, flush = throwingFlush)
+
+            // The acknowledgement cleared the latch, and the throw was
+            // recorded as ONE failed drain — below the threshold, so OK.
+            assertEquals(ClipOutboxHealth.Verdict.OK, ClipOutboxHealth.verdict())
+
+            // 🔴 And the count really is advancing rather than the
+            // acknowledgement merely having run: an unrecorded throw also
+            // leaves OK, so the only way to tell the two apart is to drive it
+            // to the threshold.
+            repeat(ClipOutboxHealth.STUCK_AFTER_FAILURES - 1) {
+                start(serverRows, flush = throwingFlush)
+            }
+            assertEquals(
+                "🔴 a flush that THREW produced no health signal at all, so " +
+                    "a picker that cannot drain reports healthy forever",
+                ClipOutboxHealth.Verdict.STUCK,
+                ClipOutboxHealth.verdict(),
+            )
+        } finally {
+            ClipOutboxHealth.clearForTest()
+        }
+    }
+
+    @Test
     fun aFlushThatFAILSStillLetsTheListLoad() {
         // 🔴 The queue and the store are independent failures. A corrupt outbox
         // file, or a keystore that refuses to unwrap the token, must not cost

@@ -244,4 +244,62 @@ class ClipSettingsTest {
             values.isNotEmpty(),
         )
     }
+
+    // --- stored but undecryptable --------------------------------------------
+
+    /** A cipher that will not decrypt anything — i.e. a dead keystore key. */
+    private class DeadCipher : SecretCipher {
+        override fun encrypt(plaintext: String): String = "enc:$plaintext"
+        override fun decrypt(blob: String): String? = null
+    }
+
+    @Test
+    fun aStoredButUNDECRYPTABLETokenIsDistinguishedFromNoTokenAtAll() {
+        // 🔴 REGRESSION for a permanently invisible stuck queue.
+        // `TokenStore.token()` returns null when the blob will not decrypt and
+        // `hasToken` is `token() != null`, so a keystore invalidation — the
+        // lock screen removed, a restore onto a new device — made a
+        // long-configured handset read as UNCONFIGURED. Both drain sites
+        // return before building a flusher on `!isConfigured`, so no
+        // ClipFlusher.Report was produced and ClipOutboxHealth never saw a
+        // thing.
+        //
+        // ClipOutboxHealth's kdoc dismissed that blind spot partly because
+        // "the queue is also empty" — which is exactly what it is NOT here:
+        // the operator has been capturing for days.
+        clip().tokens.putToken("clip-token-synthetic-value")
+
+        val dead = ClipSettings(
+            SttSettings.prefs(ctx),
+            TokenStore(
+                SttSettings.prefs(ctx),
+                DeadCipher(),
+                ClipSettings.KEY_TOKEN_CIPHERTEXT,
+            ),
+        )
+        assertFalse("a dead keystore key still reported a usable token", dead.isConfigured)
+        assertTrue(
+            "a token that is STORED but will not decrypt reads as 'no token " +
+                "configured', so the drain sites return silently and a full " +
+                "queue is invisible forever",
+            dead.tokenIsUnusable,
+        )
+
+        // 🔴 The other direction, which is what keeps this from being a
+        // property that is simply always true: a handset with no clip token
+        // at all must NOT look broken, or every fresh install raises a fault
+        // it can do nothing about.
+        dead.tokens.clearToken()
+        assertFalse(
+            "a handset with no clip token at all reports a broken one",
+            dead.tokenIsUnusable,
+        )
+        assertFalse(dead.isConfigured)
+
+        // And a working token is neither.
+        val working = clip()
+        working.tokens.putToken("clip-token-synthetic-value")
+        assertTrue(working.isConfigured)
+        assertFalse(working.tokenIsUnusable)
+    }
 }
