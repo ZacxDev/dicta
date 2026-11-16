@@ -113,6 +113,13 @@ m-clip29-every-mesh-blip-is-a-fault	app/src/main/java/dev/zacx/dicta/ClipOutboxH
 m-clip30-the-stuck-queue-is-announced-as-a-healthy-one	app/src/main/java/dev/zacx/dicta/BubbleChrome.kt	if (stuck) R.string.bubble_clip_stuck else R.string.bubble_clip	R.string.bubble_clip	dev.zacx.dicta.Bubble*Test
 m-clip31-the-fault-is-carried-by-colour-alone	app/src/main/java/dev/zacx/dicta/BubbleChrome.kt	if (stuck) R.color.dicta_error else R.color.dicta_on_surface	R.color.dicta_on_surface	dev.zacx.dicta.Bubble*Test
 m-clip32-a-service-starting-into-a-stuck-queue-shows-nothing	app/src/main/java/dev/zacx/dicta/BubbleService.kt	applyClipHealth(clipButton, ClipOutboxHealth.isStuck())	applyClipHealth(clipButton, false)	dev.zacx.dicta.BubbleClipRevealTest
-m-clip33-the-capture-receiver-raises-an-opaque-window	app/src/main/AndroidManifest.xml	android:theme="@android:style/Theme.Translucent.NoTitleBar"	android:noHistory="true"	dev.zacx.dicta.CaptureManifestTest
+# 🔴 m-clip33's TO is the OPAQUE theme SPELLED OUT, not the attribute deleted, and
+# that is forced rather than chosen: a TO that repeats an attribute already on the
+# element gives aapt2 a duplicate and the manifest merge fails, so ZERO TESTS RUN
+# and the harness reports NO-RESULT. Measured on the first run of this row. The
+# substitution below is the shipped defect exactly — `Theme.Dicta` is what the
+# element inherited when it declared no theme at all.
+m-clip33-the-capture-receiver-raises-an-opaque-window	app/src/main/AndroidManifest.xml	android:theme="@android:style/Theme.Translucent.NoTitleBar"	android:theme="@style/Theme.Dicta"	dev.zacx.dicta.CaptureManifestTest
 m-clip34-the-capture-receiver-wears-the-overlay-theme	app/src/main/AndroidManifest.xml	android:theme="@android:style/Theme.Translucent.NoTitleBar"	android:theme="@style/Theme.Dicta.Overlay"	dev.zacx.dicta.CaptureManifestTest
 m-clip35-an-old-queue-file-loses-every-capture	app/src/main/java/dev/zacx/dicta/ClipOutbox.kt	if (id > 0L && body.isNotEmpty()) {	if (id > 0L && body.isNotEmpty() && row.has(ClipJson.KEY_CREATED_AT).not()) {	dev.zacx.dicta.ClipOutboxStoreTest
+m-clip36-the-queue-file-carries-a-key-nothing-reads	app/src/main/java/dev/zacx/dicta/ClipJson.kt	.put(KEY_BODY, item.body)	.put(KEY_BODY, item.body).put(KEY_CREATED_AT, 0L)	dev.zacx.dicta.CaptureActivityTest

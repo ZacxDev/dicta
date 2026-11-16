@@ -243,8 +243,13 @@ class ClipFlusherTest {
 
     @Test
     fun aReportDistinguishesAnEmptyQueueFromABlockedOne() {
-        // The picker reads these fields to pick an empty state, so "nothing to
-        // do" and "could not do it" must not be the same value.
+        // 🔴 This comment used to read *"the picker reads these fields to pick
+        // an empty state"*. It did not read them at all — it discarded the
+        // whole Report, which is the defect audit round 0 of this branch found.
+        // The reason the distinction must hold is the one that survives:
+        // `ClipOutboxHealth` folds exactly these two fields, so "nothing to do"
+        // and "could not do it" arriving as the same value would make a healthy
+        // idle queue indistinguishable from a dead one.
         val quiet = ClipFlusher.Report()
         assertFalse(quiet.unreachable)
         assertEquals(null, quiet.failure)
