@@ -122,4 +122,12 @@ m-clip32-a-service-starting-into-a-stuck-queue-shows-nothing	app/src/main/java/d
 m-clip33-the-capture-receiver-raises-an-opaque-window	app/src/main/AndroidManifest.xml	android:theme="@android:style/Theme.Translucent.NoTitleBar"	android:theme="@style/Theme.Dicta"	dev.zacx.dicta.CaptureManifestTest
 m-clip34-the-capture-receiver-wears-the-overlay-theme	app/src/main/AndroidManifest.xml	android:theme="@android:style/Theme.Translucent.NoTitleBar"	android:theme="@style/Theme.Dicta.Overlay"	dev.zacx.dicta.CaptureManifestTest
 m-clip35-an-old-queue-file-loses-every-capture	app/src/main/java/dev/zacx/dicta/ClipOutbox.kt	if (id > 0L && body.isNotEmpty()) {	if (id > 0L && body.isNotEmpty() && row.has(ClipJson.KEY_CREATED_AT).not()) {	dev.zacx.dicta.ClipOutboxStoreTest
-m-clip36-the-queue-file-carries-a-key-nothing-reads	app/src/main/java/dev/zacx/dicta/ClipJson.kt	.put(KEY_BODY, item.body)	.put(KEY_BODY, item.body).put(KEY_CREATED_AT, 0L)	dev.zacx.dicta.CaptureActivityTest
+#
+# 🔴 m-clip36 SURVIVED on its first run, and the GUARD was fine — the FILTER
+# was wrong. It pointed at `CaptureActivityTest`, whose assertion is on the
+# in-memory `ClipOutbox.Pending` a fake collected and never goes near the JSON
+# writer this mutant edits. The real guard is in `ClipOutboxStoreTest`, which
+# reads the file off disk. Worth keeping the note: a SURVIVED verdict names
+# "a guard worth a look", and the look can end at the TSV row rather than the
+# test. The test name is what misled the author, and it was renamed with this.
+m-clip36-the-queue-file-carries-a-key-nothing-reads	app/src/main/java/dev/zacx/dicta/ClipJson.kt	.put(KEY_BODY, item.body)	.put(KEY_BODY, item.body).put(KEY_CREATED_AT, 0L)	dev.zacx.dicta.ClipOutboxStoreTest

@@ -96,7 +96,7 @@ class CaptureActivityTest {
     }
 
     @Test
-    fun aQueuedRowCarriesTheBODYAndNOTHINGELSE() {
+    fun theQueuedPENDINGOBJECTCarriesTheBodyAndNoSecondFieldBesideIt() {
         // 🔴 This REPLACES `theCaptureTimeIsTHISDevicesClockEvenThoughTheServerOverwritesIt`,
         // which asserted a local capture timestamp that deletion candidate D5
         // removed. Its rationale was that the stamp "is what a later fix would
@@ -109,6 +109,15 @@ class CaptureActivityTest {
         // selection, byte-exact, and the queue carries no second opinion about
         // when it happened. [Clip.createdAtMs] is server-assigned and is what
         // every surface renders.
+        //
+        // 🔴 THE SUBJECT IS THE `Pending` OBJECT, NOT THE QUEUE FILE, and the
+        // name now says so because the old one — "a queued row carries the body
+        // AND NOTHING ELSE" — read as a claim about the file and cost a wrong
+        // mutant: `m-clip36` put `created_at` back into `ClipJson.toJsonArray`
+        // and was filtered to this class, where it SURVIVED, because the
+        // assertion below is on an in-memory object a fake collected and never
+        // touches the writer. The file's own key set is
+        // `ClipOutboxStoreTest.aQueueFileFromThePreviousBuildIsReadInFull`.
         val body = "x\ty\nz \"quoted\""
         val (_, outbox) = launch(processText(body))
         val row = outbox.appended.single()
