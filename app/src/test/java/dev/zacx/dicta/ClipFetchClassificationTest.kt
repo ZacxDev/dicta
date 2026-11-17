@@ -227,31 +227,6 @@ class ClipFetchClassificationTest {
         )
     }
 
-    // --- the lossy default, named rather than hidden -------------------------
-
-    @Test
-    fun aSourceThatClassifiesNothingSaysSoRatherThanInventingATransportFailure() {
-        // 🔴 The default implementation of `SharedClipSource.fetch` is lossy by
-        // construction. It must report `unclassified` — a fact about the
-        // source — and never `io:…`, which would be a measurement nobody made.
-        val bare = object : SharedClipSource {
-            override fun rows(): List<Clip>? = null
-            override fun delete(id: Long): Boolean = false
-        }
-        assertEquals(ClipFetch.Unclassified, bare.fetch())
-        assertEquals("unclassified", bare.fetch().reason)
-
-        // Positive control: the same default carries rows through, so the
-        // `unclassified` above is about the failure path and not about a
-        // default that answers Unclassified for everything.
-        val rows = listOf(Clip(1L, "a clip", "laptop", 1_700_000_000_000L))
-        val withRows = object : SharedClipSource {
-            override fun rows(): List<Clip> = rows
-            override fun delete(id: Long): Boolean = false
-        }
-        assertEquals(ClipFetch.Rows(rows), withRows.fetch())
-    }
-
     private companion object {
         const val LIVE_BODY =
             """{"clips":[{"id":7,"body":"copied text","device":"desktop",""" +

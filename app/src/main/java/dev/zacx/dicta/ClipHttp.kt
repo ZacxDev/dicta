@@ -40,15 +40,16 @@ interface SharedClipSource {
      * rather than in the picker so that both consumers — the empty-state copy
      * and [ClipDiagnostics] — read **one** classification.
      *
-     * 🔴 The default is deliberately LOSSY and says so: a source that
-     * overrides only [rows] cannot distinguish anything, so it reports
-     * [ClipFetch.Unclassified] rather than fabricating a transport failure it
-     * never observed. [ClipHttp] overrides this, and `src/main` holds no other
-     * implementation — the default serves the test fakes, which exist to
-     * supply rows and have no failure to classify.
+     * 🔴 **ABSTRACT, with no default** — round 0 of this PR's audit deleted
+     * the one it had (D1). The default was `rows()?.let { Rows(it) } ?:
+     * Unclassified`, which no `src/main` type could ever reach because
+     * [ClipHttp] overrides this; it existed so a fake that implements only
+     * [rows] could be honest about classifying nothing. The cost was a fifth
+     * sealed variant and a live `else ->` branch in the picker for a state
+     * production cannot produce. A fake supplies rows, so a fake can answer
+     * [ClipFetch.Rows].
      */
-    fun fetch(): ClipFetch =
-        rows()?.let { ClipFetch.Rows(it) } ?: ClipFetch.Unclassified
+    fun fetch(): ClipFetch
 
     /**
      * Deletes one clip, from any device, and reports whether it is gone.

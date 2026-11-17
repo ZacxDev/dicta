@@ -25,11 +25,19 @@ import org.robolectric.annotation.Config
  *    at the base ref is a compile error there, not a watched red; see
  *    `ClipFetchClassificationTest`'s kdoc and `ClipPickerFailureMessageTest`
  *    for the runnable twin.)
- *  * **Invariant**: everything about the token's absence. No version of this
+ *  * **Regression**: [theLastOutcomesSURVIVEAProcessRestart] — the first
+ *    version of this object kept both outcomes for the process lifetime only,
+ *    so the first `DIAGNOSE` after a reboot or a force-stop reported `none` in
+ *    exactly the situation the readout exists for. Red on the previous commit
+ *    of this branch (`ClipDiagnostics` had no `install` to compile against) and
+ *    green here; the operator answered round 0's Q2 with "persist".
+ *  * **Invariant**: everything about the token's absence, and
+ *    [whatIsPERSISTEDIsAReasonAndATimeAndNOTHINGElse]. No version of this
  *    readout ever carried the token — these guards exist because a readout is
  *    exactly the kind of surface that grows a "just the first four characters,
  *    for support" field, and the bug they prevent is unrecoverable rather than
- *    inconvenient.
+ *    inconvenient. The persisted-form guard is the same argument one step
+ *    further: that text outlives the process and ends up in a bug report.
  *
  * 🔴 **The absence guards were MUTATION-TESTED**, because an assertion that a
  * string is not somewhere passes just as happily when it is reading nothing.
@@ -39,10 +47,23 @@ import org.robolectric.annotation.Config
  * [theReadoutNeverContainsTheTokenValue], [theRenderedReadoutIsPinnedAsAWHOLEString]
  * and `DebugClipConfigReceiverTest.diagnoseAnswersTheReadoutAndCarriesNoToken`.
  * Full output in the commit message.
+ *
+ * 🔴 **This is also the surviving token-absence guard of the three round 0
+ * found**, and the choice was made on strength rather than on count:
+ * `ClipPickerFailureMessageTest.noFailureSentenceCanCarryTheToken` was deleted
+ * because the TYPES already make a token impossible there — those sentences
+ * come from string resources taking an `Int` or nothing — so it pinned an
+ * impossibility. This one covers the route a mutation proved REACHABLE: a
+ * String-valued field, printed on purpose, with a credential appended to it.
+ * `DebugClipConfigReceiverTest`'s survives too, for a different claim: what
+ * leaves the app through the exported component.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
 class ClipDiagnosticsTest {
+
+    /** A fixed wall clock, so a persisted timestamp is an asserted value. */
+    private val AT_MS = 1_763_000_000_000L
 
     /**
      * Realistic in SHAPE only. Not a credential, and not the operator's.
@@ -60,6 +81,10 @@ class ClipDiagnosticsTest {
     fun reset() {
         ClipDiagnostics.clearForTest()
         ClipOutboxHealth.clearForTest()
+        // 🔴 A FIXED clock, so a recorded timestamp is an asserted value rather
+        // than something only checked for being non-zero. `clearForTest` puts
+        // the real one back.
+        ClipDiagnostics.clock = { AT_MS }
     }
 
     @After
@@ -238,8 +263,11 @@ class ClipDiagnosticsTest {
 
     @Test
     fun aFetchThatHasNotHappenedIsNONEAndNotAFailure() {
-        // 🔴 Process-lifetime only, and it must not read as "nothing works".
-        // An absence is the observable the most causes share.
+        // 🔴 `none` must not read as "nothing works" — an absence is the
+        // observable the most causes share. With no store installed it means
+        // "nothing has been attempted in this process"; with one, "nothing has
+        // ever been recorded", which is the stronger and more useful claim and
+        // is why persistence was added. See the persistence tests below.
         val rendered = ClipDiagnostics.readout(settings(), null).render()
         assertTrue(rendered, rendered.contains("lastFetch: none"))
         assertTrue(rendered, rendered.contains("lastFlush: none"))
@@ -272,7 +300,12 @@ class ClipDiagnosticsTest {
     }
 
     @Test
-    fun aFailedQueueReadIsReportedAsAFailureAndNotAsAnEmptyQueue() {
+    fun aFlushThatCouldNotDrainReportsItsOwnReasonAndNotJustAFailureFlag() {
+        // 🔴 RENAMED (round 0's nit): this was called
+        // `aFailedQueueReadIsReportedAsAFailureAndNotAsAnEmptyQueue`, which
+        // describes `anUnreadableQueueIsNotZero` — a different test, which
+        // exists. What this one asserts is that the flush line carries the
+        // REASON the drain stopped, not merely that it did.
         ClipOutboxHealth.record(ClipFlusher.Report(failure = "the queue file is unreadable"))
         val rendered = ClipDiagnostics.readout(settings(), null).render()
         assertTrue(
@@ -334,6 +367,199 @@ class ClipDiagnosticsTest {
         )
     }
 
+    // --- persistence across a process restart (round 0's Q2) ----------------
+
+    /**
+     * A [ClipDiagnostics.Store] over a plain map, with every write visible.
+     *
+     * 🔴 A map rather than real preferences for the rule tests, so what is
+     * persisted can be read as the exact bytes the production store would have
+     * put on disk. [thePersistedFormIsWhatRealPreferencesHold] is the pair to
+     * this, over `PrefsStore`.
+     */
+    private class MapStore(val map: MutableMap<String, String> = mutableMapOf()) :
+        ClipDiagnostics.Store {
+        var writes = 0
+        override fun read(key: String): String? = map[key]
+        override fun write(key: String, value: String) {
+            writes++
+            map[key] = value
+        }
+    }
+
+    @Test
+    fun theLastOutcomesSURVIVEAProcessRestart() {
+        // 🔴 THE REGRESSION Q2 was answered to fix. Before this, both outcomes
+        // were held in memory only, so the FIRST DIAGNOSE after a reboot or a
+        // force-stop reported `none` — in exactly the situation the readout
+        // exists to explain. The investigation that motivated this whole change
+        // involved repeated force-stops, each of which would have wiped the
+        // evidence it was looking for.
+        val store = MapStore()
+        ClipDiagnostics.install(store)
+        ClipOutboxHealth.record(ClipFlusher.Report(stored = 2, kept = 5, unreachable = true))
+        ClipDiagnostics.recordFetch(ClipFetch.Status(401))
+
+        // The process dies. Everything in memory goes with it; the store does
+        // not. `clearForTest` is exactly that much of a restart — it drops both
+        // fields, the typed outcome and the installed store.
+        ClipDiagnostics.clearForTest()
+        assertNull("a restart that kept state in memory is not a restart", ClipDiagnostics.lastFlush())
+
+        ClipDiagnostics.install(store)
+        val rendered = ClipDiagnostics.readout(settings(), null).render()
+        assertTrue(
+            "the last flush did not survive the restart:\n$rendered",
+            rendered.contains(
+                "lastFlush: stored=2 destroyed=0 kept=5 cannotDrain=true why=unreachable"
+            ),
+        )
+        assertTrue("the last fetch did not survive:\n$rendered", rendered.contains("lastFetch: http:401"))
+        assertTrue("the timestamps did not survive:\n$rendered", rendered.contains("lastFetchAtMs: $AT_MS"))
+    }
+
+    @Test
+    fun aRestartWithNOStoredOutcomeStillSaysNONE() {
+        // 🔴 NEGATIVE CONTROL for the test above: hydration from an EMPTY store
+        // must produce `none`, or "it survived" would be indistinguishable from
+        // a readout that reports the last outcome of whatever ran before it in
+        // the same JVM. It also pins the fail-closed decode — a store holding
+        // junk is `none`, never a half-read outcome.
+        ClipDiagnostics.install(MapStore())
+        var rendered = ClipDiagnostics.readout(settings(), null).render()
+        assertTrue(rendered, rendered.contains("lastFlush: none"))
+        assertTrue(rendered, rendered.contains("lastFlushAtMs: none"))
+
+        ClipDiagnostics.clearForTest()
+        ClipDiagnostics.clock = { AT_MS }
+        ClipDiagnostics.install(
+            MapStore(mutableMapOf(ClipDiagnostics.KEY_LAST_FETCH to "not-a-timestamp|rows:3"))
+        )
+        rendered = ClipDiagnostics.readout(settings(), null).render()
+        assertTrue(
+            "an unparseable stored outcome was reported as a real one:\n$rendered",
+            rendered.contains("lastFetch: none"),
+        )
+    }
+
+    @Test
+    fun theTypedFetchOutcomeIsNotHydratedBecauseAReasonCannotBecomeOneAgain() {
+        // 🔴 The distinction the picker's sentence depends on, asserted rather
+        // than left as a comment. `lastFetch()` is the PERSISTED reason, which
+        // survives; `lastFetchOutcome()` is the TYPE, which cannot be rebuilt
+        // from a string and is not claimed to be. The picker always fetches
+        // before it renders, so it never reads the typed one cold — if that
+        // ever changes, this is the test that should be failing.
+        val store = MapStore()
+        ClipDiagnostics.install(store)
+        ClipDiagnostics.recordFetch(ClipFetch.Malformed)
+        assertEquals(ClipFetch.Malformed, ClipDiagnostics.lastFetchOutcome())
+
+        ClipDiagnostics.clearForTest()
+        ClipDiagnostics.install(store)
+        assertEquals("malformed", ClipDiagnostics.lastFetch()?.summary)
+        assertNull(
+            "a typed outcome was invented from a persisted reason string",
+            ClipDiagnostics.lastFetchOutcome(),
+        )
+    }
+
+    @Test
+    fun whatIsPERSISTEDIsAReasonAndATimeAndNOTHINGElse() {
+        // 🔴 THE GUARD ON THE PERSISTED FORM, which the operator required
+        // explicitly: outcome, reason and timestamp only — never a clip body,
+        // never the token. Asserted on the exact strings handed to the store,
+        // because that is what ends up on disk and outlives the process.
+        //
+        // The inputs are REALISTIC rather than minimal: a flush that destroyed
+        // a capture, over a queue holding a body, with a token configured and a
+        // failure string that an exception could plausibly carry.
+        val settings = settings()
+        settings.tokens.putToken(fixtureToken)
+        val store = MapStore()
+        ClipDiagnostics.install(store)
+
+        ClipOutboxHealth.record(
+            ClipFlusher.Report(stored = 1, dropped = 1, kept = 2, failure = "ETIMEDOUT")
+        )
+        ClipDiagnostics.recordFetch(ClipFetch.Transport("Connection refused"))
+        ClipDiagnostics.readout(settings, FakeOutbox(2))
+
+        val persisted = store.map.values.joinToString("\n")
+        for (n in listOf(4, 8, 16)) {
+            assertFalse(
+                "the persisted form carries ${n} characters of the token: <$persisted>",
+                persisted.contains(fixtureToken.take(n)) ||
+                    persisted.contains(fixtureToken.takeLast(n)),
+            )
+        }
+        assertFalse(
+            "the persisted form carries a clip BODY. The outbox holds the only " +
+                "copy of a capture and this file outlives the process: a body " +
+                "here is the user's text written to a second place nobody " +
+                "asked for. <$persisted>",
+            persisted.contains("body "),
+        )
+        // 🔴 Every persisted value is `<epoch millis>|<reason>` and nothing
+        // else — pinned as WHOLE strings, so a third field cannot be added
+        // without this failing. A guard on words would be walkable by renaming.
+        assertEquals(
+            mapOf(
+                ClipDiagnostics.KEY_LAST_FLUSH to
+                    "$AT_MS|stored=1 destroyed=1 kept=2 cannotDrain=true why=ETIMEDOUT",
+                ClipDiagnostics.KEY_LAST_FETCH to "$AT_MS|io:Connection refused",
+            ),
+            store.map.toMap(),
+        )
+
+        // 🔴 POSITIVE CONTROL, two of them, because every assertion above is an
+        // absence and an absence passes just as happily when nothing was
+        // written at all. (a) writes HAPPENED; (b) the same search finds both
+        // needles in text that does hold them, so the clean result above is
+        // about the persisted form and not about an unspellable needle.
+        assertEquals("nothing was persisted, so the absences prove nothing", 2, store.writes)
+        val poisoned = "$AT_MS|io:Connection refused token=$fixtureToken body 1"
+        assertTrue(poisoned.contains(fixtureToken.take(8)))
+        assertTrue(poisoned.contains("body "))
+    }
+
+    @Test
+    fun thePersistedFormIsWhatRealPreferencesHold() {
+        // 🔴 The map store above is a stand-in, and a stand-in is a claim about
+        // the stand-in. This drives the PRODUCTION store over Robolectric's
+        // preferences and reads the value back, so the persisted shape is
+        // measured on the implementation the handset runs.
+        val p = prefs()
+        ClipDiagnostics.install(ClipDiagnostics.PrefsStore(p))
+        ClipDiagnostics.recordFetch(ClipFetch.Status(403))
+        assertEquals(
+            "$AT_MS|http:403",
+            p.getString(ClipDiagnostics.KEY_LAST_FETCH, null),
+        )
+
+        // And it hydrates from a FRESH PrefsStore over the same file, which is
+        // what a new process does.
+        ClipDiagnostics.clearForTest()
+        ClipDiagnostics.install(ClipDiagnostics.PrefsStore(p))
+        assertEquals("http:403", ClipDiagnostics.lastFetch()?.summary)
+    }
+
+    @Test
+    fun aStoreThatTHROWSCostsThePersistenceAndNotTheFlush() {
+        // 🔴 A diagnostic is worth less than a capture. A full disk or a
+        // preferences file the system has locked is a real state, and a record
+        // that propagated it would take down the drain it was reporting on.
+        ClipDiagnostics.install(object : ClipDiagnostics.Store {
+            override fun read(key: String): String? = null
+            override fun write(key: String, value: String): Unit =
+                throw IllegalStateException("no space left on device")
+        })
+        ClipDiagnostics.recordFetch(ClipFetch.Malformed)
+        // In memory regardless, so the readout is exactly as good as it was
+        // before anything was persisted at all.
+        assertEquals("malformed", ClipDiagnostics.lastFetch()?.summary)
+    }
+
     // --- the whole rendered string ------------------------------------------
 
     @Test
@@ -358,7 +584,9 @@ class ClipDiagnosticsTest {
             queueDepth: 2
             outboxHealth: OK
             lastFlush: stored=1 destroyed=0 kept=0 cannotDrain=false why=none
+            lastFlushAtMs: 1763000000000
             lastFetch: rows:0
+            lastFetchAtMs: 1763000000000
             """.trimIndent(),
             ClipDiagnostics.readout(settings, FakeOutbox(2)).render(),
         )

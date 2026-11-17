@@ -43,6 +43,14 @@ import android.content.Intent
  * shell` runs as the shell uid and holds no app signature permission, so it
  * would close the only door this exists to open. The gate is the build type.
  *
+ * 🔴 **Accepted by the operator, explicitly, as designed** — round 0 of this
+ * PR's audit put the write exposure to them as a blocking premise (Q1) rather
+ * than assuming it. The one change they required: this was documented only
+ * here and in the `src/debug` manifest, both inside the source set a reviewer
+ * auditing release safety never opens, so it is **also stated in the pull
+ * request body**. A security property only the author can find is one nobody
+ * reviews.
+ *
  * ## Usage
  *
  * ```
@@ -132,6 +140,13 @@ class DebugClipConfigReceiver : BroadcastReceiver() {
      */
     private fun diagnose(context: Context): String {
         val s = surfaces?.invoke(context) ?: production(context)
+        // 🔴 INSTALLED BEFORE READING, which is the whole of round 0's Q2 on
+        // this side of the seam. This is usually the FIRST thing to run in a
+        // fresh process — `adb shell am broadcast` to an app nobody has
+        // opened — so without the hydrate, the one call that exists to explain
+        // a failure would report `lastFlush: none` for a queue that has been
+        // failing to drain for days. That `none` is the bug, not the answer.
+        ClipDiagnostics.install(context)
         return ClipDiagnostics.readout(s.clip, s.outbox).render()
     }
 

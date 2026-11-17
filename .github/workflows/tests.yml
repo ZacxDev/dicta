@@ -36,37 +36,55 @@ jobs:
       # measured nothing is worse than no gate — so the count is asserted, not
       # inferred from the task's exit status.
       #
-      # BASELINE: 1007 against a suite of 1159 tests / 109 classes on
+      # BASELINE: 1008 against a suite of 1160 tests / 109 classes on
       # `feat/agent-config-surface` — the agent-usable configuration and
       # diagnostics surface (ClipFetch's four discriminated read outcomes, the
-      # ClipDiagnostics readout, the ClipConfigIngress door, the debug-only
-      # receiver, and the clipboard group's own Save).
+      # ClipDiagnostics readout and its persisted last outcomes, the
+      # ClipConfigIngress door, the debug-only receiver, and the clipboard
+      # group's own Save).
       #
-      # 1159 * 500 / 575 = 1007.83 -> 1007, which is 13.11% slack.
+      # 1160 * 500 / 575 = 1008.69 -> 1008, which is 13.10% slack.
       #
-      # 🔴 COMMIT COUNTED ON: the single commit of `feat/agent-config-surface`,
-      # i.e. the commit this comment is part of, whose parent is 3048498.
-      # Counted on that tree and nothing else — see the CORRECTION note below
-      # for why a date does not identify a tree while a branch is moving.
+      # 🔴 COMMIT COUNTED ON: the audit-fix commit of
+      # `feat/agent-config-surface`, i.e. the commit this comment is part of,
+      # whose parent is ef9fc47. Counted on that tree and nothing else — see
+      # the CORRECTION note below for why a date does not identify a tree while
+      # a branch is moving.
       #
-      # 🔴 LEFT AT 959 THIS GATE WOULD NOT HAVE GONE RED: 959 against 1159 is
-      # 17.3% slack, still inside TestCountFloorTest's 20% ceiling. Raised
-      # here rather than discovered later, which is this block's own rule —
-      # the ceiling exists so drift fails a test eventually, not so the floor
-      # is only ever raised when it does.
+      # 🔴 LEFT AT 1007 THIS GATE WOULD NOT HAVE GONE RED: 1007 against 1160 is
+      # 13.19% slack, well inside TestCountFloorTest's 20% ceiling. Raised here
+      # rather than discovered later, which is this block's own rule — the
+      # ceiling exists so drift fails a test eventually, not so the floor is
+      # only ever raised when it does. (A +1 net delta does not NEED a raise;
+      # it gets one because the convention is one derivation per commit that
+      # moves the count, and an unraised floor is how the 500-against-623 drift
+      # happened.)
       #
-      # Accounted for PER CLASS against 1103 / 102, not asserted. ALL SEVEN are
-      # new classes; the two modified files (SettingsThemingTest,
-      # ClipSeamLedgerTest) changed ledger CONTENTS and not their test count,
-      # which was checked per class rather than assumed:
-      #   +12 ClipDiagnosticsTest (new)        +11 ClipConfigIngressTest (new)
-      #   +9  ClipFetchClassificationTest (new) +9 DebugClipConfigReceiverTest (new)
-      #   +6  ClipPickerFailureMessageTest (new)
-      #   +5  SettingsClipSaveAffordanceTest (new)
-      #   +4  DebugConfigSurfaceManifestTest (new)
-      #   = +56 (new) + 0 (modified) = +56 tests and +7 classes.
-      #   1103 + 56 = 1159, and 102 + 7 = 109. BOTH SIDES CHECKED, which is
-      #   the step a previous version of this block skipped.
+      # Accounted for PER CLASS against 1159 / 109, not asserted. This commit
+      # is round 0's deletion pass plus the persistence the operator asked for,
+      # so it both ADDS and REMOVES tests and no class appears or disappears:
+      #   +6 ClipDiagnosticsTest 12 -> 18   (persistence, the persisted-form
+      #      guard with both controls, the typed-vs-persisted distinction, and
+      #      a store that throws)
+      #   +1 ClipSeamLedgerTest  8 -> 9     (the install-the-store ledger)
+      #   +0 ClipConfigIngressTest 11 -> 11 (D3's spelled guard replaced by a
+      #      structural one, one for one)
+      #   -1 ClipFetchClassificationTest 9 -> 8   (D1: no Unclassified)
+      #   -4 DebugClipConfigReceiverTest 9 -> 5   (D2: wrapper duplicates)
+      #   -1 ClipPickerFailureMessageTest 6 -> 5  (D4: the weakest of three
+      #      token-absence guards)
+      #   = +7 added, -6 removed = +1 test and +0 classes.
+      #   1159 + 1 = 1160, and 109 + 0 = 109. BOTH SIDES CHECKED.
+      #
+      # ⚠ SourceText.kt is a NEW FILE in the test source set carrying ZERO
+      # tests — the hoisted strip pipeline (round 0's D5). It therefore moves
+      # the FILE count (109 test classes, 110 Kotlin files there) without
+      # moving the test count, which is why the class side of the
+      # reconciliation above is +0 while a file appeared. Re-measured per class
+      # against the JUnit XML after the hoist changed `withoutComments` to
+      # replace with a space rather than an empty string: 1160 both ways, every
+      # class identical, so that change is semantically neutral on this tree
+      # and was not assumed to be.
       #
       # 🔴 THE INSTRUMENT WAS POSITIVE-CONTROLLED BEFORE ITS ANSWER WAS USED.
       # The count comes from TestCountFloorTest's own `countTests` — raw
@@ -131,7 +149,7 @@ jobs:
       # 🔴 THE HEADROOM IS THE CONSTANT, NOT THE FLOOR — re-derive it, do not
       # pick a round number:
       #     floor = floor(current_total * 500 / 575)      # 0.86957, 13.04% slack
-      # 1159 * 500 / 575 = 1007.83 -> 1007, which is 13.11% slack.
+      # 1160 * 500 / 575 = 1008.69 -> 1008, which is 13.10% slack.
       #
       # 🔴 NAME THE TREE YOU COUNTED ON, not just the date. Past entries were
       # raised several-per-day, so a date does not identify a tree while a
@@ -142,12 +160,12 @@ jobs:
       # 🔴 THREE PREVIOUS ENTRIES, AND NO MORE — see the trim note at the top of
       # this block. Add yours, drop the oldest; `git log -p -- <this file>` has
       # the rest.
-      # (Previous entries: 1103 * 500 / 575 = 959.13 -> 959, 13.05% slack;
-      #  1073 * 500 / 575 = 933.04 -> 933, 13.05% slack;
-      #  901 * 500 / 575 = 783.48 -> 783, 13.10% slack.)
-      # 871 -> 757 was DROPPED as the oldest when the agent-config-surface
-      # entry was added, which is the eviction rule this block states. The full
-      # history is in this file's own log.
+      # (Previous entries: 1159 * 500 / 575 = 1007.83 -> 1007, 13.11% slack;
+      #  1103 * 500 / 575 = 959.13 -> 959, 13.05% slack;
+      #  1073 * 500 / 575 = 933.04 -> 933, 13.05% slack.)
+      # 901 -> 783 was DROPPED as the oldest when this entry was added, which
+      # is the eviction rule this block states. The full history is in this
+      # file's own log.
       #
       # 🔴 CORRECTION (2026-10-23). This block used to say the previous entry
       # "was left alone while the suite grew to 623, drifting the slack to 20%".
@@ -174,7 +192,7 @@ jobs:
       # one place.
       - name: Assert tests actually ran
         if: always()
-        run: python3 scripts/assert-tests-ran.py --min 1007
+        run: python3 scripts/assert-tests-ran.py --min 1008
 
       - name: Upload test reports
         if: always()

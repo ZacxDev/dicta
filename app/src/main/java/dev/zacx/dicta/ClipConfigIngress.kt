@@ -141,12 +141,24 @@ object ClipConfigIngress {
      * default is how an operator ends up re-installing the app.
      *
      * 🔴 The STT **base URL is deliberately absent**, and the absence is a
-     * decision rather than an omission: there is no `SttEndpoints.rejectionFor`,
-     * so accepting it would mean either writing an unvalidated URL through a
-     * programmatic door, or growing a second copy of
-     * [ClipEndpoints.rejectionFor] whose message names `/v1/clips` for a
-     * service that does not serve it. Neither is worth it for a field that is
-     * typed once; the STT *token*, which needs no validation, is supported.
+     * decision rather than an omission: **nobody asked for programmatic STT
+     * base-URL configuration.** It is typed once per install, it was not part
+     * of what cost dozens of turns to set up over `adb` — that was the clip
+     * pair — and every field on this door is another field an exported
+     * component on a debug build can set. The STT *token* is supported because
+     * it is the other half of the credential that was actually expensive.
+     *
+     * ⚠ **A previous version of this paragraph argued it from validation and
+     * that argument was WRONG** — round 0 of this PR's audit caught it as a
+     * false dichotomy, and it is corrected here rather than quietly dropped.
+     * It claimed the only options were an unvalidated write or a second copy of
+     * [ClipEndpoints.rejectionFor] whose message names `/v1/clips`. There is a
+     * third and cheaper one: that predicate is service-agnostic except for a
+     * single message naming the appended path, so **hoisting it with that path
+     * as a parameter** validates both services from one rule — which is the
+     * direction this file's reuse of it already argues for. So if the field is
+     * ever wanted, that is the way in, and the cost is small. It is left out
+     * because it is not wanted, not because it would be expensive.
      */
     fun parse(args: (String) -> String?): Request = Request(
         clipBaseUrl = args(KEY_CLIP_BASE_URL),

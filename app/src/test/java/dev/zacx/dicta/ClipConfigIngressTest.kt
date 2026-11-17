@@ -375,17 +375,51 @@ class ClipConfigIngressTest {
     }
 
     @Test
-    fun theSttBaseUrlIsDeliberatelyNotAFieldOfThisDoor() {
-        // 🔴 The absence is a DECISION, pinned so it cannot be quietly added
-        // without reading why: there is no SttEndpoints.rejectionFor, so
-        // accepting it would mean either writing an unvalidated URL through a
-        // programmatic door, or growing a second copy of
-        // ClipEndpoints.rejectionFor whose message names /v1/clips for a
-        // service that does not serve it.
+    fun theDoorReadsEXACTLYThreeFieldsAndTheSttBaseUrlIsNotOneOfThem() {
+        // 🔴 STRUCTURAL, and the previous version of this test was not —
+        // round 0 named it: `theSttBaseUrlIsDeliberatelyNotAFieldOfThisDoor`
+        // asserted only that an unrecognised extra was ignored, which passes
+        // identically for an extra named "banana". It pinned a generic property
+        // of `parse` and said nothing about the decision in its name.
+        //
+        // This asks `parse` what it reads, by recording every key it requests.
+        // A LEDGER, so it fails in both directions: GROWTH — a fourth field,
+        // `stt_base_url` among them, arriving without someone reading why the
+        // decision was taken; SHRINK — a field quietly dropped, which would
+        // make the door stop configuring something a caller depends on.
+        val requested = mutableListOf<String>()
+        ClipConfigIngress.parse { key ->
+            requested += key
+            null
+        }
+        assertEquals(
+            "🔴 the set of fields this door reads changed. If you are adding " +
+                "stt_base_url, read ClipConfigIngress.parse's kdoc first: it " +
+                "is absent because nobody asked for it, and the cheap way in " +
+                "is to hoist ClipEndpoints.rejectionFor with the appended " +
+                "path as a parameter rather than to write an unvalidated URL.",
+            listOf(
+                ClipConfigIngress.KEY_CLIP_BASE_URL,
+                ClipConfigIngress.KEY_CLIP_TOKEN,
+                ClipConfigIngress.KEY_STT_TOKEN,
+            ),
+            requested,
+        )
+
+        // 🔴 POSITIVE CONTROL for the recorder itself: a lambda that was never
+        // invoked would leave the list empty, and an empty list compared
+        // against an empty expectation is the vacuous pass this shape invites.
+        // Three keys, named above, and the ledger is not empty.
+        assertEquals("parse asked for no keys at all", 3, requested.size)
+
+        // And the behavioural half, which the structural check cannot make: an
+        // stt_base_url extra really is inert, not merely unlisted.
         val f = fixture()
         val before = f.stt.baseUrl
-        val outcome = apply(f, "stt_base_url" to "http://10.42.0.10:9999")
-        assertEquals(ClipConfigIngress.Outcome.NothingRequested, outcome)
+        assertEquals(
+            ClipConfigIngress.Outcome.NothingRequested,
+            apply(f, SttSettings.KEY_BASE_URL to "http://10.42.0.10:9999"),
+        )
         assertEquals(before, f.stt.baseUrl)
     }
 

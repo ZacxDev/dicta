@@ -516,6 +516,14 @@ class BubbleService : Service() {
         // verdict, so a service starting into an already-stuck queue shows it
         // on the first long press instead of waiting for a change it missed.
         ClipOutboxHealth.register(clipHealthSink)
+        // 🔴 Before the first flush is scheduled below. Every drain reports a
+        // Report, every Report becomes a recorded diagnostics outcome, and an
+        // outcome recorded without a store installed is lost on the next
+        // force-stop — which is round 0's Q2, answered "persist". This service
+        // does almost all of the flushing, so it is the process whose outcomes
+        // a cold DIAGNOSE is asking about. Idempotent; see
+        // [ClipDiagnostics.install].
+        ClipDiagnostics.install(this)
         registerScreenReceiver()
         // 🔴 Immediately, not after one interval. The operator's first case is
         // "as soon as the bubble opens": a bubble that has been up for two

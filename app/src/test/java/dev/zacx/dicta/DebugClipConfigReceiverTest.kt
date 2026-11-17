@@ -104,62 +104,16 @@ class DebugClipConfigReceiverTest {
         )
 
     // --- configure ------------------------------------------------------------
-
-    @Test
-    fun configureAppliesTheExtrasThroughTheSeam() {
-        val answer = send(
-            DebugClipConfigReceiver.ACTION_CONFIGURE,
-            ClipConfigIngress.KEY_CLIP_BASE_URL to "http://10.42.0.10:8139",
-            ClipConfigIngress.KEY_CLIP_TOKEN to fixtureToken,
-        )
-        assertEquals("applied: clip_base_url,clip_token", answer)
-
-        val prefs = SttSettings.prefs(ctx)
-        assertEquals("http://10.42.0.10:8139", prefs.getString(ClipSettings.KEY_BASE_URL, null))
-        assertEquals(
-            "the token did not round-trip through the cipher",
-            fixtureToken,
-            TokenStore(prefs, ReversingCipher(), ClipSettings.KEY_TOKEN_CIPHERTEXT).token(),
-        )
-        // 🔴 And the ciphertext on disk is NOT the plaintext. The ingress is a
-        // new DOOR and must never be a new STORAGE path.
-        assertFalse(
-            "the stored blob IS the plaintext token",
-            prefs.all.values.any { it?.toString()?.contains(fixtureToken) == true },
-        )
-    }
-
-    @Test
-    fun configureNeverEchoesTheTokenBack() {
-        // 🔴 The answer goes to whatever sent the broadcast. On a debug build
-        // that can be another installed app, so this is the boundary that
-        // decides whether this surface can be used to READ the credential
-        // rather than only to set one.
-        val answer = send(
-            DebugClipConfigReceiver.ACTION_CONFIGURE,
-            ClipConfigIngress.KEY_CLIP_TOKEN to fixtureToken,
-        )
-        assertFalse("the answer echoes the token: <$answer>", answer.contains(fixtureToken))
-        for (n in listOf(4, 8, 16)) {
-            assertFalse(answer, answer.contains(fixtureToken.take(n)))
-            assertFalse(answer, answer.contains(fixtureToken.takeLast(n)))
-        }
-        // Positive control: an answer WAS produced, so the absence above is not
-        // the absence of any output.
-        assertEquals("applied: clip_token", answer)
-    }
-
-    @Test
-    fun aRefusedUrlComesBackAsTheSettingsScreensOwnReason() {
-        assertEquals(
-            "rejected: it must be a host and port only, with no path — " +
-                "Dicta appends /v1/clips itself",
-            send(
-                DebugClipConfigReceiver.ACTION_CONFIGURE,
-                ClipConfigIngress.KEY_CLIP_BASE_URL to "http://10.42.0.10:8139/v1/clips",
-            ),
-        )
-    }
+    //
+    // 🔴 DELIBERATELY THIN (round 0's D2). Three tests here —
+    // configureAppliesTheExtrasThroughTheSeam, configureNeverEchoesTheTokenBack
+    // and aRefusedUrlComesBackAsTheSettingsScreensOwnReason — were deleted
+    // because they re-asserted `ClipConfigIngressTest`'s own claims through a
+    // three-line parse wrapper. `configure()` reads three extras and returns
+    // `Outcome.message`; the apply rules, the no-plaintext guards, the pinned
+    // messages and the names-fields-never-values rule are all asserted against
+    // the ingress itself, where they live. What is tested HERE is only what the
+    // wrapper decides: action dispatch, the real surfaces, and the absences.
 
     // --- diagnose -------------------------------------------------------------
 
@@ -232,16 +186,6 @@ class DebugClipConfigReceiverTest {
             "rejected: unknown action dev.zacx.dicta.debug.NOPE",
             send("dev.zacx.dicta.debug.NOPE"),
         )
-    }
-
-    @Test
-    fun configureWithNoExtrasChangesNothingAndSaysSo() {
-        val before = SttSettings.prefs(ctx).all.toMap()
-        assertEquals(
-            "rejected: nothing to set",
-            send(DebugClipConfigReceiver.ACTION_CONFIGURE),
-        )
-        assertEquals(before, SttSettings.prefs(ctx).all.toMap())
     }
 
     @Test

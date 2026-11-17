@@ -141,6 +141,11 @@ class ClipPickerActivity : FloatingPickerActivity<Clip>() {
         // latch clears — and clearing it BEFORE the drain means a flush in
         // this same open that destroys another capture re-raises it, rather
         // than being wiped by the acknowledgement that preceded it.
+        // 🔴 Before the flush and before the fetch, because BOTH record an
+        // outcome and a recorded outcome that is not persisted is the Q2
+        // defect: the first DIAGNOSE after a force-stop reported `none`.
+        // Idempotent; see [ClipDiagnostics.install].
+        ClipDiagnostics.install(this)
         ClipOutboxHealth.acknowledgeDestroyed()
         runCatching { (flush ?: ::defaultFlush).invoke() }
             .onFailure {
@@ -176,17 +181,22 @@ class ClipPickerActivity : FloatingPickerActivity<Clip>() {
      * collapse happened in [ClipHttp] and is fixed there ([ClipFetch]); this is
      * where the distinction becomes words.
      *
-     * 🔴 Read off [ClipDiagnostics.lastFetch] rather than from a field of this
-     * activity, so the sentence on screen and the machine-readable readout
-     * cannot disagree about one fetch. [readRows] records before returning, and
-     * `render()` runs after it on the main thread.
+     * 🔴 Read off [ClipDiagnostics.lastFetchOutcome] rather than from a field
+     * of this activity, so the sentence on screen and the machine-readable
+     * readout cannot disagree about one fetch. [readRows] records before
+     * returning, and `render()` runs after it on the main thread.
      *
-     * The off-mesh wording is now reached **only** by
-     * [ClipFetch.Transport] — the one outcome it is true of — and by
-     * [ClipFetch.Unclassified], where nothing better is known.
+     * ⚠ The TYPED outcome, not the persisted one, and that distinction arrived
+     * with persistence (Q2): a reason string cannot be turned back into the
+     * branch that produced it, and this sentence is about the fetch that just
+     * happened rather than about the last one that ever happened.
+     *
+     * The off-mesh wording is now reached **only** by [ClipFetch.Transport] —
+     * the one outcome it is true of — and by `null`, which on this screen means
+     * the fetch threw before classifying anything.
      */
     override fun emptyUnreadableText(): String =
-        when (val outcome = ClipDiagnostics.lastFetch()) {
+        when (val outcome = ClipDiagnostics.lastFetchOutcome()) {
             is ClipFetch.Status ->
                 if (outcome.isAuthFault) {
                     getString(R.string.clip_empty_unauthorized, outcome.status)

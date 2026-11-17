@@ -191,26 +191,15 @@ class ClipPickerFailureMessageTest {
         assertEquals(ctx.getString(R.string.clip_empty_malformed), malformed)
     }
 
-    @Test
-    fun noFailureSentenceCanCarryTheToken() {
-        // 🔴 The token is a constructor argument of the client that produced
-        // every one of these messages, so "it is not in there" is a claim worth
-        // measuring rather than assuming.
-        for (shown in listOf(
-            emptyTextFor(status = 401, body = """{"error":"unauthorized"}"""),
-            emptyTextFor(status = 500, body = "boom"),
-            emptyTextFor(status = 200, body = "<html>"),
-            emptyTextFor(throwOnConnect = IOException(fixtureToken)),
-        )) {
-            assertFalse(
-                "a failure message carries the token: <$shown>",
-                shown.contains(fixtureToken),
-            )
-            // Positive control: the loop really did read a message, so the
-            // absence above is not the absence of any text at all.
-            assertTrue("no empty-state text was rendered at all", shown.isNotEmpty())
-        }
-    }
+    // 🔴 DELETED (round 0's D4): noFailureSentenceCanCarryTheToken was the
+    // weakest of three token-absence guards. These sentences are built from
+    // `@string/clip_empty_*`, two of which take an `Int` and one of which takes
+    // nothing, and `ClipFetch` has no token-valued field — so the TYPES already
+    // make a token here impossible, and the guard pinned an impossibility.
+    // `ClipDiagnosticsTest.theReadoutNeverContainsTheTokenValue` covers the one
+    // route a mutation proved reachable (a String-valued field such as the base
+    // URL), and `DebugClipConfigReceiverTest` covers what actually leaves the
+    // app through the exported component.
 
     // --- the states that are NOT failures ------------------------------------
 
@@ -230,12 +219,12 @@ class ClipPickerFailureMessageTest {
         // different classifications. This pins the RELATIONSHIP rather than
         // either side of it.
         emptyTextFor(status = 401, body = "")
-        assertEquals("http:401", ClipDiagnostics.lastFetch()?.reason)
+        assertEquals("http:401", ClipDiagnostics.lastFetch()?.summary)
 
         emptyTextFor(status = 200, body = "<html>")
-        assertEquals("malformed", ClipDiagnostics.lastFetch()?.reason)
+        assertEquals("malformed", ClipDiagnostics.lastFetch()?.summary)
 
         emptyTextFor(status = 200, body = """{"clips":[],"limit":100}""")
-        assertEquals("rows:0", ClipDiagnostics.lastFetch()?.reason)
+        assertEquals("rows:0", ClipDiagnostics.lastFetch()?.summary)
     }
 }

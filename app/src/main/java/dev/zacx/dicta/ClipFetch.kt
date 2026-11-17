@@ -24,6 +24,17 @@ package dev.zacx.dicta
  * [ClipPickerActivity.emptyUnreadableText] — and to the machine-readable
  * readout, [ClipDiagnostics].
  *
+ * ## 🔴 FOUR variants and no fifth: there is no "unknown" outcome
+ *
+ * A fifth, `Unclassified`, existed for one commit and was **deleted by round 0
+ * of this PR's audit (D1)**. It had no `src/main` producer — `ClipHttp`
+ * overrides `fetch()`, so the only thing that could ever answer it was the
+ * lossy default on [SharedClipSource.fetch], which existed only to let the
+ * test fakes stay honest. A sealed variant and a live `else ->` branch, for a
+ * state no production path can reach, is a case every reader has to consider
+ * and no code can produce. `fetch()` is abstract and the fakes answer
+ * [Rows].
+ *
  * ## 🔴 Why a sealed interface rather than a nullable status code
  *
  * [ClipPost]'s argument, applied to the read half: a `Int?` would merge the two
@@ -48,8 +59,8 @@ sealed interface ClipFetch {
     /**
      * A short, stable, secret-free tag for the readout and for tests.
      *
-     * 🔴 Pinned as whole normalised strings by `ClipFetchTest` rather than
-     * matched on a word: a guard on a WORD is walkable by rewording, and the
+     * 🔴 Pinned as whole normalised strings by `ClipFetchClassificationTest`
+     * rather than matched on a word: a guard on a WORD is walkable by rewording, and the
      * whole point of this type is that two outcomes can never again be spelled
      * the same way.
      */
@@ -103,20 +114,5 @@ sealed interface ClipFetch {
      */
     data class Transport(val detail: String) : ClipFetch {
         override val reason: String get() = "io:$detail"
-    }
-
-    /**
-     * A [SharedClipSource] that does not classify its failures.
-     *
-     * 🔴 Reachable only through [SharedClipSource.fetch]'s default
-     * implementation, i.e. a source that overrides `rows()` and nothing else —
-     * which in this tree is the test fakes and nothing in `src/main`. It exists
-     * so that default can be **honest about being lossy** instead of inventing
-     * a transport failure it did not observe; a readout saying `unclassified`
-     * is a fact about the source, and a readout saying `io:` would be a
-     * fabricated measurement.
-     */
-    data object Unclassified : ClipFetch {
-        override val reason: String get() = "unclassified"
     }
 }

@@ -80,6 +80,14 @@ class ClipPickerActivityTest {
             reads++
             return answer
         }
+        // 🔴 `fetch()` is the abstract member since round 0's D1 retired the
+        // lossy default; `rows()` is the view the shell's own tests read. A
+        // fake that answers rows has no failure to classify, so the two agree
+        // by construction here: a null answer is a store that could not be
+        // read, which this fixture spells as a transport failure — the one
+        // class a fake can honestly claim.
+        override fun fetch(): ClipFetch =
+            rows()?.let { ClipFetch.Rows(it) } ?: ClipFetch.Transport("fake")
         override fun delete(id: Long): Boolean {
             deleted += id
             return true
@@ -98,6 +106,8 @@ class ClipPickerActivityTest {
                 order += "fetch"
                 return answer
             }
+            override fun fetch(): ClipFetch =
+                rows()?.let { ClipFetch.Rows(it) } ?: ClipFetch.Transport("fake")
             override fun delete(id: Long): Boolean = true
         }
         val c = Robolectric.buildActivity(ClipPickerActivity::class.java)
