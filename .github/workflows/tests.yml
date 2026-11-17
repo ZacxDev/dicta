@@ -63,10 +63,11 @@ jobs:
       #      absent-extra case)
       #   +2 BubbleEnabledWritersSeamTest 10 -> 12  (the widened src/debug scan
       #      and its own control; the ingress-names-the-key-but-cannot-reach-
-      #      the-store guard. 🔴 A third, pinning commit()-not-apply(), was
-      #      WRITTEN AND THEN DELETED when the force-stop mechanism it cited
-      #      was measured false on hardware — so this row is +2, and
-      #      commit()->apply() is a deliberately SURVIVING mutant.)
+      #      the-store guard. 🔴 A third, pinning how `set` writes, was WRITTEN
+      #      AND THEN DELETED along with the write change it was for: the
+      #      force-stop durability concern behind it was measured on hardware
+      #      and not observed, so `set` still uses apply() and nothing pins the
+      #      spelling. Hence +2, not +3.)
       #   +1 BootRestoreTest 6 -> 7         (the upgrade's own two guard
       #      conditions; the regression test REPLACED the test that asserted
       #      the defect, so the net is +1 and not +2)

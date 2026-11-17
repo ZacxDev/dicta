@@ -85,27 +85,10 @@ import java.io.File
  * was meant. [theOwnerIsTheSingleSourceOfTruthAcrossSurfaces] is the
  * behavioural pair — one surface's write is the next surface's read.
  *
- * ## 🔴 DELETED: two guards on `BubbleEnabled.set`'s DURABILITY. Do not re-add.
- *
- * `set` writes with `commit()` rather than `apply()`, and **nothing here tests
- * that**, deliberately. Two attempts were made and both were deleted:
- *
- *  1. a *behavioural* one — drive `set`, read `shared_prefs/dicta.xml` back off
- *     disk — mutation-tested by putting `apply()` back. It **SURVIVED**:
- *     Robolectric lands the XML synchronously under either spelling, so no test
- *     that runs in CI can distinguish them.
- *  2. a *structural* one, pinning the whole normalised `…commit()` statement.
- *     It died of its own justification. Its message explained that `apply()`
- *     could lose the write to a force-stop — and that mechanism was then
- *     **measured on hardware and found false** (a settled `true` survives a
- *     force-stop untouched). A guard whose stated reason is a retracted claim
- *     is worse than no guard, because it reads as coverage for something that
- *     does not happen.
- *
- * `commit()` stays on a narrower rationale, argued at [BubbleEnabled.set]: a
- * lopsided cost/benefit, not an observed defect. If you want to pin it, pin the
- * *rationale that is actually true* — and note that a mutation of `commit()` to
- * `apply()` is, by design, a **surviving** mutant of this suite.
+ * ⚠ Nothing here pins how [BubbleEnabled.set] writes (`apply()` vs `commit()`).
+ * Robolectric lands the XML synchronously under either spelling, so no test
+ * that runs in CI can tell them apart — and the force-stop durability concern
+ * that motivated asking was measured on hardware and not observed.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])

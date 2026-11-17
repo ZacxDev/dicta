@@ -46,17 +46,31 @@ import android.provider.Settings
  * [BubbleService] declares `microphone|specialUse`, and the documented platform
  * rules are type-specific, not service-specific:
  *
- *  * Android 12+ refuses background foreground-service starts, **but
- *    `ACTION_BOOT_COMPLETED` is on the documented exemption list** — as is
- *    holding `SYSTEM_ALERT_WINDOW`, which this app does and which is the very
- *    permission checked below. The boot path is therefore exempt twice over.
+ *  * Android 12+ refuses background foreground-service starts, **but both of
+ *    this receiver's actions are on the documented exemption list, in the same
+ *    bullet**: "after the device reboots and receives the
+ *    `ACTION_BOOT_COMPLETED`, `ACTION_LOCKED_BOOT_COMPLETED`, or
+ *    `ACTION_MY_PACKAGE_REPLACED` intent action in a broadcast receiver"
+ *    (`developer.android.com/develop/background-work/services/fgs/restrictions-bg-start`).
+ *    So the two paths are exempt on identical terms, which is one more reason
+ *    they are one rule.
  *
- *    🔴 **The upgrade path is exempt ONCE, and the difference is worth
- *    stating rather than averaging away.** `MY_PACKAGE_REPLACED` is not on
- *    that exemption list; the `SYSTEM_ALERT_WINDOW` exemption is the whole of
- *    why this start is legal, and it is why the `canDrawOverlays` check below
- *    is load-bearing on this path for a second, independent reason (the first
- *    being that an overlay service with no overlay permission stops itself).
+ *    🔴 **CORRECTION.** This section used to claim `MY_PACKAGE_REPLACED` is
+ *    **not** on that list, that the upgrade path was "exempt once" via
+ *    `SYSTEM_ALERT_WINDOW`, and that this gave the `canDrawOverlays` check
+ *    below a second, independent reason to exist. **All three are false.** The
+ *    asserted asymmetry with boot does not exist, and the inversion is worth
+ *    recording: from **Android 15** the `SYSTEM_ALERT_WINDOW` exemption
+ *    additionally requires the app to *currently have a visible overlay
+ *    window* — and across a package replacement it does not, because the
+ *    install stopped the service that was drawing it. The route the old text
+ *    called "the whole of why this start is legal" is therefore the one that
+ *    may not apply, and the broadcast action it dismissed is the one that
+ *    does. `canDrawOverlays` keeps its **first** reason, which is the real one
+ *    and is unchanged: an overlay service with no overlay permission stops
+ *    itself immediately, so starting it would give the user a flickering
+ *    foreground notification and no bubble.
+ *
  *    Like everything else in this section it is read off the documented
  *    contracts: **no device has been attached to this project**, Robolectric's
  *    `startForegroundService` records the call and never refuses, and if a
@@ -82,8 +96,8 @@ import android.provider.Settings
  * rationale. Two independent reasons, either one sufficient:
  *
  *  1. The only refusal `startForegroundService` itself raises is the Android
- *     12+ background-start restriction, which the two bullets above exempt
- *     twice on exactly this path.
+ *     12+ background-start restriction, and the first bullet above exempts
+ *     both of this receiver's actions from it by the broadcast action alone.
  *  2. The FGS-*type* refusal the bullets above discuss is thrown out of
  *     `Service.startForeground`, not `startForegroundService` — in the
  *     service's own process, after the call here has already returned.

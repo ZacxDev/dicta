@@ -26,8 +26,8 @@ import org.robolectric.shadows.ShadowSettings
  * actually *permits* the foreground start from a real `BOOT_COMPLETED`
  * broadcast is a device question and is **not** verified here: Robolectric's
  * `startForegroundService` records the call and never refuses. The documented
- * rules, and why they exempt this path twice over, are set out in the
- * receiver's kdoc.
+ * rules, and why they exempt **both** of the receiver's actions on identical
+ * terms, are set out in the receiver's kdoc.
  *
  * 🔴 Three tests were deleted from this class together with the receiver's
  * refusal fallback: two that injected a throw through the former
@@ -195,9 +195,18 @@ class BootRestoreTest {
      * one rule, and a mutant that merged them *badly* — restoring on
      * `MY_PACKAGE_REPLACED` unconditionally, with the action check moved but
      * the guards left behind the boot branch — would pass every other test
-     * here. The `canDrawOverlays` half carries extra weight on this path: it is
-     * also the Android 12+ foreground-service-start exemption this action
-     * relies on, since unlike `BOOT_COMPLETED` the action itself is not one.
+     * here.
+     *
+     * 🔴 **CORRECTION.** This kdoc used to add that `canDrawOverlays` "carries
+     * extra weight on this path", being the Android 12+
+     * foreground-service-start exemption the action relies on "since unlike
+     * `BOOT_COMPLETED` the action itself is not one". That is **false**:
+     * `ACTION_MY_PACKAGE_REPLACED` is on the exemption list in the same
+     * documented bullet as `ACTION_BOOT_COMPLETED`, so the two paths are
+     * exempt on identical terms and `canDrawOverlays` carries exactly the
+     * weight it carries at boot — an overlay service with no overlay
+     * permission stops itself. What the code does is unchanged and correct;
+     * only the second reason that was claimed for it was wrong.
      */
     @Test
     fun anAppUpgradeStartsNothingWhenTheUserHadItOffOrRevokedTheOverlay() {
@@ -214,9 +223,10 @@ class BootRestoreTest {
         boot(action = Intent.ACTION_MY_PACKAGE_REPLACED)
         assertNull(
             "an upgrade started an overlay service with no overlay permission. " +
-                "BubbleService stops itself immediately in that state, and the " +
-                "start is not exempt from the Android 12+ background " +
-                "foreground-service restriction without it.",
+                "BubbleService stops itself immediately in that state, so the " +
+                "user gets a foreground notification that flickers and no " +
+                "bubble — exactly as on the boot path, which this action is " +
+                "handled identically to.",
             startedService(),
         )
         assertTrue(

@@ -67,7 +67,7 @@ import android.content.Intent
  * adb shell am broadcast -f 0x00000020 \
  *   -a dev.zacx.dicta.debug.CONFIGURE \
  *   -n dev.zacx.dicta/.DebugClipConfigReceiver \
- *   --es clip_base_url "$CLIP_STORE_URL" --es clip_token "$TOKEN"
+ *   --es clip_base_url 'http://10.42.0.10:8139' --es clip_token "$TOKEN"
  *
  * adb shell am broadcast -f 0x00000020 \
  *   -a dev.zacx.dicta.debug.CONFIGURE \
@@ -78,7 +78,7 @@ import android.content.Intent
  * 🔴 `--es` and **not** `--ez`: every extra on this door is read with
  * `getStringExtra`, so a genuinely-boolean extra would arrive as `null` and be
  * silently ignored — "leave it alone". `bubble_enabled` therefore takes a
- * string that [ClipConfigIngress.parseBubbleEnabled] reads
+ * string that [BubbleEnabled.parseSpelling] reads
  * (`true`/`false`/`1`/`0`/`on`/`off`/`yes`/`no`), and anything else is refused
  * rather than guessed at.
  *

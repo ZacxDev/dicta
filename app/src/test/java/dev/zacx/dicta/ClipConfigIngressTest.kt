@@ -494,7 +494,7 @@ class ClipConfigIngressTest {
     }
 
     /**
-     * 🔴 Every accepted spelling, **both ways round**, as a table.
+     * 🔴 Every accepted spelling, **both ways round**, as a table of LITERALS.
      *
      * A single `"true"` case cannot see the mutant that matters most: Kotlin's
      * `String.toBoolean()` maps every unrecognised string to `false`, so a door
@@ -502,15 +502,30 @@ class ClipConfigIngressTest {
      * The table therefore pins the mapping, and the garbage half pins that an
      * unreadable value is REFUSED rather than guessed at — with the owner never
      * asked, which is the half a message-only assertion would miss.
+     *
+     * 🔴 **The spellings are written out here and are NOT read from the
+     * implementation, and that is a correction.** This test used to iterate
+     * `ClipConfigIngress.BUBBLE_TRUE` / `BUBBLE_FALSE` — the production sets —
+     * so deleting `"1"` from the accepted-true set deleted the case that would
+     * have caught it, and the mutant SURVIVED a fully green suite. An
+     * expectation derived from the implementation it tests cannot disagree with
+     * it. The vocabulary now lives on its owner and is `private`
+     * ([BubbleEnabled.parseSpelling]), so this shape cannot come back.
+     *
+     * The refusal message is pinned as a whole literal for the same reason, and
+     * it enumerates the vocabulary — so it is a second, independent witness to
+     * a spelling being added or removed.
      */
     @Test
     fun everySpellingOfTheBubbleExtraIsReadTheRightWayRoundAndGarbageIsRefused() {
-        for (raw in ClipConfigIngress.BUBBLE_TRUE + setOf("TRUE", " true ", "On", "YES")) {
+        // 🔴 LITERALS. The canonical four, then the trim/case variants that
+        // `am broadcast --es` can hand over.
+        for (raw in listOf("true", "1", "on", "yes", "TRUE", " true ", "On", "YES")) {
             val f = fixture()
             apply(f, ClipConfigIngress.KEY_BUBBLE_ENABLED to raw)
             assertEquals("<$raw> was not read as ON", listOf(true), f.bubble.asked)
         }
-        for (raw in ClipConfigIngress.BUBBLE_FALSE + setOf("FALSE", " off ", "No")) {
+        for (raw in listOf("false", "0", "off", "no", "FALSE", " off ", "No")) {
             val f = fixture(bubble = FakeBubble(on = true))
             apply(f, ClipConfigIngress.KEY_BUBBLE_ENABLED to raw)
             assertEquals("<$raw> was not read as OFF", listOf(false), f.bubble.asked)
@@ -519,11 +534,16 @@ class ClipConfigIngressTest {
             val f = fixture()
             val outcome = apply(f, ClipConfigIngress.KEY_BUBBLE_ENABLED to raw)
             assertEquals(
-                "<$raw> was not refused with the door's own reason. A value " +
+                "<$raw> was not refused with the owner's own reason. A value " +
                     "this door cannot read must be refused, never guessed: " +
                     "String.toBoolean() would silently turn the bubble OFF for " +
-                    "every one of these and report success.",
-                ClipConfigIngress.Outcome.Rejected(ClipConfigIngress.bubbleRejection(raw)),
+                    "every one of these and report success. The message also " +
+                    "lists the accepted vocabulary, so a spelling added to or " +
+                    "removed from it fails here.",
+                ClipConfigIngress.Outcome.Rejected(
+                    "bubble_enabled must be one of " +
+                        "true,1,on,yes,false,0,off,no; got <$raw>"
+                ),
                 outcome,
             )
             assertEquals(
@@ -557,7 +577,9 @@ class ClipConfigIngressTest {
         )
 
         assertEquals(
-            ClipConfigIngress.Outcome.Rejected(ClipConfigIngress.bubbleRejection("ture")),
+            ClipConfigIngress.Outcome.Rejected(
+                "bubble_enabled must be one of true,1,on,yes,false,0,off,no; got <ture>"
+            ),
             outcome,
         )
         assertEquals(
@@ -593,7 +615,7 @@ class ClipConfigIngressTest {
         )
 
         assertEquals(
-            "rejected: ${ClipConfigIngress.BUBBLE_NO_OVERLAY}",
+            "rejected: bubble_enabled needs the \"display over other apps\" permission",
             outcome.message,
         )
         assertEquals(

@@ -247,13 +247,24 @@ class TileManifestTest {
     }
 
     /**
-     * The flag must stop claiming a bubble that an app update took away.
+     * The bubble must come back after an app update, which needs this action in
+     * the filter.
      *
-     * 🔴 This is **not** a restore path, and the negative control that says so
-     * lives in `BootRestoreTest`: the receiver clears the flag on this action
-     * and starts nothing. Without the filter entry the receiver is never
-     * invoked at all, so the code half of the fix would be dead — which is why
-     * the manifest is asserted separately from the behaviour.
+     * 🔴 **This kdoc and the assertion below used to describe the OPPOSITE
+     * behaviour as live fact** — "this is not a restore path … the receiver
+     * clears the flag on this action and starts nothing" — and cross-referenced
+     * `BootRestoreTest.aPackageReplacementClearsTheStaleFlagAndStartsNothing`,
+     * a test that asserted the measured defect and has been deleted. Nothing
+     * went red, because the assertion is about the manifest and the manifest
+     * entry is needed either way: it read as coverage for the opposite of what
+     * ships. Rewritten rather than deleted — the filter entry is load-bearing.
+     *
+     * `BubbleBootReceiver` now handles `MY_PACKAGE_REPLACED` exactly as it
+     * handles `BOOT_COMPLETED`: restore the bubble if the user wants it and the
+     * overlay permission allows it, and write the flag in neither case. Without
+     * this filter entry the receiver is never invoked on an update at all, so
+     * the restore is dead code — which is why the manifest is asserted
+     * separately from the behaviour (`BootRestoreTest`).
      */
     @Test
     fun theBootReceiverAlsoHearsAboutAPackageReplacement() {
@@ -261,11 +272,11 @@ class TileManifestTest {
         assertTrue(
             "BubbleBootReceiver's intent-filter does not include " +
                 "android.intent.action.MY_PACKAGE_REPLACED, so the code that " +
-                "clears the stale flag after an app update is never reached. " +
-                "An update stops the service and Android does not restart one " +
-                "across a package replacement, so the flag outlives the bubble " +
-                "and MainActivity's switch needs two taps to recover. " +
-                "Filter: $filter",
+                "restores the bubble after an app update is never reached. An " +
+                "update stops the service and Android does not restart one " +
+                "across a package replacement, so without this the bubble is " +
+                "gone after every install while the user's stored intent still " +
+                "says they want it. Filter: $filter",
             filter.contains("android.intent.action.MY_PACKAGE_REPLACED"),
         )
         // Positive control: an empty or mis-parsed filter would make the

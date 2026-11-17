@@ -240,41 +240,13 @@ object BubbleEnabled {
      * already stopping *itself* — [BubbleService]'s `ACTION_STOP` handler,
      * which must not call `stopService` on itself.
      *
-     * ## `commit()` rather than `apply()` — a cheap durability choice, and NOT
-     * a fix for anything observed
-     *
-     * 🔴 **RETRACTED CLAIM, kept here because the retraction is the useful
-     * part.** This kdoc previously said `commit()` was here "for the force-stop
-     * case": the flag was reported flipping to `false` after
-     * `adb shell am force-stop`, no writer exists on that path, and an
-     * `apply()` whose disk write the process did not outlive was offered as the
-     * mechanism. **Measured on hardware and FALSE.** With the bubble on and the
-     * value settled on disk for several minutes, a force-stop — no upgrade, no
-     * broadcast — left `bubble_enabled value="true"` exactly as it was. The
-     * real cause of every `false` in that report was the
-     * `MY_PACKAGE_REPLACED` write this change deletes, plus one stray *Hide
-     * bubble* tap, i.e. two mechanisms behind one observable.
-     *
-     * ⚠ What the control rules out, stated at the scope it was taken at: a
-     * **settled** value does not survive-or-fail differently across a
-     * force-stop. It says nothing about the sub-second window between an
-     * `apply()` and its disk write, which nothing has ever observed here
-     * either. So the residual hazard this guards is **speculative and small**.
-     *
-     * It stays because the trade is lopsided rather than because a defect was
-     * found: the cost is one synchronous write of a single boolean into a
-     * few-hundred-byte preferences file, on a user tap, and the failure it
-     * forecloses is this flag silently reading `false` — which is the exact
-     * class of silent intent loss the rest of this object exists to prevent.
-     * `ClipDiagnostics.PrefsStore.write` makes the same choice for a comparable
-     * reason. 🔴 **Nothing tests it**, and that is deliberate: Robolectric
-     * lands the XML synchronously under either spelling (measured — a
-     * behavioural guard was written and survived the mutation), so no test that
-     * runs in CI can tell the two apart. A guard here could only pin the
-     * spelling, and the first attempt at one pinned the retracted claim above.
+     * ⚠ The flag was once suspected of being lost by `apply()` across an
+     * `adb shell am force-stop`. **Measured on hardware and not observed** — a
+     * settled `true` survives one untouched — so `apply()` stays. Do not
+     * re-derive the concern.
      */
     fun set(context: Context, on: Boolean) {
-        prefs(context).edit().putBoolean(PREF_KEY, on).commit()
+        prefs(context).edit().putBoolean(PREF_KEY, on).apply()
     }
 
     /**
@@ -318,9 +290,12 @@ object BubbleEnabled {
      *  * [turnOn] returns before calling this unless `canDrawOverlays` is true,
      *    which means the app holds `SYSTEM_ALERT_WINDOW`, which is itself on
      *    the documented exemption list.
-     *  * [BubbleBootReceiver] additionally requires
-     *    `ACTION_BOOT_COMPLETED`, a second exemption, *and* checks
-     *    `canDrawOverlays` as well — so it is exempt twice over.
+     *  * [BubbleBootReceiver] acts only on `ACTION_BOOT_COMPLETED` or
+     *    `ACTION_MY_PACKAGE_REPLACED`, **both of which are on that exemption
+     *    list in the same documented bullet**, and checks `canDrawOverlays` as
+     *    well. 🔴 This bullet used to name only `BOOT_COMPLETED` and call it
+     *    "a second exemption"; the receiver's kdoc carries the correction and
+     *    the Android 15 caveat on the `SYSTEM_ALERT_WINDOW` route.
      *
      * The other refusal — a `microphone`-typed FGS start, Android 14+ — cannot
      * surface here at all, in either direction. It is thrown out of
@@ -394,6 +369,58 @@ object BubbleEnabled {
     internal fun foregroundPromotionRefused(context: Context) {
         if (userAskedForTheLatestStart) set(context, false)
     }
+
+    /**
+     * The spellings of the flag this owner accepts from a text source, meaning
+     * `true`. Lower-cased; [parseSpelling] trims and down-cases before looking.
+     *
+     * 🔴 `private`, and the visibility is the point: a test that iterated this
+     * set would derive its expectation from the implementation, so deleting a
+     * spelling would change the test's own expectation with it and go
+     * unnoticed. `ClipConfigIngressTest` pins the accepted spellings as
+     * **literals**.
+     */
+    private val TRUE_SPELLINGS: Set<String> = setOf("true", "1", "on", "yes")
+
+    /** [TRUE_SPELLINGS]'s mirror. `private` for the same reason. */
+    private val FALSE_SPELLINGS: Set<String> = setOf("false", "0", "off", "no")
+
+    /**
+     * [raw] as a boolean, or `null` when it is not one of the accepted
+     * spellings.
+     *
+     * 🔴 This lives on the **owner** and not on the door that reads it, the
+     * same way [ClipEndpoints.rejectionFor] holds the base-URL rule for every
+     * surface that takes a URL. A door holding its own copy of a flag's
+     * vocabulary is a second place for that vocabulary to drift.
+     *
+     * 🔴 An enumerated set and **not** `String.toBoolean()`, which maps every
+     * unrecognised string to `false` — so `--es bubble_enabled ture` would turn
+     * the bubble OFF and report success. An ingress that silently does the
+     * opposite of what it was told is worse than one that refuses.
+     *
+     * Trimmed and case-insensitive because `am broadcast --es` hands over
+     * whatever the shell quoted. **Blank is not accepted** — for a token a
+     * blank means "clear it", which is a meaningful instruction; for a boolean
+     * there is no third state to clear to, so it can only be a quoting mistake.
+     */
+    internal fun parseSpelling(raw: String): Boolean? = when (raw.trim().lowercase()) {
+        in TRUE_SPELLINGS -> true
+        in FALSE_SPELLINGS -> false
+        else -> null
+    }
+
+    /** Why [parseSpelling] refused [raw], naming the key and the vocabulary. */
+    internal fun spellingRejection(raw: String): String =
+        "$PREF_KEY must be one of " +
+            "${(TRUE_SPELLINGS + FALSE_SPELLINGS).joinToString(",")}; got <$raw>"
+
+    /**
+     * Why the bubble could not be turned on at all — the one refusal a caller
+     * cannot anticipate, since the overlay permission is not in its request.
+     */
+    internal const val NO_OVERLAY_REJECTION: String =
+        "$PREF_KEY needs the \"display over other apps\" permission"
 
     /**
      * The bubble as the two things a **`Context`-free rule** needs of it: read

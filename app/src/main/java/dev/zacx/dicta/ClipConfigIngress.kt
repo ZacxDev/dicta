@@ -45,13 +45,23 @@ package dev.zacx.dicta
  * on-disk preferences XML back and grepping it — rather than trusting that the
  * invariant transfers to a new entry point.
  *
- * ## 🔴 It validates through [ClipEndpoints.rejectionFor] and grows no second rule
+ * ## 🔴 It validates through the OWNER of each field and grows no second rule
  *
- * The settings screen rejects a base URL with that function; so does this. A
- * predicate open-coded at two sites is wrong at one of them, and here the
- * consequence is specific: the capture-loss defect of PR #49 was reached
- * through exactly this field, so a door that accepted what the screen refuses
- * would reopen it for anything driving the door.
+ * The settings screen rejects a base URL with [ClipEndpoints.rejectionFor]; so
+ * does this. A predicate open-coded at two sites is wrong at one of them, and
+ * here the consequence is specific: the capture-loss defect of PR #49 was
+ * reached through exactly this field, so a door that accepted what the screen
+ * refuses would reopen it for anything driving the door.
+ *
+ * 🔴 The bubble follows the same rule, and the first version of this door broke
+ * it: the accepted spellings, the parse and both refusal messages lived *here*.
+ * A door is not a policy surface — it knows the name of its own extra and
+ * nothing about what the value means — so they live on
+ * [BubbleEnabled.parseSpelling] / [BubbleEnabled.spellingRejection] /
+ * [BubbleEnabled.NO_OVERLAY_REJECTION], beside the flag they describe, exactly
+ * as the URL rule lives beside the URL. The spelling sets themselves are
+ * `private` to the owner so nothing — a test included — can read the
+ * vocabulary back out of the implementation.
  */
 object ClipConfigIngress {
 
@@ -67,7 +77,7 @@ object ClipConfigIngress {
         val sttToken: String? = null,
         /**
          * The floating bubble, **as the caller spelled it** — see
-         * [parseBubbleEnabled].
+         * [BubbleEnabled.parseSpelling].
          *
          * 🔴 Kept raw rather than parsed at [parse] time, which is exactly what
          * [clipBaseUrl] does and for the same reason: [parse] has no way to
@@ -166,43 +176,6 @@ object ClipConfigIngress {
     const val KEY_BUBBLE_ENABLED: String = "bubble_enabled"
 
     /**
-     * The spellings of [KEY_BUBBLE_ENABLED] that mean `true`, lower-cased.
-     *
-     * 🔴 An enumerated set and not `String.toBoolean()`, which maps **every**
-     * unrecognised string to `false` — so `--es bubble_enabled ture` would turn
-     * the bubble OFF and report success. An ingress that silently does the
-     * opposite of what it was told is worse than one that refuses.
-     */
-    val BUBBLE_TRUE: Set<String> = setOf("true", "1", "on", "yes")
-
-    /** [BUBBLE_TRUE]'s mirror. */
-    val BUBBLE_FALSE: Set<String> = setOf("false", "0", "off", "no")
-
-    /**
-     * [raw] as a boolean, or `null` when it is not one of the accepted
-     * spellings.
-     *
-     * Trimmed and case-insensitive because `am broadcast --es` hands over
-     * whatever the shell quoted. **Blank is not accepted** — for a token a
-     * blank means "clear it", which is a meaningful instruction; for a boolean
-     * there is no third state to clear to, so it can only be a quoting mistake.
-     */
-    fun parseBubbleEnabled(raw: String): Boolean? = when (raw.trim().lowercase()) {
-        in BUBBLE_TRUE -> true
-        in BUBBLE_FALSE -> false
-        else -> null
-    }
-
-    /** What [apply] says when [parseBubbleEnabled] could not read the value. */
-    fun bubbleRejection(raw: String): String =
-        "$KEY_BUBBLE_ENABLED must be one of " +
-            "${(BUBBLE_TRUE + BUBBLE_FALSE).joinToString(",")}; got <$raw>"
-
-    /** What [apply] says when the bubble cannot be turned on at all. */
-    const val BUBBLE_NO_OVERLAY: String =
-        "$KEY_BUBBLE_ENABLED needs the \"display over other apps\" permission"
-
-    /**
      * Builds a [Request] from string arguments, e.g. an intent's extras.
      *
      * 🔴 A **blank** value is not a null one. `null` means "leave it alone";
@@ -272,13 +245,16 @@ object ClipConfigIngress {
         // 🔴 Parsed up here with the URL's validation and NOT at the write
         // below, so an unreadable value is refused before anything is stored.
         val wantsBubble = request.bubbleEnabled?.let { raw ->
-            parseBubbleEnabled(raw) ?: return Outcome.Rejected(bubbleRejection(raw))
+            BubbleEnabled.parseSpelling(raw)
+                ?: return Outcome.Rejected(BubbleEnabled.spellingRejection(raw))
         }
         val applied = mutableListOf<String>()
         if (wantsBubble != null) {
             // 🔴 Still nothing written at this point, so this refusal keeps
             // Outcome.Rejected's "nothing at all was written" promise.
-            if (!bubble.turn(wantsBubble)) return Outcome.Rejected(BUBBLE_NO_OVERLAY)
+            if (!bubble.turn(wantsBubble)) {
+                return Outcome.Rejected(BubbleEnabled.NO_OVERLAY_REJECTION)
+            }
             applied += KEY_BUBBLE_ENABLED
         }
         request.clipBaseUrl?.let {

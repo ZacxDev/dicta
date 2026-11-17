@@ -432,12 +432,16 @@
                   same "the switch would lie" gap without destroying the one
                   piece of state only the user may change.
 
-                  Unlike BOOT_COMPLETED this action is NOT on Android 12+'s
-                  foreground-service-start exemption list; the start is legal
-                  because the app holds SYSTEM_ALERT_WINDOW, which is, and
-                  which the receiver checks. See BubbleBootReceiver.onReceive.
-                  No data filter: this action is delivered only to the replaced
-                  package itself.
+                  🔴 This comment also claimed the action is NOT on Android
+                  12+'s foreground-service-start exemption list, and that the
+                  start was legal only via SYSTEM_ALERT_WINDOW. That is FALSE:
+                  MY_PACKAGE_REPLACED is on that list, in the same documented
+                  bullet as BOOT_COMPLETED and LOCKED_BOOT_COMPLETED, so the
+                  two actions are exempt on identical terms. See
+                  BubbleBootReceiver.onReceive for the correction and for why
+                  the SYSTEM_ALERT_WINDOW route is the one that may NOT apply
+                  here from Android 15 on. No data filter: this action is
+                  delivered only to the replaced package itself.
                 -->
                 <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
             </intent-filter>

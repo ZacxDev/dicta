@@ -14,12 +14,13 @@ recording.
 1. **Floating bubble** — an always-on-top mic button (`TYPE_APPLICATION_OVERLAY`)
    you can drag anywhere. Tap it from any app. `BubbleBootReceiver` asks for it
    again after a reboot or an app upgrade when you had it switched on — the only
-   starts it makes, with no fallback, because the platform restrictions that
-   could refuse it exempt the boot path twice over and the upgrade path once,
-   via `SYSTEM_ALERT_WINDOW` (see the receiver's kdoc for the documented rules,
-   and for why the fallback that used to live there was deleted as
-   unreachable). The restore is device-unverified: a JVM test can pin the
-   receiver's decision table but not Android's permission for the start.
+   starts it makes, with no fallback, because `BOOT_COMPLETED` and
+   `MY_PACKAGE_REPLACED` are both on Android 12+'s foreground-service-start
+   exemption list, in the same documented bullet (see the receiver's kdoc for
+   the rules, for the correction to an earlier claim that the two differed, and
+   for why the fallback that used to live there was deleted as unreachable).
+   The restore is device-unverified: a JVM test can pin the receiver's decision
+   table but not Android's permission for the start.
 
 Two surfaces *switch that bubble on and off*; neither starts a recording:
 
@@ -67,11 +68,9 @@ happens: `BubbleService` clears the flag when the foreground promotion of a star
 > outlive the bubble and the switch would need two taps — but deleting the
 > user's stored intent is the wrong end to close it from.
 >
-> `BubbleEnabled.set` also writes with `commit()` rather than `apply()` now.
-> That is a cheap durability choice and **not** a fix for anything observed: a
-> force-stop was suspected of losing the write, and that was measured on
-> hardware and found false — a settled `true` survives one untouched. See
-> `BubbleEnabled.set`'s kdoc for the retraction and for why nothing tests it.
+> A second cause was suspected — `apply()` losing the write to a force-stop —
+> and **measured on hardware and not observed**, so nothing changed about how
+> the flag is written.
 
 A refused *boot* restore is the deliberate exception: it keeps the flag. Clearing
 it there would mean the bubble does not return on that boot **or any later one**,
