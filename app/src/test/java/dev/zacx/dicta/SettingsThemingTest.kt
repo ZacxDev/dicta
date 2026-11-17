@@ -122,6 +122,10 @@ class SettingsThemingTest {
         // which is what its failure message asks a new control to do.
         "clip_url" to "@drawable/input_bg",
         "clip_token" to "@drawable/input_bg",
+        // The clipboard group's OWN Save, beside the fields it saves. Outline,
+        // not destructive: it is an action, and the error colour belongs to the
+        // controls that destroy something. The ledger GREW deliberately again.
+        "clip_save" to "@drawable/outline_button_bg",
         "clip_clear_token" to "@drawable/destructive_button_bg",
     )
 
@@ -316,17 +320,18 @@ class SettingsThemingTest {
 
         // Positive control: a zero here would make the loop vacuous and
         // indistinguishable from a tree with no text-bearing controls at all.
-        // 🔴 RE-DERIVED at 8 by the shared-clipboard change, not loosened: the
-        // two clip fields are text-bearing and on-surface like their STT
-        // twins, and clip_clear_token is excluded with the other destructive
-        // controls because its label is deliberately the error colour. The
-        // eight are the checkbox, four fields (STT URL and token, clip URL and
-        // token) and the three outlined buttons.
+        // 🔴 RE-DERIVED at 9 by @id/clip_save, not loosened: it is a
+        // text-bearing, non-destructive control like the other outlined
+        // buttons, so it joins the count rather than being excused from it.
+        // (The previous derivation was 8 — the checkbox, four fields and three
+        // outlined buttons — when the clipboard group had no Save of its own.)
+        // clip_clear_token is still excluded with the other destructive
+        // controls because its label is deliberately the error colour.
         assertEquals(
-            "expected to examine the checkbox, all FOUR fields and all THREE " +
-                "outlined buttons (Save, Test, Import snippets); examined " +
-                "$examined",
-            8,
+            "expected to examine the checkbox, all FOUR fields and all FOUR " +
+                "outlined buttons (STT Save, Test, Import snippets, clipboard " +
+                "Save); examined $examined",
+            9,
             examined.size
         )
     }
@@ -562,14 +567,15 @@ class SettingsThemingTest {
         val buttons = descendants(inflate())
             .filterIsInstance<Button>()
             .filter { it !is android.widget.CompoundButton }
-        // 🔴 SIX since the shared clipboard added @id/clip_clear_token.
+        // 🔴 SEVEN since the clipboard group got its own Save (@id/clip_save).
         // RE-DERIVED from what the screen holds, not loosened: Save, Test,
         // Clear token, Delete all history, the import, and the shared
-        // clipboard's own clear button.
+        // clipboard's own Save and clear button. (It was SIX when the
+        // clipboard group had only the clear button.)
         assertEquals(
-            "the screen no longer has the six buttons this guard was written " +
+            "the screen no longer has the seven buttons this guard was written " +
                 "for; re-derive it rather than loosening it",
-            6,
+            7,
             buttons.size
         )
         for (button in buttons) {

@@ -31,6 +31,26 @@ interface SharedClipSource {
     fun rows(): List<Clip>?
 
     /**
+     * The same read as [rows], **with the failure classified** — see [ClipFetch].
+     *
+     * 🔴 This is the member a SURFACE should call. [rows] collapsed a refused
+     * token, a body that did not parse and a dead socket into one `null`, and
+     * [ClipPickerActivity] rendered all three as *"usually being off-mesh"*.
+     * That is the defect [ClipFetch] exists to close, and it is closed here
+     * rather than in the picker so that both consumers — the empty-state copy
+     * and [ClipDiagnostics] — read **one** classification.
+     *
+     * 🔴 The default is deliberately LOSSY and says so: a source that
+     * overrides only [rows] cannot distinguish anything, so it reports
+     * [ClipFetch.Unclassified] rather than fabricating a transport failure it
+     * never observed. [ClipHttp] overrides this, and `src/main` holds no other
+     * implementation — the default serves the test fakes, which exist to
+     * supply rows and have no failure to classify.
+     */
+    fun fetch(): ClipFetch =
+        rows()?.let { ClipFetch.Rows(it) } ?: ClipFetch.Unclassified
+
+    /**
      * Deletes one clip, from any device, and reports whether it is gone.
      *
      * 🔴 **`true` for a 404 as well as for a 204, deliberately.** The caller's
@@ -176,7 +196,29 @@ class ClipHttp(
         }
     }
 
-    override fun rows(): List<Clip>? {
+    /**
+     * 🔴 **Derived from [fetch], which is the ONE place the read is
+     * classified.** Kept so every existing caller and every existing test is
+     * unchanged — and those tests are what prove the classification did not
+     * alter the behaviour this method already had: a non-200, a malformed
+     * body and a dead socket are all still `null` here, and an empty store is
+     * still an empty list.
+     *
+     * A surface must call [fetch] instead. This getter is the lossy view, and
+     * the loss is the defect — see [ClipFetch].
+     */
+    override fun rows(): List<Clip>? = (fetch() as? ClipFetch.Rows)?.rows
+
+    /**
+     * The read, with each failure class carried out of here intact.
+     *
+     * 🔴 **Never throws**, exactly as before: the four `catch` clauses below
+     * are the same four, mapping to the four outcomes they used to flatten
+     * into `null`. `Malformed` is caught FIRST and it must be caught at all —
+     * it extends `Exception`, not `RuntimeException`, so the clauses below
+     * would let it escape.
+     */
+    override fun fetch(): ClipFetch {
         var conn: HttpURLConnection? = null
         return try {
             conn = opener(ClipEndpoints.clips(baseUrl, limit)).apply {
@@ -186,19 +228,18 @@ class ClipHttp(
                 setRequestProperty("Authorization", SttEndpoints.authorization(token))
                 setRequestProperty("Accept", "application/json")
             }
-            if (conn.responseCode != 200) return null
-            ClipJson.parseList(bodyOf(conn, ok = true))
+            val status = conn.responseCode
+            // 🔴 The status is CARRIED. This `return null` is where a 401
+            // became "you are off-mesh" for both the operator and an agent.
+            if (status != 200) return ClipFetch.Status(status)
+            ClipFetch.Rows(ClipJson.parseList(bodyOf(conn, ok = true)))
         } catch (_: ClipJson.Malformed) {
-            // 🔴 First, and it must be caught at all: `Malformed` extends
-            // `Exception`, not `RuntimeException`, so the two clauses below
-            // would let it escape — and this method's whole contract is that
-            // it never throws. A malformed body reads as "unreadable", never
-            // as "empty"; see [SharedClipSource.rows].
-            null
-        } catch (_: IOException) {
-            null
-        } catch (_: RuntimeException) {
-            null
+            ClipFetch.Malformed
+        } catch (e: IOException) {
+            // `e.message` only, never `toString()` — the class kdoc's rule.
+            ClipFetch.Transport(e.message ?: e.javaClass.simpleName)
+        } catch (e: RuntimeException) {
+            ClipFetch.Transport(e.message ?: e.javaClass.simpleName)
         } finally {
             conn?.disconnect()
         }

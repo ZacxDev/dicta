@@ -556,8 +556,44 @@
                 android:textColorHint="@color/dicta_on_surface_variant"
                 android:hint="@string/clip_token_hint_empty"
                 android:importantForAutofill="no"
+                android:imeOptions="actionDone"
                 android:inputType="textPassword" />
         </LinearLayout>
+
+        <!--
+          🔴 A SECOND SAVE, ADJACENT TO THE FIELDS IT SAVES — and the reason is
+          measured, not stylistic.
+
+          @id/stt_save is the only Save on this screen and it sits in the STT
+          group, HUNDREDS OF LINES ABOVE these fields. The token field is
+          `textPassword` and is never rendered back, so a token typed here and
+          then abandoned — Back, HOME, a focus change, the IME eating the scroll
+          that would have reached the button — is SILENTLY DISCARDED, with the
+          hint still reading "Paste the clipstore bearer token" and no way to
+          tell that from a save that worked. It cost a real token twice, and one
+          blind recovery tap landed on @id/clip_clear_token and deleted it.
+
+          It calls the SAME save() as @id/stt_save — not a second half-save, for
+          the one-rule-one-place reason SettingsActivity.saveClip() already
+          records: a separate clip-only save would be a second opinion about
+          what "Save" does and about the order the two tokens are written in.
+          @id/clip_token's imeOptions=actionDone commits through the same path,
+          so the keyboard's own Done key is a save too.
+
+          Outlined rather than destructive, like the other two actions: the
+          error colour belongs to the controls that destroy something.
+        -->
+        <Button
+            android:id="@+id/clip_save"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:layout_marginTop="12dp"
+            android:background="@drawable/outline_button_bg"
+            android:stateListAnimator="@null"
+            android:textAllCaps="false"
+            android:textColor="@color/dicta_on_surface"
+            android:contentDescription="@string/clip_save_desc"
+            android:text="@string/clip_save" />
 
         <!-- @id/stt_clear_token's element, attribute for attribute, including
              the ✕ glyph and the error colour: the two controls destroy the same

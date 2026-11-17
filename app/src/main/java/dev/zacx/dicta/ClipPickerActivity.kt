@@ -152,8 +152,50 @@ class ClipPickerActivity : FloatingPickerActivity<Clip>() {
                     ClipFlusher.Report(failure = it.message ?: it.javaClass.simpleName)
                 )
             }
-        return (remote ?: defaultRemote()).rows()
+        // 🔴 `fetch()`, not `rows()`. `rows()` is the lossy view — a 401, a
+        // body that did not parse and a dead socket were one `null`, and this
+        // screen rendered all three as "usually being off-mesh". The outcome is
+        // recorded BEFORE it is reduced to a nullable list, so
+        // [emptyUnreadableText] and [ClipDiagnostics] read the same
+        // classification rather than two guesses at it.
+        val outcome = (remote ?: defaultRemote()).fetch()
+        ClipDiagnostics.recordFetch(outcome)
+        return (outcome as? ClipFetch.Rows)?.rows
     }
+
+    /**
+     * The unreadable-state sentence, **specific to why the read failed**.
+     *
+     * ## 🔴 The defect this closes, which misled a human and an agent alike
+     *
+     * This screen said one thing for four different failures:
+     * *"Dicta could not reach the shared clipboard. It is mesh-only, so this is
+     * usually being off-mesh"*. A **401 read as off-mesh** — the store
+     * reachable, answering, and refusing the token — so the only surface that
+     * reports on this feature stated the opposite of what was wrong. The
+     * collapse happened in [ClipHttp] and is fixed there ([ClipFetch]); this is
+     * where the distinction becomes words.
+     *
+     * 🔴 Read off [ClipDiagnostics.lastFetch] rather than from a field of this
+     * activity, so the sentence on screen and the machine-readable readout
+     * cannot disagree about one fetch. [readRows] records before returning, and
+     * `render()` runs after it on the main thread.
+     *
+     * The off-mesh wording is now reached **only** by
+     * [ClipFetch.Transport] — the one outcome it is true of — and by
+     * [ClipFetch.Unclassified], where nothing better is known.
+     */
+    override fun emptyUnreadableText(): String =
+        when (val outcome = ClipDiagnostics.lastFetch()) {
+            is ClipFetch.Status ->
+                if (outcome.isAuthFault) {
+                    getString(R.string.clip_empty_unauthorized, outcome.status)
+                } else {
+                    getString(R.string.clip_empty_http, outcome.status)
+                }
+            is ClipFetch.Malformed -> getString(R.string.clip_empty_malformed)
+            else -> getString(emptyUnreadableRes)
+        }
 
     /**
      * [query] filtered, with **no reordering whatsoever**.

@@ -658,6 +658,23 @@
          deliberately does NOT say "check the server": the operator's next act
          is to reconnect, and a capture made meanwhile is queued anyway. -->
     <string name="clip_empty_unreachable">Dicta could not reach the shared clipboard. It is mesh-only, so this is usually being off-mesh — anything you capture is queued until it is back.</string>
+
+    <!--
+      🔴 THE OFF-MESH SENTENCE ABOVE WAS SHOWN FOR THESE TOO, AND IT IS A LIE
+      FOR EVERY ONE OF THEM. ClipHttp collapsed a non-200 status, a body that
+      did not parse, an IOException and a RuntimeException into one null, and
+      this screen rendered all four as "usually being off-mesh" — so a REFUSED
+      TOKEN, with the store reachable and answering, sent the reader off to
+      debug the mesh. See ClipFetch.
+
+      Each of these names the thing that is actually wrong and the place it is
+      fixed. They are separate strings rather than one parameterised sentence
+      for the reason stated directly above about the three empty states: they
+      have different next steps.
+    -->
+    <string name="clip_empty_unauthorized">The shared clipboard refused Dicta\'s token (HTTP %1$d). The store answered, so you are on the mesh — the clip token in Settings is wrong, expired, or was never pasted.</string>
+    <string name="clip_empty_http">The shared clipboard answered HTTP %1$d. It is reachable, so this is not an off-mesh problem — check the clip store URL in Settings, or the store\'s own logs.</string>
+    <string name="clip_empty_malformed">Dicta reached that address but could not read its answer as a clip list. The clip store URL in Settings is probably pointing at a different service.</string>
     <string name="clip_empty_none">Nothing on the shared clipboard yet. Highlight text in any app and pick Send to Dicta.</string>
     <string name="clip_empty_no_matches">No clips match that.</string>
 
@@ -739,6 +756,15 @@
          is NEVER rendered back into the field — see SettingsActivity's kdoc. -->
     <string name="clip_token_hint_stored">A token is stored. Leave empty to keep it.</string>
     <string name="clip_token_hint_empty">Paste the clipstore bearer token</string>
+    <!--
+      🔴 "Save clipboard settings", not a bare "Save": there are now TWO save
+      buttons on this screen and a screen reader, or an operator scrolling,
+      must be able to tell which group each one belongs to. Both call the same
+      save() — see the layout comment on @id/clip_save — so the label says
+      which FIELDS are adjacent, never that it saves only them.
+    -->
+    <string name="clip_save">Save clipboard settings</string>
+    <string name="clip_save_desc">Save the clip store URL and token typed above. This also saves the transcription settings higher up the screen.</string>
     <string name="clip_clear_token">Clear clipboard token</string>
     <!-- 🔴 The THIRD cue on the destructive control, for the reason
          @string/stt_clear_token_desc carries: the error ring and the ✕ glyph

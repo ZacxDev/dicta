@@ -76,6 +76,15 @@ class ClipSeamLedgerTest {
         "BubbleService.kt",
         "CaptureActivity.kt",
         "ClipPickerActivity.kt",
+        // 🔴 A READER and never a writer: the debug diagnostics surface calls
+        // `pending()` to report the queue depth and never `append` or
+        // `remove`. It is ledgered anyway — the scan was widened to src/debug
+        // in the same change for exactly this reason, because a participant
+        // the ledger cannot see is the hole, whatever it does once it is
+        // there. `ClipDiagnostics` itself is deliberately NOT here: it is
+        // handed a `ClipOutbox` rather than constructing one, which is what
+        // keeps it Android-free and unit-testable.
+        "DebugClipConfigReceiver.kt",
     )
 
     @Test
@@ -360,6 +369,10 @@ class ClipSeamLedgerTest {
             "CaptureActivity.kt",
             "ClipPickerActivity.kt",
             "BubbleService.kt",
+            // 🔴 From the DEBUG source set, which the scan was widened to
+            // cover. Without this entry the widening could silently stop
+            // working — a zero-file debug listing satisfies every ledger here.
+            "DebugClipConfigReceiver.kt",
         )) {
             assertTrue(
                 "🔴 $expected is not in the scanned listing. The listing is " +
@@ -377,22 +390,45 @@ class ClipSeamLedgerTest {
         sourceFiles().firstOrNull { it.name == "CaptureActivity.kt" }
             ?: error("CaptureActivity.kt was not found in the scanned listing")
 
+    /**
+     * Every Kotlin source the ledgers are claims about.
+     *
+     * 🔴 **`src/debug` IS SCANNED, and widening it here was part of the change
+     * that added that source set.** The scan used to list `src/main` only,
+     * which made a debug-only file that opens the capture queue or builds a
+     * clip-store client **structurally invisible** to every ledger in this
+     * file — the hole they exist to close, reachable by putting the new reader
+     * one directory sideways rather than one directory down. A debug build is
+     * the build the operator actually runs on the handset, so "it is only in
+     * debug" is not a reason the queue's writers may go uncounted.
+     * [theScanActuallyReadsTheTree] names a file from each source set.
+     */
     private fun sourceFiles(): List<File> =
-        sourceDir().listFiles { f -> f.name.endsWith(".kt") }.orEmpty().toList()
+        sourceDirs().flatMap {
+            it.listFiles { f -> f.name.endsWith(".kt") }.orEmpty().toList()
+        }
 
-    private fun sourceDir(): File {
-        val dir = listOf(
-            File("app/src/main/java/dev/zacx/dicta"),
-            File("src/main/java/dev/zacx/dicta"),
-            File("../app/src/main/java/dev/zacx/dicta"),
-        ).firstOrNull { it.isDirectory }
+    private fun sourceDirs(): List<File> {
+        val dirs = listOf(
+            listOf(
+                File("app/src/main/java/dev/zacx/dicta"),
+                File("src/main/java/dev/zacx/dicta"),
+                File("../app/src/main/java/dev/zacx/dicta"),
+            ),
+            listOf(
+                File("app/src/debug/java/dev/zacx/dicta"),
+                File("src/debug/java/dev/zacx/dicta"),
+                File("../app/src/debug/java/dev/zacx/dicta"),
+            ),
+        ).map { candidates -> candidates.firstOrNull { it.isDirectory } }
         assertTrue(
-            "could not locate the source directory from " +
+            "could not locate the main AND debug source directories from " +
                 "${File(".").absolutePath} — refusing to report a pass on " +
-                "files that were never read",
-            dir != null,
+                "files that were never read. A missing src/debug is not an " +
+                "empty one: the config surface lives there.",
+            dirs.all { it != null },
         )
-        return dir!!
+        return dirs.map { it!! }
     }
 
     /**

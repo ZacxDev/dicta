@@ -128,6 +128,25 @@ abstract class FloatingPickerActivity<T> : Activity() {
     /** Shown when the source could not be read at all. See [loaded]. */
     protected abstract val emptyUnreadableRes: Int
 
+    /**
+     * The unreadable-state sentence, which a subclass may make SPECIFIC.
+     *
+     * 🔴 Overridable because "could not be read" is not one problem. A
+     * subclass that knows WHY — a refused token as against a dead socket —
+     * must be able to say so: [ClipPickerActivity] rendered a 401 as *"usually
+     * being off-mesh"* for exactly as long as this text came from a single
+     * constant, and that one sentence sent a human and an agent off to debug
+     * the mesh while the store was answering.
+     *
+     * The default is [emptyUnreadableRes], so a subclass that cannot tell the
+     * difference is unchanged — and [emptyUnreadableRes] stays abstract rather
+     * than becoming optional, because
+     * `PickerShellSeamLedgerTest.everyPickerDeclaresThreeDistinctEmptyStateResources`
+     * is what stops a picker pointing several states at one string, and that is
+     * a guard to obey rather than to route around.
+     */
+    protected open fun emptyUnreadableText(): String = getString(emptyUnreadableRes)
+
     /** Shown when the source was read and holds nothing. */
     protected abstract val emptyNothingStoredRes: Int
 
@@ -273,13 +292,11 @@ abstract class FloatingPickerActivity<T> : Activity() {
         list.visibility = if (hasRows) View.VISIBLE else View.GONE
         empty.visibility = if (hasRows) View.GONE else View.VISIBLE
         if (hasRows) list.setSelection(0)
-        empty.text = getString(
-            when {
-                !loaded -> emptyUnreadableRes
-                all.isEmpty() -> emptyNothingStoredRes
-                else -> emptyNoMatchesRes
-            }
-        )
+        empty.text = when {
+            !loaded -> emptyUnreadableText()
+            all.isEmpty() -> getString(emptyNothingStoredRes)
+            else -> getString(emptyNoMatchesRes)
+        }
     }
 
     /**

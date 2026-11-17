@@ -36,34 +36,36 @@ jobs:
       # measured nothing is worse than no gate — so the count is asserted, not
       # inferred from the task's exit status.
       #
-      # BASELINE: 959 against a suite of 1103 tests / 102 classes on
-      # `fix/clip-capture-loss` — the capture-loss fix for the shared
-      # clipboard (PERMANENT_STATUSES, the DESTROYED verdict, base-URL
-      # validation, the torn-queue recovery).
+      # BASELINE: 1007 against a suite of 1159 tests / 109 classes on
+      # `feat/agent-config-surface` — the agent-usable configuration and
+      # diagnostics surface (ClipFetch's four discriminated read outcomes, the
+      # ClipDiagnostics readout, the ClipConfigIngress door, the debug-only
+      # receiver, and the clipboard group's own Save).
       #
-      # 1103 * 500 / 575 = 959.13 -> 959, which is 13.05% slack.
+      # 1159 * 500 / 575 = 1007.83 -> 1007, which is 13.11% slack.
       #
-      # 🔴 COMMIT COUNTED ON: the single commit of `fix/clip-capture-loss`,
-      # i.e. the commit this comment is part of, whose parent is d3efcd0.
+      # 🔴 COMMIT COUNTED ON: the single commit of `feat/agent-config-surface`,
+      # i.e. the commit this comment is part of, whose parent is 3048498.
       # Counted on that tree and nothing else — see the CORRECTION note below
       # for why a date does not identify a tree while a branch is moving.
       #
-      # 🔴 LEFT AT 933 THIS GATE WOULD NOT HAVE GONE RED: 933 against 1103 is
-      # 15.4% slack, still inside TestCountFloorTest's 20% ceiling. Raised
+      # 🔴 LEFT AT 959 THIS GATE WOULD NOT HAVE GONE RED: 959 against 1159 is
+      # 17.3% slack, still inside TestCountFloorTest's 20% ceiling. Raised
       # here rather than discovered later, which is this block's own rule —
       # the ceiling exists so drift fails a test eventually, not so the floor
       # is only ever raised when it does.
       #
-      # Accounted for PER CLASS against 1073 / 100, not asserted:
-      #   +6  ClipCaptureSurvivalTest (new)   +4  SettingsClipUrlValidationTest (new)
-      #   +8  ClipOutboxHealthTest (12 -> 20)
-      #   +4  ClipEndpointsTest (5 -> 9)
-      #   +4  ClipOutboxStoreTest (13 -> 17)
-      #   +2  ClipHttpTest (19 -> 21)
-      #   +1  ClipPickerActivityTest (20 -> 21)
-      #   +1  ClipSettingsTest (11 -> 12)
-      #   = +10 (new) + 20 (modified) = +30 tests and +2 classes.
-      #   1073 + 30 = 1103, and 100 + 2 = 102. BOTH SIDES CHECKED, which is
+      # Accounted for PER CLASS against 1103 / 102, not asserted. ALL SEVEN are
+      # new classes; the two modified files (SettingsThemingTest,
+      # ClipSeamLedgerTest) changed ledger CONTENTS and not their test count,
+      # which was checked per class rather than assumed:
+      #   +12 ClipDiagnosticsTest (new)        +11 ClipConfigIngressTest (new)
+      #   +9  ClipFetchClassificationTest (new) +9 DebugClipConfigReceiverTest (new)
+      #   +6  ClipPickerFailureMessageTest (new)
+      #   +5  SettingsClipSaveAffordanceTest (new)
+      #   +4  DebugConfigSurfaceManifestTest (new)
+      #   = +56 (new) + 0 (modified) = +56 tests and +7 classes.
+      #   1103 + 56 = 1159, and 102 + 7 = 109. BOTH SIDES CHECKED, which is
       #   the step a previous version of this block skipped.
       #
       # 🔴 THE INSTRUMENT WAS POSITIVE-CONTROLLED BEFORE ITS ANSWER WAS USED.
@@ -129,7 +131,7 @@ jobs:
       # 🔴 THE HEADROOM IS THE CONSTANT, NOT THE FLOOR — re-derive it, do not
       # pick a round number:
       #     floor = floor(current_total * 500 / 575)      # 0.86957, 13.04% slack
-      # 1073 * 500 / 575 = 933.04 -> 933, which is 13.05% slack.
+      # 1159 * 500 / 575 = 1007.83 -> 1007, which is 13.11% slack.
       #
       # 🔴 NAME THE TREE YOU COUNTED ON, not just the date. Past entries were
       # raised several-per-day, so a date does not identify a tree while a
@@ -140,12 +142,12 @@ jobs:
       # 🔴 THREE PREVIOUS ENTRIES, AND NO MORE — see the trim note at the top of
       # this block. Add yours, drop the oldest; `git log -p -- <this file>` has
       # the rest.
-      # (Previous entries: 1073 * 500 / 575 = 933.04 -> 933, 13.05% slack;
-      #  901 * 500 / 575 = 783.48 -> 783, 13.10% slack;
-      #  871 * 500 / 575 = 757.39 -> 757, 13.09% slack.)
-      # 825 -> 717 was DROPPED as the oldest when the capture-loss entry was
-      # added, which is the eviction rule this block states. The full history is
-      # in this file's own log.
+      # (Previous entries: 1103 * 500 / 575 = 959.13 -> 959, 13.05% slack;
+      #  1073 * 500 / 575 = 933.04 -> 933, 13.05% slack;
+      #  901 * 500 / 575 = 783.48 -> 783, 13.10% slack.)
+      # 871 -> 757 was DROPPED as the oldest when the agent-config-surface
+      # entry was added, which is the eviction rule this block states. The full
+      # history is in this file's own log.
       #
       # 🔴 CORRECTION (2026-10-23). This block used to say the previous entry
       # "was left alone while the suite grew to 623, drifting the slack to 20%".
@@ -172,7 +174,7 @@ jobs:
       # one place.
       - name: Assert tests actually ran
         if: always()
-        run: python3 scripts/assert-tests-ran.py --min 959
+        run: python3 scripts/assert-tests-ran.py --min 1007
 
       - name: Upload test reports
         if: always()

@@ -201,6 +201,12 @@ object ClipOutboxHealth {
      */
     @Synchronized
     fun record(report: ClipFlusher.Report) {
+        // 🔴 Forwarded rather than recorded at the call sites, so the readout's
+        // "last flush" and this object's verdict are computed from the SAME
+        // Report and cannot disagree. Every drain site already reports here —
+        // `ClipSeamLedgerTest.everySiteThatDrainsTheOutboxCONSUMESItsReport`
+        // is what keeps that true — so this adds no site to that ledger.
+        ClipDiagnostics.recordFlush(report)
         val was = stateUnsynchronized()
         // 🔴 FIRST, and unconditionally: a destroyed capture is the fact that
         // outranks everything else this Report carries.
