@@ -82,6 +82,19 @@ import android.content.Intent
  * (`true`/`false`/`1`/`0`/`on`/`off`/`yes`/`no`), and anything else is refused
  * rather than guessed at.
  *
+ * 🔴 **`applied: …` means WRITTEN, not STILL TRUE — read it back with
+ * `DIAGNOSE`.** For the URL and the tokens there is no difference: nothing but
+ * another `CONFIGURE` changes them. `bubble_enabled` is the exception, and it
+ * is stated here rather than left to be discovered, because an agent that
+ * treats `applied: bubble_enabled` as "the bubble is on" will occasionally be
+ * wrong and will have no idea why. Turning the bubble on writes the flag and
+ * then asks Android for a foreground service; `startForegroundService` returns
+ * before that service exists, so this answer is sent while the start is still
+ * in flight, and a platform refusal afterwards clears the flag again (see
+ * [BubbleEnabled.foregroundPromotionRefused] for why clearing is right). So
+ * `applied:` is a receipt for the write, `DIAGNOSE`'s `bubbleEnabled` line is
+ * the current state, and the two can disagree. Write, then `DIAGNOSE`.
+ *
  * The outcome comes back as the broadcast's **result data**, which
  * `am broadcast` prints — so nothing is logged. 🔴 `-f 0x00000020`
  * (`FLAG_INCLUDE_STOPPED_PACKAGES`) is not optional: without it a broadcast to
@@ -167,11 +180,6 @@ class DebugClipConfigReceiver : BroadcastReceiver() {
         // a failure would report `lastFlush: none` for a queue that has been
         // failing to drain for days. That `none` is the bug, not the answer.
         ClipDiagnostics.install(context)
-        // 🔴 Spelled as ONE unbroken `ClipDiagnostics.readout(` on purpose:
-        // `ClipSeamLedgerTest`'s install-site ledger matches that literal
-        // substring, and splitting the receiver onto its own line drops this
-        // file off a ledger that is asserted to be complete. Measured — it
-        // went red exactly that way while this parameter was being added.
         val readout = ClipDiagnostics.readout(s.clip, s.outbox, s.bubble.isOn())
         return readout.render()
     }

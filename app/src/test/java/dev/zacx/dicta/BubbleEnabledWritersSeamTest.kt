@@ -175,14 +175,28 @@ class BubbleEnabledWritersSeamTest {
             .sorted()
 
         assertEquals(
-            "the set of files that turn the bubble on or off changed. Each of " +
-                "these is a surface the user can reach, and every one of them " +
-                "must leave the flag agreeing with whether the service is " +
-                "running — a surface that stops the bubble without clearing " +
-                "the flag re-creates issue #14, and one that sets the flag " +
-                "without starting the service creates its mirror image. Add " +
-                "yours here deliberately, then write its behavioural test: " +
-                "this scan cannot tell whether you passed the right boolean.",
+            "the set of files that can change whether the bubble is on " +
+                "changed. Each of these reaches a mutator, and each owes the " +
+                "rule its own event calls for — which is NOT one rule, and " +
+                "this message used to state only the first of three:\n" +
+                " * a surface the USER reaches (the switch, the tile, Hide " +
+                "   bubble, the debug CONFIGURE door) must leave the flag " +
+                "   agreeing with whether the service is running. Stopping " +
+                "   the bubble without clearing the flag re-creates issue " +
+                "   #14; setting the flag without starting the service is its " +
+                "   mirror image.\n" +
+                " * a RESTORE path (BubbleBootReceiver, on boot and on a " +
+                "   package replacement) must start the service and write the " +
+                "   flag in NEITHER direction. Writing `false` there is the " +
+                "   defect measured on hardware; writing `true` would invent " +
+                "   intent the user never expressed.\n" +
+                " * a PLATFORM-REFUSAL path (BubbleService, through " +
+                "   foregroundPromotionRefused) writes CONDITIONALLY, and the " +
+                "   condition is the origin of the start — clear for a start " +
+                "   the user asked for, keep for a restore.\n" +
+                "Add yours here deliberately, say which of the three it is, " +
+                "then write its behavioural test: this scan can see that a " +
+                "mutator is called and nothing about what was passed to it.",
             listOf(
                 // Restores the bubble after a reboot OR an app upgrade: starts
                 // the service, and deliberately does NOT write the flag — the

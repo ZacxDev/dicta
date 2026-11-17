@@ -265,19 +265,42 @@ class TileManifestTest {
      * this filter entry the receiver is never invoked on an update at all, so
      * the restore is dead code — which is why the manifest is asserted
      * separately from the behaviour (`BootRestoreTest`).
+     *
+     * ## 🔴 STRUCTURAL, not spelled
+     *
+     * This used to ask whether the action string appeared *anywhere* in the
+     * `<receiver>` block's text, and that is a guard on a spelling rather than
+     * on the declaration. **Measured walkable:** with the real
+     * `<action android:name="…MY_PACKAGE_REPLACED" />` DELETED and the same
+     * string present only as a `<meta-data android:value="…">` on the receiver,
+     * the old assertion went GREEN — a receiver that hears nothing about a
+     * package replacement, passing a test whose whole subject is that it does.
+     *
+     * ⚠ What was *not* walkable, and the reason is worth recording so nobody
+     * re-derives it: a **comment** naming the action could never satisfy it,
+     * because [manifestSource] strips comments before anything looks at the
+     * text. That is also measured — replacing the declaration with a comment
+     * that names it fails this test both before and after this change. The hole
+     * was the meta-data shape, not the 26 lines of comment inside the filter.
+     *
+     * So the state is read out of the parse tree: the `android:name` of every
+     * `<action>` child of the receiver's `<intent-filter>`, which is the only
+     * place the platform reads one from.
+     * [theFilterScanReadsDECLARATIONSAndNotTheTextAroundThem] carries the
+     * controls on that.
      */
     @Test
     fun theBootReceiverAlsoHearsAboutAPackageReplacement() {
-        val filter = receiverFilter()
+        val actions = receiverFilterActions()
         assertTrue(
-            "BubbleBootReceiver's intent-filter does not include " +
-                "android.intent.action.MY_PACKAGE_REPLACED, so the code that " +
-                "restores the bubble after an app update is never reached. An " +
-                "update stops the service and Android does not restart one " +
-                "across a package replacement, so without this the bubble is " +
-                "gone after every install while the user's stored intent still " +
-                "says they want it. Filter: $filter",
-            filter.contains("android.intent.action.MY_PACKAGE_REPLACED"),
+            "BubbleBootReceiver's intent-filter does not DECLARE an <action> " +
+                "for android.intent.action.MY_PACKAGE_REPLACED, so the code " +
+                "that restores the bubble after an app update is never " +
+                "reached. An update stops the service and Android does not " +
+                "restart one across a package replacement, so without this the " +
+                "bubble is gone after every install while the user's stored " +
+                "intent still says they want it. Declared actions: $actions",
+            "android.intent.action.MY_PACKAGE_REPLACED" in actions,
         )
         // Positive control: an empty or mis-parsed filter would make the
         // assertion above vacuous in the passing direction only if it were
@@ -285,10 +308,73 @@ class TileManifestTest {
         // COMPLETED is independently required, so finding it proves the filter
         // is genuinely being read.
         assertTrue(
-            "the receiver's filter came back without BOOT_COMPLETED, so it is " +
-                "not being parsed and the assertion above proves nothing. " +
-                "Filter: $filter",
-            filter.contains("android.intent.action.BOOT_COMPLETED"),
+            "the receiver's declared actions came back without BOOT_COMPLETED, " +
+                "so the filter is not being parsed and the assertion above " +
+                "proves nothing. Declared actions: $actions",
+            "android.intent.action.BOOT_COMPLETED" in actions,
+        )
+    }
+
+    /**
+     * 🔴 The controls for the structural rewrite above: the scan reads
+     * **declarations**, and nothing else in the receiver's text can stand in
+     * for one.
+     *
+     * Three fixtures, each the real manifest's receiver block with one thing
+     * changed, so a pass here is attributable:
+     *
+     *  1. the declaration present — the scan must see it, or every `assertTrue`
+     *     above is about an empty set;
+     *  2. the declaration deleted — the scan must NOT see it;
+     *  3. the declaration deleted and the action string left in a
+     *     `<meta-data android:value>` — **the mutation the old spelled guard
+     *     went green for**, and the one this control exists for. A `<meta-data>`
+     *     is a legal child of `<receiver>`, so this is not a contrived shape.
+     *
+     * A comment fixture is deliberately absent: comments never reach this
+     * code — [manifestSource] strips them — so a control here would be
+     * asserting the strip twice rather than the parse.
+     */
+    @Test
+    fun theFilterScanReadsDECLARATIONSAndNotTheTextAroundThem() {
+        val real = receiverBlock(manifestSource())
+        val replaced = "android.intent.action.MY_PACKAGE_REPLACED"
+        val declaration = """<action android:name="$replaced" />"""
+        assertTrue(
+            "the fixture failed: the receiver block cut out of the manifest no " +
+                "longer contains the declaration as spelled here, so the two " +
+                "negative controls below would be deleting nothing",
+            real.contains(declaration),
+        )
+
+        assertTrue(
+            "the scan cannot see the action declared in the real receiver " +
+                "block, so every assertion built on it is about an empty set",
+            replaced in filterActionsIn(real),
+        )
+
+        val deleted = real.replace(declaration, "")
+        assertFalse(
+            "the scan reported the action after its <action> declaration was " +
+                "deleted outright, so it is not reading declarations at all",
+            replaced in filterActionsIn(deleted),
+        )
+
+        val asMetaData = deleted.replace(
+            "</intent-filter>",
+            """</intent-filter>
+            <meta-data android:name="dev.zacx.dicta.probe" android:value="$replaced" />""",
+        )
+        assertFalse(
+            "🔴 THE WALK. The <action> declaration is gone and the action " +
+                "string is present only as a <meta-data android:value>, and " +
+                "the scan still reported it. That is the state the previous " +
+                "substring form of this guard went GREEN for: the receiver " +
+                "hears nothing about a package replacement, the bubble is gone " +
+                "after every install, and the guard says the declaration is " +
+                "there. Read the <action> children of the <intent-filter>, not " +
+                "the receiver's text.",
+            replaced in filterActionsIn(asMetaData),
         )
     }
 
@@ -367,16 +453,50 @@ class TileManifestTest {
         return m!!.value
     }
 
-    private fun receiverFilter(): String {
+    private fun receiverBlock(xml: String): String {
         val m = Regex(
             "<receiver\\b[^>]*android:name=\"\\.BubbleBootReceiver\".*?</receiver>",
             RegexOption.DOT_MATCHES_ALL,
-        ).find(manifestSource())
+        ).find(xml)
         assertTrue(
             "no <receiver>…</receiver> block for .BubbleBootReceiver was found",
             m != null,
         )
         return m!!.value
+    }
+
+    /**
+     * The `android:name` of every `<action>` the boot receiver's
+     * `<intent-filter>` **declares** — the only place the platform reads one
+     * from, so the only place a guard on "the receiver hears about X" may look.
+     *
+     * 🔴 An `<action>` outside an `<intent-filter>`, and an action string
+     * sitting in any other attribute, are deliberately NOT here: the platform
+     * ignores both, and counting them is what made the previous substring form
+     * of [theBootReceiverAlsoHearsAboutAPackageReplacement] walkable.
+     */
+    private fun receiverFilterActions(): Set<String> =
+        filterActionsIn(receiverBlock(manifestSource()))
+
+    private fun filterActionsIn(receiver: String): Set<String> {
+        val doc = parseXml(receiver)
+        val filters = doc.getElementsByTagName("intent-filter")
+        assertTrue(
+            "the receiver block declares no <intent-filter> at all, so a set " +
+                "of declared actions read out of it would be empty for a " +
+                "reason that has nothing to do with any one action:\n$receiver",
+            filters.length > 0,
+        )
+        val out = mutableSetOf<String>()
+        for (i in 0 until filters.length) {
+            val children = filters.item(i).childNodes
+            for (j in 0 until children.length) {
+                val child = children.item(j)
+                if (child.nodeName != "action") continue
+                child.attributes?.getNamedItem("android:name")?.nodeValue?.let { out += it }
+            }
+        }
+        return out
     }
 
     /**

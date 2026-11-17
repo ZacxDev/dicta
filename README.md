@@ -72,12 +72,16 @@ happens: `BubbleService` clears the flag when the foreground promotion of a star
 > and **measured on hardware and not observed**, so nothing changed about how
 > the flag is written.
 
-A refused *boot* restore is the deliberate exception: it keeps the flag. Clearing
-it there would mean the bubble does not return on that boot **or any later one**,
-which is exactly the thing the paragraph above says a reboot must not be able to
-do, so that one case leaves the flag set with no bubble until the next start.
-`BubbleEnabled` owns the distinction — `startService` records whether the user
-asked, and `foregroundPromotionRefused` is the only thing that reads it.
+A refused *restore* is the deliberate exception: it keeps the flag. That means a
+refused restore on **either** of the receiver's actions — a reboot or a package
+replacement — because the two are one rule and the mechanism never distinguished
+them: `startService` records whether the **user** asked, and the receiver answers
+"no" for both. (This sentence used to say "a refused *boot* restore", which read
+as narrower than the code.) Clearing the flag there would mean the bubble does
+not return on that boot or install **or any later one**, which is exactly the
+thing the paragraph above says a restart must not be able to do, so that one case
+leaves the flag set with no bubble until the next start. `BubbleEnabled` owns the
+distinction, and `foregroundPromotionRefused` is the only thing that reads it.
 
 > **Removed:** a **persistent trigger notification** with a Dictate action, and
 > a **"Try dictation now"** button on the setup screen. Both opened the overlay,

@@ -31,10 +31,22 @@ import android.provider.Settings
  * one piece of state that is nobody's to destroy but the user's.
  *
  * The objection on the record was that "re-raising an overlay as a side effect
- * of installing a new version is not behaviour to ship". It does not hold: the
- * overlay was **already up** when the install began, so this restores what the
- * install removed. That is the boot path's own argument, on an event which
- * differs from a reboot only in what stopped the service.
+ * of installing a new version is not behaviour to ship". The answer is that
+ * this restores **stored intent**, which is the boot path's own argument on an
+ * event that differs from a reboot only in what stopped the service: [isOn]
+ * says the user asked for the bubble, and neither a reboot nor an install is
+ * them changing their mind.
+ *
+ * 🔴 **It is NOT answered by "the overlay was already up when the install
+ * began", and this kdoc used to say exactly that.** In the ordinary case it was
+ * — but [BubbleEnabled.isUp]'s own kdoc documents a state where it was not: a
+ * *boot* restore whose foreground promotion the platform refused deliberately
+ * keeps the flag, so the flag can be set with no bubble on screen until the
+ * next start. An install arriving in that state raises an overlay that was not
+ * up. That is still the right thing to do — it is the next start, and the flag
+ * is what it is for — but the argument has to rest on intent rather than on a
+ * claim about the screen, because the claim about the screen is false in a
+ * state this code documents.
  *
  * `BootRestoreTest.anAppUpgradeKeepsStoredIntentAndBringsTheBubbleBack` is the
  * regression test, and it asserts both halves — the flag survives *and* the
@@ -163,11 +175,18 @@ class BubbleBootReceiver : BroadcastReceiver() {
         //
         // 🔴 The counter-argument on the record was "re-raising an overlay as a
         // side effect of installing a new version is not behaviour to ship".
-        // It does not survive the measurement: the overlay was already up when
-        // the install began, so this restores what the install removed rather
-        // than raising something the user did not ask for — which is exactly
-        // the boot path's own justification, on an event that differs from a
-        // reboot only in what interrupted the service.
+        // The answer is STORED INTENT, not the state of the screen: isOn says
+        // the user asked for the bubble, and an install is not them changing
+        // their mind — exactly the boot path's own justification, on an event
+        // that differs from a reboot only in what interrupted the service.
+        //
+        // 🔴 This comment used to answer it with "the overlay was already up
+        // when the install began". Usually true, but FALSE in a state this code
+        // documents: a refused boot restore keeps the flag with no bubble on
+        // screen (BubbleEnabled.isUp's kdoc), so an install in that state
+        // raises an overlay that was NOT up. Still correct to do — it is the
+        // next start — but the claim about the screen does not hold, so the
+        // argument does not rest on it.
         val action = intent?.action
         if (action != Intent.ACTION_BOOT_COMPLETED &&
             action != Intent.ACTION_MY_PACKAGE_REPLACED

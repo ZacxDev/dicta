@@ -134,6 +134,14 @@ class DebugClipConfigReceiverTest {
     // BubbleEnabled and to the readout that reports it, which is
     // configureSetsTheBubbleAndDiagnoseReadsTheSameValueBack below. That is a
     // SEAM, not a re-assertion: no other test builds the combined state.
+    //
+    // 🔴 The second such claim is
+    // aRefusedPromotionAfterCONFIGUREClearsTheFlagItReportedAsApplied: what
+    // `applied:` promises is a property of this DOOR plus the owner plus the
+    // platform's asynchronous start, and it is non-monotonic. The ingress
+    // cannot see it (its `Control` is a fake), BootRestoreTest reaches the same
+    // refusal through `turnOn` rather than through a broadcast, and
+    // BubbleEnabledWritersSeamTest has no door in sight.
 
     // --- diagnose -------------------------------------------------------------
 
@@ -250,6 +258,82 @@ class DebugClipConfigReceiverTest {
         assertFalse("CONFIGURE could not turn the bubble back off", BubbleEnabled.isOn(ctx))
         assertTrue(
             "DIAGNOSE still reports the bubble as on after it was turned off",
+            send(DebugClipConfigReceiver.ACTION_DIAGNOSE)
+                .lines().contains("bubbleEnabled: false"),
+        )
+    }
+
+    /**
+     * 🔴 **`applied:` is a receipt for a WRITE, not a claim that it is still
+     * true — driven through the door that says so.**
+     *
+     * `CONFIGURE bubble_enabled=true` answers `applied: bubble_enabled` and
+     * means it: the flag is written. It then asks Android for the foreground
+     * service, and `startForegroundService` returns before that service
+     * exists — so the answer goes out while the start is in flight. If the
+     * platform refuses to promote the service,
+     * [BubbleEnabled.foregroundPromotionRefused] clears the flag again, because
+     * a start the caller asked for that produced no bubble must not leave every
+     * surface claiming one (issue #14). `DIAGNOSE` then truthfully reports
+     * `false` for a write that was truthfully reported as applied.
+     *
+     * ## Why this is a test and not a fix
+     *
+     * There is no synchronous answer available about a service that does not
+     * exist yet, so the door cannot report the outcome of the promotion; and
+     * keeping the flag set would be the issue-#14 lie. The behaviour is right.
+     * What was missing is that **nothing told an agent**, and nothing drove the
+     * sequence end to end: `BootRestoreTest` reaches the same refusal through
+     * `turnOn`, which is not the door, and no test went through an actual
+     * `CONFIGURE`. The contract is now written on
+     * [ClipConfigIngress.Outcome.Applied] and in this receiver's usage kdoc,
+     * and this pins it.
+     *
+     * 🔴 Both halves asserted, so neither can pass for the wrong reason: the
+     * `applied:` answer AND the flag immediately after it (a mutant that never
+     * wrote the flag would pass a `DIAGNOSE`-only assertion, since the refusal
+     * clears it anyway), then the cleared flag AND the readout that reports it
+     * (a mutant whose readout always said `false` would pass the flag-only
+     * assertion).
+     *
+     * ⚠ Cannot establish that Android ever refuses the promotion on a real
+     * start — see [refuseTheForegroundPromotion].
+     */
+    @Test
+    fun aRefusedPromotionAfterCONFIGUREClearsTheFlagItReportedAsApplied() {
+        assertEquals(
+            "the fixture failed: CONFIGURE must report the bubble as applied, " +
+                "or the non-monotonicity this test is about never started",
+            "applied: ${ClipConfigIngress.KEY_BUBBLE_ENABLED}",
+            send(
+                DebugClipConfigReceiver.ACTION_CONFIGURE,
+                ClipConfigIngress.KEY_BUBBLE_ENABLED to "true",
+            ),
+        )
+        assertTrue(
+            "the fixture failed: `applied: bubble_enabled` was reported and the " +
+                "flag was never written, which is a different defect from the " +
+                "one below — `applied:` would not even be a receipt for a write",
+            BubbleEnabled.isOn(ctx),
+        )
+
+        refuseTheForegroundPromotion()
+
+        assertFalse(
+            "the platform refused the foreground promotion of a start the " +
+                "CONFIGURE door asked for and the flag stayed set. With the " +
+                "overlay permission granted nothing masks it, so every surface " +
+                "claims a bubble that does not exist and the app's switch needs " +
+                "two taps to recover: issue #14 verbatim. A refused start the " +
+                "caller asked for must clear the flag.",
+            BubbleEnabled.isOn(ctx),
+        )
+        assertTrue(
+            "DIAGNOSE still reports bubbleEnabled: true after the refusal " +
+                "cleared the flag. The read-back is the ONLY authority an agent " +
+                "has on the current state — `applied:` is a receipt for the " +
+                "write and can be stale by the time it is read — so a readout " +
+                "that does not track the clear leaves no way to find out.",
             send(DebugClipConfigReceiver.ACTION_DIAGNOSE)
                 .lines().contains("bubbleEnabled: false"),
         )

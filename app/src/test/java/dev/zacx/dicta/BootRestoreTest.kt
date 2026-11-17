@@ -9,7 +9,6 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
-import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows.shadowOf
@@ -333,22 +332,11 @@ class BootRestoreTest {
         )
     }
 
-    /**
-     * Brings up the real [BubbleService] with its foreground promotion refused,
-     * through the `foregroundPromoter` seam — Robolectric's `startForeground`
-     * cannot be made to refuse. Deliberately does **not** reset
-     * [BubbleEnabled]: the origin recorded by whoever asked for the start is
-     * the input under test.
-     */
-    private fun refuseTheForegroundPromotion() {
-        val c = Robolectric.buildService(BubbleService::class.java)
-        c.get().foregroundPromoter = { false }
-        runCatching { c.create() }
-        runCatching { c.destroy() }
-        OverlayVisibility.clearForTest()
-        BubbleSessionBus.clearForTest()
-        MicrophoneOwner.clearForTest()
-    }
+    // 🔴 `refuseTheForegroundPromotion()` was a private helper here and now
+    // lives in `RefusedForegroundPromotion.kt`, because
+    // `DebugClipConfigReceiverTest` needs the identical fixture for the
+    // CONFIGURE door. Its kdoc there carries the reason it must not reset
+    // BubbleEnabled, and what it cannot establish for either caller.
 
     @Test
     fun anActionTheReceiverKnowsNothingAboutIsIgnored() {

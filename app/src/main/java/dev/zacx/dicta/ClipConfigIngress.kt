@@ -110,6 +110,34 @@ object ClipConfigIngress {
          * @param applied the names of the fields that were written — the
          *   KEYS, never the values. 🔴 `clipToken` appearing here says a token
          *   was stored and says nothing about what it was.
+         *
+         * 🔴 **`applied:` means WRITTEN, not STILL TRUE, and `DIAGNOSE` is the
+         * authority on the second.** For every field but one the two are the
+         * same thing, because nothing but another `CONFIGURE` can change what
+         * was stored. [KEY_BUBBLE_ENABLED] is the exception and the asymmetry
+         * is not a defect to route around:
+         *
+         *  * `bubble_enabled` is applied by asking [BubbleEnabled] to turn the
+         *    bubble on, which writes the flag and then asks the platform for a
+         *    foreground service. `startForegroundService` returns **before**
+         *    the service exists, so this value is returned while the start is
+         *    still in flight.
+         *  * If the platform then refuses to promote that service to the
+         *    foreground, [BubbleEnabled.foregroundPromotionRefused] clears the
+         *    flag — correctly, because a start the caller asked for that
+         *    produced no bubble must not leave every surface claiming one
+         *    (issue #14). So `applied: bubble_enabled` can be true at the
+         *    moment it is reported and false a moment later.
+         *  * The read-back is honest throughout: `DIAGNOSE`'s `bubbleEnabled`
+         *    line reports the flag as it is **now**. An agent that needs to
+         *    know the bubble is on reads `DIAGNOSE` after the fact; `applied:`
+         *    tells it the write was accepted, not that it survived.
+         *
+         * This is a property of the platform's asynchronous start and not of
+         * this door: a synchronous answer about a service that does not exist
+         * yet is not available to be returned. `DebugClipConfigReceiverTest`'s
+         * `aRefusedPromotionAfterCONFIGUREClearsTheFlagItReportedAsApplied`
+         * drives exactly that sequence through the broadcast.
          */
         data class Applied(val applied: List<String>) : Outcome {
             override val message: String get() = "applied: ${applied.joinToString(",")}"
@@ -227,6 +255,14 @@ object ClipConfigIngress {
      * — "nothing at all was written" — is still true. Put last, a declined
      * bubble would have to report `Rejected` after the URL had already been
      * stored, which is the one thing that arm is documented not to do.
+     *
+     * 🔴 **What [Outcome.Applied] does and does not promise.** It names the
+     * fields that were WRITTEN. For `bubble_enabled` that is not the same as
+     * "and it is still on": the flag is written, the foreground service is
+     * asked for, and a platform refusal arriving after this function has
+     * returned clears it again. [Outcome.Applied] carries the argument; the
+     * short version is that `applied:` is a receipt and `DIAGNOSE` is the
+     * authority on the current state.
      *
      * @param bubble the owner of the bubble flag. 🔴 An interface and not a
      *   `Context`: the rules here stay free of Android because **CI runs no

@@ -36,13 +36,29 @@ jobs:
       # measured nothing is worse than no gate — so the count is asserted, not
       # inferred from the task's exit status.
       #
-      # BASELINE: 1022 against a suite of 1176 tests / 109 classes on
+      # BASELINE: 1024 against a suite of 1178 tests / 109 classes on
       # `feat/bubble-enabled-persistence` — the bubble_enabled persistence fix
       # (an app upgrade restores the bubble instead of clearing the user's
       # stored intent) plus the bubble_enabled extra on the debug CONFIGURE
       # door and its DIAGNOSE readout.
       #
-      # 1176 * 500 / 575 = 1022.60 -> 1022, which is 13.10% slack.
+      # 1178 * 500 / 575 = 1024.35 -> 1024, which is 13.07% slack.
+      #
+      # Round 2 added two tests and no class, so it moved the floor by 2:
+      #   +1 DebugClipConfigReceiverTest 6 -> 7  (a refused foreground
+      #      promotion after a CONFIGURE clears the flag the door had just
+      #      reported as `applied:` — the non-monotonic read-back, driven
+      #      through the door rather than through turnOn)
+      #   +1 TileManifestTest 6 -> 7             (the controls for the
+      #      filter guard going structural: the <action> declaration deleted,
+      #      and deleted with the action string left in a <meta-data
+      #      android:value> — the shape the substring form went GREEN for)
+      #   = +2 added, -0 removed. 1176 + 2 = 1178, and 109 + 0 = 109.
+      # ⚠ RefusedForegroundPromotion.kt is a new file in the test source set
+      # carrying ZERO tests (the refusal fixture hoisted out of BootRestoreTest
+      # so DebugClipConfigReceiverTest can use the same one). It moves the FILE
+      # count there to 111 and the test count not at all — the same shape as
+      # SourceText.kt below.
       #
       # 🔴 COMMIT COUNTED ON: the commit this comment is part of, on
       # `feat/bubble-enabled-persistence`, whose parent is bb4356b. Counted on
@@ -151,7 +167,7 @@ jobs:
       # 🔴 THE HEADROOM IS THE CONSTANT, NOT THE FLOOR — re-derive it, do not
       # pick a round number:
       #     floor = floor(current_total * 500 / 575)      # 0.86957, 13.04% slack
-      # 1176 * 500 / 575 = 1022.60 -> 1022, which is 13.10% slack.
+      # 1178 * 500 / 575 = 1024.35 -> 1024, which is 13.07% slack.
       #
       # 🔴 NAME THE TREE YOU COUNTED ON, not just the date. Past entries were
       # raised several-per-day, so a date does not identify a tree while a
@@ -162,14 +178,14 @@ jobs:
       # 🔴 THREE PREVIOUS ENTRIES, AND NO MORE — see the trim note at the top of
       # this block. Add yours, drop the oldest; `git log -p -- <this file>` has
       # the rest.
-      # (Previous entries: 1166 * 500 / 575 = 1013.91 -> 1013, 13.12% slack;
-      #  1160 * 500 / 575 = 1008.69 -> 1008, 13.10% slack;
-      #  1159 * 500 / 575 = 1007.83 -> 1007, 13.11% slack.)
-      # 1103 -> 959 was DROPPED as the oldest when this entry was added, along
-      # with the detailed SnipUsageStore entry (901 -> 783) that the trim rule
-      # had already left behind above the previous-entries list. That is the
-      # eviction rule this block states. The full history is in this file's own
-      # log.
+      # (Previous entries: 1176 * 500 / 575 = 1022.60 -> 1022, 13.10% slack;
+      #  1166 * 500 / 575 = 1013.91 -> 1013, 13.12% slack;
+      #  1160 * 500 / 575 = 1008.69 -> 1008, 13.10% slack.)
+      # 1159 -> 1007 was DROPPED as the oldest when this entry was added, as
+      # 1103 -> 959 was when the previous one was, along with the detailed
+      # SnipUsageStore entry (901 -> 783) that the trim rule had already left
+      # behind above the previous-entries list. That is the eviction rule this
+      # block states. The full history is in this file's own log.
       #
       # 🔴 CORRECTION (2026-10-23). This block used to say the previous entry
       # "was left alone while the suite grew to 623, drifting the slack to 20%".
@@ -196,7 +212,7 @@ jobs:
       # one place.
       - name: Assert tests actually ran
         if: always()
-        run: python3 scripts/assert-tests-ran.py --min 1022
+        run: python3 scripts/assert-tests-ran.py --min 1024
 
       - name: Upload test reports
         if: always()

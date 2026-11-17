@@ -93,7 +93,7 @@ class ClipSeamLedgerTest {
     @Test
     fun onlyTheDeclaredFilesBuildAClipStoreClient() {
         val writers = sourceFiles()
-            .filter { normalise(it.readText()).contains("ClipHttp(") }
+            .filter { needle("ClipHttp(").containsMatchIn(normalise(it.readText())) }
             .map { it.name }
             .sorted()
         assertEquals(
@@ -113,7 +113,7 @@ class ClipSeamLedgerTest {
     @Test
     fun onlyTheDeclaredFilesTouchTheCaptureQueue() {
         val writers = sourceFiles()
-            .filter { normalise(it.readText()).contains("ClipOutboxStore(") }
+            .filter { needle("ClipOutboxStore(").containsMatchIn(normalise(it.readText())) }
             .map { it.name }
             .sorted()
         assertEquals(
@@ -166,7 +166,7 @@ class ClipSeamLedgerTest {
         // silent-failure class. SHRINK: a drain that vanished means captures
         // queue and never leave.
         val drains = sourceFiles()
-            .filter { normalise(it.readText()).contains("ClipFlusher(") }
+            .filter { needle("ClipFlusher(").containsMatchIn(normalise(it.readText())) }
             .map { it.name }
             .sorted()
         assertEquals(
@@ -187,7 +187,7 @@ class ClipSeamLedgerTest {
                     "exactly: the Report is built with the failure in it and " +
                     "dropped on the floor, so a 401 on a mistyped token keeps " +
                     "every capture forever with nothing on screen saying so.",
-                src.contains("ClipOutboxHealth.record("),
+                needle("ClipOutboxHealth.record(").containsMatchIn(src),
             )
         }
 
@@ -240,7 +240,7 @@ class ClipSeamLedgerTest {
         val touching = sourceFiles()
             .filter { file ->
                 val src = normalise(file.readText())
-                READERS.any { src.contains(it) }
+                READERS.any { needle(it).containsMatchIn(src) }
             }
             .map { it.name }
             .sorted()
@@ -266,7 +266,7 @@ class ClipSeamLedgerTest {
                     "the operator rejected: the first DIAGNOSE after a " +
                     "force-stop then says `none` in exactly the situation the " +
                     "readout exists to explain.",
-                src.contains("ClipDiagnostics.install("),
+                needle("ClipDiagnostics.install(").containsMatchIn(src),
             )
         }
 
@@ -319,6 +319,13 @@ class ClipSeamLedgerTest {
      * would be covered the moment it is written rather than the moment someone
      * remembers to add it here. The readers are spelled with their `(` because
      * `lastFetch(` must not also match `lastFetchOutcome(`'s kdoc references.
+     *
+     * 🔴 These are **spellings**, not patterns: [needle] turns each one into a
+     * whitespace-tolerant regex, so a `ktfmt` wrap at the dot cannot drop a
+     * reader off this ledger. Add a spelling here, never a regex — the
+     * tolerance is one rule in one place, and
+     * [theWidenedDiagnosticsScanCanSeeEACHWayOfReadingAnOutcome] controls it in
+     * both directions.
      */
     private val READERS = listOf(
         "ClipDiagnostics.record",
@@ -335,13 +342,38 @@ class ClipSeamLedgerTest {
         // that stopped matching after a rename — contributes nothing and the
         // ledger still reads clean, which is exactly how the narrow version of
         // this guard looked correct for three readers it could not see.
-        for (needle in READERS) {
+        for (spelling in READERS) {
             assertTrue(
-                "the needle `$needle` does not match a call site written with " +
+                "the needle `$spelling` does not match a call site written with " +
                     "it, so it contributes nothing to the ledger above",
-                normalise("fun f() { val x = $needle 1) }").contains(needle),
+                needle(spelling).containsMatchIn(normalise("fun f() { val x = $spelling 1) }")),
+            )
+            // 🔴 And the same call site after a REFORMAT. `ktfmt` wraps a long
+            // call at the dot, and until the needles became regexes that wrap
+            // dropped the file off a ledger asserted to be complete — measured,
+            // on this very call in DebugClipConfigReceiver.kt. The old answer
+            // was a comment in that file telling the next reader not to
+            // reformat it; this is the mechanism that replaced it, so it is
+            // asserted here rather than requested there.
+            val wrapped = spelling.replaceFirst(".", "\n            .")
+            assertTrue(
+                "the needle `$spelling` stops matching once the call is " +
+                    "wrapped at the dot, so a pure reformat can silently " +
+                    "un-cover a reader. Spelled across lines: <$wrapped>",
+                needle(spelling).containsMatchIn(normalise("fun f() { val x = $wrapped 1) }")),
             )
         }
+        // 🔴 NEGATIVE CONTROL on the tolerance itself: `\s*` must not have
+        // widened a needle into "any character". A needle that matched
+        // `ClipDiagnosticsXreadout(` would be wider than its own sentence, and
+        // every ledger above would then be reporting on files it misread.
+        assertFalse(
+            "the whitespace tolerance made the dot in a needle match any " +
+                "character, so the needles no longer name the calls they say " +
+                "they name",
+            needle("ClipDiagnostics.readout(")
+                .containsMatchIn(normalise("fun f() { ClipDiagnosticsXreadout(1) }")),
+        )
         // 🔴 And the READER needles have a real hit in the tree, so widening to
         // them is observable rather than decorative. If no file reads an
         // outcome any more, this control is what should be failing — not the
@@ -349,7 +381,7 @@ class ClipSeamLedgerTest {
         val readerNeedles = READERS.filter { it.contains(".last") }
         val hits = sourceFiles().count { file ->
             val src = normalise(file.readText())
-            readerNeedles.any { src.contains(it) }
+            readerNeedles.any { needle(it).containsMatchIn(src) }
         }
         assertTrue(
             "no file in the shipped source reads an outcome through " +
@@ -369,7 +401,9 @@ class ClipSeamLedgerTest {
         assertTrue("the ClipHttp ledger is empty", clipHttpConstructors.isNotEmpty())
         assertTrue("the outbox ledger is empty", outboxStoreConstructors.isNotEmpty())
         assertTrue("the flusher ledger is empty", clipFlusherConstructors.isNotEmpty())
-        val hits = sourceFiles().count { normalise(it.readText()).contains("ClipHttp(") }
+        val hits = sourceFiles().count {
+            needle("ClipHttp(").containsMatchIn(normalise(it.readText()))
+        }
         assertEquals(
             "the scan found $hits files constructing ClipHttp — if this is 0 " +
                 "the ledger above is vacuous",
@@ -379,7 +413,9 @@ class ClipSeamLedgerTest {
         // The third ledger's own non-zero count. Its consumption loop already
         // has a control, but that one proves the loop RAN — this proves the scan
         // it iterates over saw the tree.
-        val flushes = sourceFiles().count { normalise(it.readText()).contains("ClipFlusher(") }
+        val flushes = sourceFiles().count {
+            needle("ClipFlusher(").containsMatchIn(normalise(it.readText()))
+        }
         assertEquals(
             "the scan found $flushes files constructing ClipFlusher — if this " +
                 "is 0 the drain ledger is vacuous",
@@ -606,4 +642,41 @@ class ClipSeamLedgerTest {
      * why it is load-bearing, now lives in one place with the code.
      */
     private fun normalise(src: String): String = SourceText.normalise(src)
+
+    private companion object {
+
+        /**
+         * A call or construction spelling, as a **whitespace-tolerant** regex.
+         *
+         * 🔴 **This exists because a comment was standing in for a mechanism.**
+         * Every needle in this file used to be a plain substring, so a `ktfmt`
+         * reformat that wrapped a call — `ClipDiagnostics` on one line,
+         * `.readout(` on the next — dropped its file off a ledger that is
+         * asserted to be COMPLETE. Measured, not reasoned: wrapping
+         * `DebugClipConfigReceiver`'s `ClipDiagnostics.readout(` turned
+         * [everySiteThatRecordsOrREADSDiagnosticsINSTALLSTheStore] red with no
+         * change in behaviour whatsoever. The response at the time was a
+         * comment in that file telling the next reader not to reformat it,
+         * which is not a mechanism: it fails in the quiet direction (a reader
+         * silently UN-covered) and it only ever covered the one call somebody
+         * had already been bitten by.
+         *
+         * [SourceText.normalise] collapses runs of whitespace to one space, so
+         * `\s*` is all the tolerance a wrapped call needs — and it is written
+         * `\s*` rather than ` ?` because the normalisation is the floor this
+         * sits on, not a second place to re-state its rules.
+         *
+         * The receiver and the member are escaped, so a `.` in a spelling is a
+         * literal dot and not "any character" — a needle that matched
+         * `ClipDiagnosticsXreadout(` would be wider than its own sentence.
+         */
+        fun needle(spelling: String): Regex {
+            val call = spelling.endsWith("(")
+            val parts = spelling.removeSuffix("(").split(".")
+            return Regex(
+                parts.joinToString("""\s*\.\s*""") { Regex.escape(it) } +
+                    if (call) """\s*\(""" else ""
+            )
+        }
+    }
 }

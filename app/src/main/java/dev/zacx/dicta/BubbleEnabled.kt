@@ -177,9 +177,10 @@ object BubbleEnabled {
      *
      *  * `promoteForeground` refused → [BubbleService.onCreate] hands it to
      *    [foregroundPromotionRefused], which clears the flag before the service
-     *    stops itself — **for a start the user asked for.** 🔴 A refused *boot*
-     *    restore deliberately does not clear it, because clearing it there
-     *    means the bubble never returns, on that boot or any later one. That
+     *    stops itself — **for a start the user asked for.** 🔴 A refused
+     *    *restore* — [BubbleBootReceiver]'s, on **either** of its actions —
+     *    deliberately does not clear it, because clearing it there means the
+     *    bubble never returns, on that boot or install or any later one. That
      *    one case therefore does leave the flag set with no bubble until the
      *    next start, and [isUp] cannot see it. The trade is deliberate and is
      *    argued at [foregroundPromotionRefused]: the alternative is destroying
@@ -242,8 +243,16 @@ object BubbleEnabled {
      *
      * ⚠ The flag was once suspected of being lost by `apply()` across an
      * `adb shell am force-stop`. **Measured on hardware and not observed** — a
-     * settled `true` survives one untouched — so `apply()` stays. Do not
-     * re-derive the concern.
+     * settled `true` survives one untouched — so `apply()` stays.
+     *
+     * 🔴 That measurement's scope, because the note above used to end with a
+     * flat "do not re-derive the concern" and the control does not support one
+     * that wide: it covered a value that had been **settled on disk for
+     * minutes**. It says nothing about the sub-second window between an
+     * `apply()` and the write landing, which nothing here has observed either
+     * way. So: do not re-derive the *settled-value* concern, which was
+     * measured false. A claim about the in-flight window would need its own
+     * measurement, and no instrument in this repo can take one.
      */
     fun set(context: Context, on: Boolean) {
         prefs(context).edit().putBoolean(PREF_KEY, on).apply()
@@ -340,16 +349,26 @@ object BubbleEnabled {
      * on a **change**, so one tap does nothing and the user has to toggle OFF
      * then ON. That is the case this clears.
      *
-     * 🔴 A **boot** start is the opposite case, and clearing there destroys
+     * 🔴 A **restore** start is the opposite case, and clearing there destroys
      * something the user cannot get back by looking at the screen. [isOn] is
      * stored intent and survives a reboot by design; a platform refusal during
-     * a boot restore is not the user changing their mind. Cleared, the bubble
-     * does not come back on this boot *or any later one*, and the only route
-     * back is rediscovering the switch in the app — the complaint issue #14 is
-     * about. [BubbleBootReceiver] argues exactly this policy for its own two
-     * checks, and the refusal handled here is the one that arrives *after* that
+     * a restore is not the user changing their mind. Cleared, the bubble does
+     * not come back on this boot *or any later one*, and the only route back is
+     * rediscovering the switch in the app — the complaint issue #14 is about.
+     * [BubbleBootReceiver] argues exactly this policy for its own two checks,
+     * and the refusal handled here is the one that arrives *after* that
      * receiver has returned, in the service's process, which is why the policy
      * has to be applied a second time at a different site.
+     *
+     * 🔴 **"Restore" is BOTH of that receiver's actions, and this kdoc used to
+     * name only `boot`.** `ACTION_BOOT_COMPLETED` and
+     * `ACTION_MY_PACKAGE_REPLACED` are one rule — the whole point of the change
+     * that fixed the upgrade defect — and the mechanism here never distinguished
+     * them in the first place: it reads [userAskedForTheLatestStart], which
+     * [BubbleBootReceiver] sets to `false` for either action, so a refused
+     * *upgrade* restore has always kept the flag too. Writing only `boot` made
+     * the exception read as narrower than the code, which is how the upgrade
+     * path would quietly acquire a second policy.
      *
      * Reachability today is low and not zero. `targetSdk` is 34 and every
      * foreground-service permission is declared, so the FGS-type restrictions
