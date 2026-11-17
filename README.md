@@ -197,7 +197,30 @@ Android refuses to install a lower `versionCode` over a higher one. After the
 first OTA, every local `adb install` would fail as a downgrade until you
 uninstalled, taking the history with it.
 
-1. Bump both values in `app/build.gradle.kts`. `versionCode` follows
+1. **First, check whether `main` has already moved past the last tag** — the
+   version gate only compares the tag to the tree, so it cannot see this:
+
+   ```sh
+   git log --oneline "$(git describe --tags --abbrev=0)"..main
+   ```
+
+   Non-empty output while `app/build.gradle.kts` still holds the tagged
+   version means merged work is sitting inside an already-published release
+   number. 🔴 **On a handset that is worse than cosmetic — it is
+   unobservable.**
+   Updates install in place, so an APK built from such a tree carries the same
+   `versionCode`/`versionName` as the build it replaces: `adb install -r`
+   succeeds, `dumpsys package dev.zacx.dicta` reads identically before and
+   after, and nothing on the device can tell you which of the two is
+   installed. Measured here — #48, #49, #50 and #51 merged while the tree
+   stayed at `versionCode 600 / versionName "0.6.0"`, byte-identical in
+   version to the tree `v0.6.0` points at, from 2026-11-04 until #52 bumped it
+   to 0.7.0 on 2026-11-17. #51's own subject was what `adb install -r` does to
+   persisted state, which is exactly the verification an unmoved version makes
+   unreadable. If the output is non-empty, those commits are part of the
+   version you are about to cut — pick the number accordingly.
+
+2. Bump both values in `app/build.gradle.kts`. `versionCode` follows
    `major*10000 + minor*100 + patch`, so `0.3.0` → `300`:
 
    ```kotlin
@@ -205,9 +228,9 @@ uninstalled, taking the history with it.
    versionName = "0.3.0"
    ```
 
-2. Commit it, and push to `main`. Pushing the bump publishes nothing — only a
+3. Commit it, and push to `main`. Pushing the bump publishes nothing — only a
    tag does.
-3. Tag it to match, and push the tag:
+4. Tag it to match, and push the tag:
 
    ```sh
    git tag v0.3.0 && git push origin v0.3.0
