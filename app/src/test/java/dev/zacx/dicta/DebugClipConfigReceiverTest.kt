@@ -12,6 +12,7 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
+import org.robolectric.shadows.ShadowSettings
 
 /**
  * The debug wrapper: that it parses extras into the seam, that its answer is
@@ -86,13 +87,25 @@ class DebugClipConfigReceiverTest {
                     TokenStore(prefs, ReversingCipher(), TokenStore.KEY_TOKEN_CIPHERTEXT),
                 ),
                 outbox = ClipOutboxStore(c),
+                // 🔴 The REAL owner, not a fake. The bubble's rules are
+                // asserted against ClipConfigIngress and BubbleEnabled; what
+                // is left for this file is that the wrapper is wired to the
+                // real one at all — which is precisely the seam a pair of
+                // hermetic tests cannot see.
+                bubble = BubbleEnabled.control(c),
             )
         }
+        ShadowSettings.setCanDrawOverlays(true)
+        // 🔴 The bubble flag lives in the `dicta` preferences file, which the
+        // clear above does NOT touch (that one is `dicta_stt`). Without this, a
+        // test asserting the flag would be measuring the previous test's write.
+        BubbleEnabled.turnOff(ctx)
     }
 
     @After
     fun tearDown() {
         SttSettings.prefs(ctx).edit().clear().commit()
+        BubbleEnabled.turnOff(ctx)
         ClipDiagnostics.clearForTest()
         ClipOutboxHealth.clearForTest()
     }
@@ -114,6 +127,13 @@ class DebugClipConfigReceiverTest {
     // messages and the names-fields-never-values rule are all asserted against
     // the ingress itself, where they live. What is tested HERE is only what the
     // wrapper decides: action dispatch, the real surfaces, and the absences.
+    //
+    // 🔴 `configure()` now reads FOUR extras, not three — `bubble_enabled`
+    // joined them, and its rules are likewise asserted against the ingress. The
+    // one claim that belongs here is that the wrapper is wired to the REAL
+    // BubbleEnabled and to the readout that reports it, which is
+    // configureSetsTheBubbleAndDiagnoseReadsTheSameValueBack below. That is a
+    // SEAM, not a re-assertion: no other test builds the combined state.
 
     // --- diagnose -------------------------------------------------------------
 
@@ -172,6 +192,66 @@ class DebugClipConfigReceiverTest {
             "the diagnostics surface changed the capture queue",
             before,
             ClipOutboxStore(ctx).pending().map { it.body },
+        )
+    }
+
+    /**
+     * 🔴 **THE SEAM: CONFIGURE writes the bubble, the owner stores it, and
+     * DIAGNOSE reads back the same answer — in ONE fixture.**
+     *
+     * Every other guard on this feature loads one surface:
+     * `ClipConfigIngressTest` drives the rules against a fake owner,
+     * `ClipDiagnosticsTest` drives the readout against a passed-in boolean, and
+     * `BubbleEnabledWritersSeamTest` drives the owner with no door in sight. All
+     * three can be green while the wrapper hands the readout the wrong source —
+     * a `false` literal, `isUp` instead of `isOn`, or a fake left wired in —
+     * because none of them ever builds the combined state. This does, through
+     * the real `BubbleEnabled`, the real preferences file and the real
+     * `ClipDiagnostics`.
+     *
+     * Both directions, because a mutant hard-coding either answer passes a
+     * one-way assertion.
+     */
+    @Test
+    fun configureSetsTheBubbleAndDiagnoseReadsTheSameValueBack() {
+        assertTrue(
+            "the fixture failed: the bubble must start OFF or the ON assertion " +
+                "below cannot distinguish a write from a leftover",
+            send(DebugClipConfigReceiver.ACTION_DIAGNOSE)
+                .lines().contains("bubbleEnabled: false"),
+        )
+
+        assertEquals(
+            "applied: ${ClipConfigIngress.KEY_BUBBLE_ENABLED}",
+            send(
+                DebugClipConfigReceiver.ACTION_CONFIGURE,
+                ClipConfigIngress.KEY_BUBBLE_ENABLED to "true",
+            ),
+        )
+        assertTrue(
+            "CONFIGURE did not reach BubbleEnabled: the flag the app's own " +
+                "switch reads is still off after the door reported success",
+            BubbleEnabled.isOn(ctx),
+        )
+        assertTrue(
+            "DIAGNOSE does not report the flag CONFIGURE just set, so an agent " +
+                "cannot read back whether its own write landed",
+            send(DebugClipConfigReceiver.ACTION_DIAGNOSE)
+                .lines().contains("bubbleEnabled: true"),
+        )
+
+        assertEquals(
+            "applied: ${ClipConfigIngress.KEY_BUBBLE_ENABLED}",
+            send(
+                DebugClipConfigReceiver.ACTION_CONFIGURE,
+                ClipConfigIngress.KEY_BUBBLE_ENABLED to "false",
+            ),
+        )
+        assertFalse("CONFIGURE could not turn the bubble back off", BubbleEnabled.isOn(ctx))
+        assertTrue(
+            "DIAGNOSE still reports the bubble as on after it was turned off",
+            send(DebugClipConfigReceiver.ACTION_DIAGNOSE)
+                .lines().contains("bubbleEnabled: false"),
         )
     }
 

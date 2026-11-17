@@ -28,18 +28,30 @@ import android.provider.Settings
  *    [foregroundPromotionRefused], which is a *conditional* write: whether it
  *    changes anything depends on who asked for the start, and that decision is
  *    made here rather than at the call site.
- *  * [BubbleBootReceiver] — on `BOOT_COMPLETED`, [isOn] + [startService] plus
- *    its own `canDrawOverlays` check. It deliberately routes *around* [turnOn]
- *    because it must restore the bubble without *writing* the flag: nothing the
- *    user did at boot can have changed their stored intent. That open-coded
- *    check is **not** a duplicate to consolidate away; it is argued at the
- *    receiver's own site. On `MY_PACKAGE_REPLACED` the same receiver *does*
- *    write — [set] to `false` — because an app update has already taken the
- *    bubble away, and that one is argued there too.
+ *  * [BubbleBootReceiver] — on `BOOT_COMPLETED` **and** on
+ *    `MY_PACKAGE_REPLACED`, [isOn] + [startService] plus its own
+ *    `canDrawOverlays` check. It deliberately routes *around* [turnOn] because
+ *    it must restore the bubble without *writing* the flag: nothing the user
+ *    did at a reboot or at an install can have changed their stored intent.
+ *    That open-coded check is **not** a duplicate to consolidate away; it is
+ *    argued at the receiver's own site.
  *
- * All four are pinned by `BubbleEnabledWritersSeamTest`'s mutator ledger, which
- * is why it matches [set], [startService] and [foregroundPromotionRefused] and
- * not only [turnOn] / [turnOff].
+ *    🔴 **CORRECTION.** That receiver used to [set] the flag to `false` on
+ *    `MY_PACKAGE_REPLACED`, and this list used to say so approvingly ("an app
+ *    update has already taken the bubble away"). **That write was the defect
+ *    the operator measured**: `adb install -r` of a new build silently turned
+ *    the bubble off, so stored intent did not survive an upgrade and the
+ *    bubble had to be re-toggled by hand after every install. The flag means
+ *    *"the user wants the bubble"*, never *"the service is currently alive"* —
+ *    the old branch made those two the same thing on the one event where they
+ *    differ most.
+ *  * [ClipConfigIngress], through [control] — the debug-only `CONFIGURE`
+ *    broadcast. It holds no policy of its own: it turns a parsed boolean into
+ *    [turnOn] / [turnOff] on this object.
+ *
+ * All five are pinned by `BubbleEnabledWritersSeamTest`'s mutator ledger, which
+ * is why it matches [set], [startService], [foregroundPromotionRefused] and
+ * [control] and not only [turnOn] / [turnOff].
  *
  * ## 🔴 What "the surfaces cannot disagree" does and does NOT mean
  *
@@ -173,9 +185,13 @@ object BubbleEnabled {
      *    argued at [foregroundPromotionRefused]: the alternative is destroying
      *    stored intent the user can only restore by rediscovering the switch.
      *  * an **app update** stops the service, and Android does not restart one
-     *    across a package replacement → [BubbleBootReceiver] clears the flag on
-     *    `ACTION_MY_PACKAGE_REPLACED`. It deliberately does not restart the
-     *    bubble; it only stops the flag claiming one.
+     *    across a package replacement → [BubbleBootReceiver] restarts it on
+     *    `ACTION_MY_PACKAGE_REPLACED`, on exactly the terms it uses at boot.
+     *    🔴 It used to *clear the flag* there instead, which is the defect
+     *    measured on hardware: an `adb install -r` turned the user's bubble
+     *    off. Closing the gap by restoring the bubble keeps [isUp] honest
+     *    without destroying intent; closing it by deleting the intent does
+     *    not — it only makes the lie quiet.
      *
      * Not a mutator, so `BubbleEnabledWritersSeamTest`'s ledger excludes it for
      * the same reason it excludes [isOn]: a reader cannot put the flag out of
@@ -223,9 +239,42 @@ object BubbleEnabled {
      * [turnOn] / [turnOff]; this exists for the path where the service is
      * already stopping *itself* — [BubbleService]'s `ACTION_STOP` handler,
      * which must not call `stopService` on itself.
+     *
+     * ## `commit()` rather than `apply()` — a cheap durability choice, and NOT
+     * a fix for anything observed
+     *
+     * 🔴 **RETRACTED CLAIM, kept here because the retraction is the useful
+     * part.** This kdoc previously said `commit()` was here "for the force-stop
+     * case": the flag was reported flipping to `false` after
+     * `adb shell am force-stop`, no writer exists on that path, and an
+     * `apply()` whose disk write the process did not outlive was offered as the
+     * mechanism. **Measured on hardware and FALSE.** With the bubble on and the
+     * value settled on disk for several minutes, a force-stop — no upgrade, no
+     * broadcast — left `bubble_enabled value="true"` exactly as it was. The
+     * real cause of every `false` in that report was the
+     * `MY_PACKAGE_REPLACED` write this change deletes, plus one stray *Hide
+     * bubble* tap, i.e. two mechanisms behind one observable.
+     *
+     * ⚠ What the control rules out, stated at the scope it was taken at: a
+     * **settled** value does not survive-or-fail differently across a
+     * force-stop. It says nothing about the sub-second window between an
+     * `apply()` and its disk write, which nothing has ever observed here
+     * either. So the residual hazard this guards is **speculative and small**.
+     *
+     * It stays because the trade is lopsided rather than because a defect was
+     * found: the cost is one synchronous write of a single boolean into a
+     * few-hundred-byte preferences file, on a user tap, and the failure it
+     * forecloses is this flag silently reading `false` — which is the exact
+     * class of silent intent loss the rest of this object exists to prevent.
+     * `ClipDiagnostics.PrefsStore.write` makes the same choice for a comparable
+     * reason. 🔴 **Nothing tests it**, and that is deliberate: Robolectric
+     * lands the XML synchronously under either spelling (measured — a
+     * behavioural guard was written and survived the mutation), so no test that
+     * runs in CI can tell the two apart. A guard here could only pin the
+     * spelling, and the first attempt at one pinned the retracted claim above.
      */
     fun set(context: Context, on: Boolean) {
-        prefs(context).edit().putBoolean(PREF_KEY, on).apply()
+        prefs(context).edit().putBoolean(PREF_KEY, on).commit()
     }
 
     /**
@@ -344,6 +393,59 @@ object BubbleEnabled {
      */
     internal fun foregroundPromotionRefused(context: Context) {
         if (userAskedForTheLatestStart) set(context, false)
+    }
+
+    /**
+     * The bubble as the two things a **`Context`-free rule** needs of it: read
+     * stored intent, and ask for it to change.
+     *
+     * 🔴 It exists so [ClipConfigIngress] can decide the `bubble_enabled`
+     * branch of the debug `CONFIGURE` door while staying free of Android, which
+     * is that file's own stated constraint: **CI runs no emulator**, so a rule
+     * that needs a `Context` is a rule the gate cannot see. A test hands in its
+     * own implementation; [control] is the only production one.
+     *
+     * 🔴 It is deliberately NOT a second policy surface. [turn] carries no
+     * decision of its own — the permission check, the write and the service
+     * start all stay inside this object, which is the whole reason this object
+     * exists. Adding a method here that *decides* something would put a second
+     * copy of the policy outside the owner.
+     */
+    interface Control {
+
+        /** [isOn] — stored intent, for a readout that reports it. */
+        fun isOn(): Boolean
+
+        /**
+         * [turnOn] when [on], [turnOff] otherwise.
+         *
+         * @return `false` only when turning the bubble **on** was declined for
+         *   want of the overlay permission, in which case — exactly as in
+         *   [turnOn] — **nothing was written**. Turning it off cannot be
+         *   declined, so `true` is the only answer for `on = false`.
+         */
+        fun turn(on: Boolean): Boolean
+    }
+
+    /**
+     * The production [Control], bound to [context].
+     *
+     * 🔴 `control` is one of the names `BubbleEnabledWritersSeamTest`'s mutator
+     * pattern matches, because handing out the ability to change the flag is
+     * itself a change to who can change it: a file that calls this is a writer,
+     * and a ledger that could not see it would be narrower than its own
+     * description.
+     */
+    fun control(context: Context): Control = object : Control {
+        override fun isOn(): Boolean = isOn(context)
+
+        override fun turn(on: Boolean): Boolean {
+            if (!on) {
+                turnOff(context)
+                return true
+            }
+            return turnOn(context) == Start.STARTED
+        }
     }
 
     private fun prefs(context: Context) =

@@ -6,35 +6,42 @@ import android.content.Intent
 import android.provider.Settings
 
 /**
- * Brings the floating bubble back after a reboot — and, on an app update,
- * stops the flag claiming a bubble that is gone.
+ * Brings the floating bubble back after a reboot **or an app upgrade**.
  *
  * A user-toggled overlay that silently disappears on every restart is a
  * half-working feature: before this, the only way back was to open the app and
  * toggle the switch — the same complaint as issue #14's notification path, in a
  * different shape.
  *
- * ## 🔴 Two actions, deliberately asymmetric
+ * ## 🔴 Two actions, ONE rule — and that is a correction
  *
- * `BOOT_COMPLETED` **restores** the bubble and never writes the flag.
- * `MY_PACKAGE_REPLACED` **clears** the flag and starts nothing. The asymmetry
- * is a decision, not an unfinished half:
+ * `BOOT_COMPLETED` and `MY_PACKAGE_REPLACED` are now handled identically:
+ * restore the bubble if the user wants it and the overlay permission allows it,
+ * and **never write the flag**. Both events are "something other than the user
+ * took the bubble away", which is the only question this receiver answers.
  *
- *  * An app update stops the service and Android does not restart one across a
- *    package replacement, so without this branch the flag outlives the bubble.
- *    Nothing is running, yet `MainActivity`'s switch renders ON — and a `Switch`
- *    fires its listener only on a **change**, so the first tap does nothing and
- *    the user has to toggle OFF then ON. Issue #14 verbatim, no reboot
- *    involved.
- *  * Re-raising an overlay as a side effect of installing a new version is not
- *    behaviour to ship, so the bubble is **not** restored. The only claim being
- *    fixed is that the surfaces stop lying, so that ONE tap brings it back.
+ * 🔴 **This file used to treat them asymmetrically, and that asymmetry was the
+ * defect.** `MY_PACKAGE_REPLACED` had its own branch which called
+ * `BubbleEnabled.set(context, false)` and started nothing. Measured on real
+ * hardware: after every `adb install -r`, `bubble_enabled` in
+ * `shared_prefs/dicta.xml` read `false` and the bubble did not come back until
+ * the switch was found and re-toggled. The branch's own rationale said the flag
+ * must stop "claiming a bubble that is gone" — a real gap — and then closed it
+ * by **deleting the claim instead of restoring the bubble**, which destroys the
+ * one piece of state that is nobody's to destroy but the user's.
  *
- * `BootRestoreTest.aPackageReplacementClearsTheStaleFlagAndStartsNothing`
- * asserts both halves together, because a fix that *did* start the service
- * would also make the flag honest and would pass a flag-only assertion.
+ * The objection on the record was that "re-raising an overlay as a side effect
+ * of installing a new version is not behaviour to ship". It does not hold: the
+ * overlay was **already up** when the install began, so this restores what the
+ * install removed. That is the boot path's own argument, on an event which
+ * differs from a reboot only in what stopped the service.
  *
- * ## 🔴 Whether a boot start is even allowed
+ * `BootRestoreTest.anAppUpgradeKeepsStoredIntentAndBringsTheBubbleBack` is the
+ * regression test, and it asserts both halves — the flag survives *and* the
+ * service is asked for — because a mutant that only stopped clearing the flag
+ * would leave the upgrade with no bubble and still pass a flag-only assertion.
+ *
+ * ## 🔴 Whether the start is even allowed
  *
  * [BubbleService] declares `microphone|specialUse`, and the documented platform
  * rules are type-specific, not service-specific:
@@ -42,7 +49,20 @@ import android.provider.Settings
  *  * Android 12+ refuses background foreground-service starts, **but
  *    `ACTION_BOOT_COMPLETED` is on the documented exemption list** — as is
  *    holding `SYSTEM_ALERT_WINDOW`, which this app does and which is the very
- *    permission checked below. This path is therefore exempt twice over.
+ *    permission checked below. The boot path is therefore exempt twice over.
+ *
+ *    🔴 **The upgrade path is exempt ONCE, and the difference is worth
+ *    stating rather than averaging away.** `MY_PACKAGE_REPLACED` is not on
+ *    that exemption list; the `SYSTEM_ALERT_WINDOW` exemption is the whole of
+ *    why this start is legal, and it is why the `canDrawOverlays` check below
+ *    is load-bearing on this path for a second, independent reason (the first
+ *    being that an overlay service with no overlay permission stops itself).
+ *    Like everything else in this section it is read off the documented
+ *    contracts: **no device has been attached to this project**, Robolectric's
+ *    `startForegroundService` records the call and never refuses, and if a
+ *    platform does refuse it, `BubbleEnabled.foregroundPromotionRefused`
+ *    deliberately keeps the flag — so the failure mode is "no bubble until the
+ *    next start", never "the user's intent is gone".
  *  * A `microphone`-typed start from a `BOOT_COMPLETED` receiver is refused
  *    from Android 14 on. This does not apply to the start made here: the
  *    service promotes to `microphone` only while *recording* and uses
@@ -91,20 +111,19 @@ import android.provider.Settings
  *
  * ## Why this routes around [BubbleEnabled.turnOn]
  *
- * The **boot** path calls [BubbleEnabled.isOn] and [BubbleEnabled.startService]
- * and open-codes the `canDrawOverlays` check rather than calling
+ * This receiver calls [BubbleEnabled.isOn] and [BubbleEnabled.startService] and
+ * open-codes the `canDrawOverlays` check rather than calling
  * [BubbleEnabled.turnOn]. That is deliberate and is **not** a duplicated
- * predicate to consolidate: `turnOn` *writes* the flag, and a reboot must not
- * be able to touch the user's stored intent in either direction. A revoked
- * overlay permission in particular is not the user changing their mind, so the
- * flag survives it and the bubble returns once the permission is re-granted.
+ * predicate to consolidate: `turnOn` *writes* the flag, and neither a reboot
+ * nor an install may touch the user's stored intent in either direction. A
+ * revoked overlay permission in particular is not the user changing their mind,
+ * so the flag survives it and the bubble returns once the permission is
+ * re-granted.
  *
- * 🔴 That argument is about the **boot** path only, and this kdoc used to state
- * it as though it covered the whole receiver ("must not write the flag at
- * all"). The update path above writes it on purpose: there, the user's stored
- * intent has already been overtaken by reality — the service is gone and will
- * not come back on its own — so leaving the flag alone is what makes the app
- * lie. Note it reads [BubbleEnabled.isOn] and never `isUp`: this file acts on
+ * 🔴 This kdoc previously said that argument covered "the boot path only",
+ * because the upgrade branch wrote the flag on purpose. That branch is gone and
+ * the argument is whole again — it is the receiver's rule, not one of two.
+ * Note it reads [BubbleEnabled.isOn] and never `isUp`: this file acts on
  * stored intent and displays nothing, which is why
  * `BubbleEnabledWritersSeamTest.everyDisplayedBubbleStateComesFromOnePredicate`
  * lists it as the one legitimate `isOn` reader.
@@ -112,36 +131,44 @@ import android.provider.Settings
 class BubbleBootReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent?) {
-        // 🔴 An app update stops the service and Android does NOT restart one
-        // across a package replacement, so without this the flag outlives the
-        // bubble: nothing is running, MainActivity's switch renders ON, and
-        // because a Switch fires its listener only on a CHANGE the first tap
-        // does nothing — the user has to toggle OFF then ON. That is issue #14
-        // verbatim, reached by a route no reboot is involved in.
+        // Explicitly, rather than trusting the manifest filter: a receiver is
+        // also reachable by an explicit intent, and these are the only two
+        // actions that mean the bubble was taken away by something other than
+        // the user.
         //
-        // 🔴 It clears the flag and starts NOTHING, and that is a decision, not
-        // an unfinished restore: an update is not a reboot, and silently
-        // re-raising an overlay as a side effect of installing a new version is
-        // not behaviour to ship. The point is only that every surface stops
-        // claiming a bubble that is gone, so ONE tap brings it back.
-        // BootRestoreTest keeps ACTION_MY_PACKAGE_REPLACED as a negative
-        // control for the start, which still holds.
-        if (intent?.action == Intent.ACTION_MY_PACKAGE_REPLACED) {
-            BubbleEnabled.set(context, false)
+        // 🔴 MY_PACKAGE_REPLACED used to have its OWN branch here, which called
+        // BubbleEnabled.set(context, false) and started nothing. That write is
+        // the measured defect: `adb install -r` of a new build silently turned
+        // the operator's bubble off, every time, and the only way back was to
+        // reopen Settings and re-toggle the switch. The argument it rested on —
+        // "the flag would otherwise outlive the bubble and MainActivity's
+        // switch would lie" — identified a real gap and then closed it from the
+        // wrong end: deleting the user's stored intent makes the surfaces agree
+        // by throwing away the thing they are supposed to be reporting.
+        // Restarting the bubble makes them agree AND keeps it.
+        //
+        // 🔴 The counter-argument on the record was "re-raising an overlay as a
+        // side effect of installing a new version is not behaviour to ship".
+        // It does not survive the measurement: the overlay was already up when
+        // the install began, so this restores what the install removed rather
+        // than raising something the user did not ask for — which is exactly
+        // the boot path's own justification, on an event that differs from a
+        // reboot only in what interrupted the service.
+        val action = intent?.action
+        if (action != Intent.ACTION_BOOT_COMPLETED &&
+            action != Intent.ACTION_MY_PACKAGE_REPLACED
+        ) {
             return
         }
-        // Explicitly, rather than trusting the manifest filter: a receiver is
-        // also reachable by an explicit intent, and only this action means the
-        // device has just booted.
-        if (intent?.action != Intent.ACTION_BOOT_COMPLETED) return
         if (!BubbleEnabled.isOn(context)) return
         // The permission survives reboots but not a user who revoked it, and an
         // overlay service with no overlay permission stops itself immediately.
         if (!Settings.canDrawOverlays(context)) return
         // 🔴 userAsked = false is load-bearing, not boilerplate: it is what
         // stops a refused promotion in the service's process clearing the flag
-        // and taking the bubble away for good. Nothing the user did at boot
-        // can have changed their stored intent, including a platform refusal.
+        // and taking the bubble away for good. Nothing the user did at a boot
+        // or at an install can have changed their stored intent, including a
+        // platform refusal.
         BubbleEnabled.startService(context, userAsked = false)
     }
 }

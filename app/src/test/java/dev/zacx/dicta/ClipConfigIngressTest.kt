@@ -78,21 +78,52 @@ class ClipConfigIngressTest {
         ctx.getSharedPreferences(name, Context.MODE_PRIVATE)
             .also { it.edit().clear().commit() }
 
+    /**
+     * [BubbleEnabled.Control] without Android under it.
+     *
+     * 🔴 The point of the interface: the real owner calls
+     * `Settings.canDrawOverlays` and `startForegroundService`, so a test
+     * driving it would be asserting Robolectric's shadows. This records what
+     * the door **asked for**, which is the only thing the door decides.
+     *
+     * @param overlayGranted `false` makes `turn(true)` refuse exactly as the
+     *   owner does with the permission missing — writing nothing.
+     */
+    private class FakeBubble(
+        private var on: Boolean = false,
+        private val overlayGranted: Boolean = true,
+    ) : BubbleEnabled.Control {
+        /** Every [turn] argument, in order. Empty means the door never asked. */
+        val asked = mutableListOf<Boolean>()
+
+        override fun isOn(): Boolean = on
+
+        override fun turn(on: Boolean): Boolean {
+            asked += on
+            if (on && !overlayGranted) return false
+            this.on = on
+            return true
+        }
+    }
+
     private class Fixture(
         val prefs: SharedPreferences,
         val clip: ClipSettings,
         val stt: SttSettings,
+        val bubble: FakeBubble,
     )
 
     private fun fixture(
         name: String = "ingress_${counter++}",
         cipher: SecretCipher = ReversingCipher(),
+        bubble: FakeBubble = FakeBubble(),
     ): Fixture {
         val p = prefs(name)
         return Fixture(
             p,
             ClipSettings(p, TokenStore(p, cipher, ClipSettings.KEY_TOKEN_CIPHERTEXT)),
             SttSettings(p, TokenStore(p, cipher, TokenStore.KEY_TOKEN_CIPHERTEXT)),
+            bubble,
         )
     }
 
@@ -101,6 +132,7 @@ class ClipConfigIngressTest {
             ClipConfigIngress.parse { key -> args.toMap()[key] },
             f.clip,
             f.stt,
+            f.bubble,
         )
 
     // --- validation, through the shared predicate ----------------------------
@@ -402,6 +434,7 @@ class ClipConfigIngressTest {
                 ClipConfigIngress.KEY_CLIP_BASE_URL,
                 ClipConfigIngress.KEY_CLIP_TOKEN,
                 ClipConfigIngress.KEY_STT_TOKEN,
+                ClipConfigIngress.KEY_BUBBLE_ENABLED,
             ),
             requested,
         )
@@ -409,8 +442,8 @@ class ClipConfigIngressTest {
         // 🔴 POSITIVE CONTROL for the recorder itself: a lambda that was never
         // invoked would leave the list empty, and an empty list compared
         // against an empty expectation is the vacuous pass this shape invites.
-        // Three keys, named above, and the ledger is not empty.
-        assertEquals("parse asked for no keys at all", 3, requested.size)
+        // Four keys, named above, and the ledger is not empty.
+        assertEquals("parse asked for no keys at all", 4, requested.size)
 
         // And the behavioural half, which the structural check cannot make: an
         // stt_base_url extra really is inert, not merely unlisted.
@@ -421,6 +454,176 @@ class ClipConfigIngressTest {
             apply(f, SttSettings.KEY_BASE_URL to "http://10.42.0.10:9999"),
         )
         assertEquals(before, f.stt.baseUrl)
+    }
+
+    // --- bubble_enabled ------------------------------------------------------
+
+    /**
+     * The whole of the happy path, as a WHOLE result string.
+     *
+     * 🔴 The `applied:` line is what an agent branches on, so it is pinned
+     * entirely rather than matched on the word `bubble_enabled` — a guard on a
+     * word is walkable by rewording, and this one also has to pin the ORDER,
+     * which is argued in [ClipConfigIngress.apply] (the bubble is the other
+     * write that can be declined, so it goes first while `Rejected`'s
+     * "nothing was written" promise is still true).
+     */
+    @Test
+    fun theBubbleExtraTurnsTheBubbleOnAndSaysSoInTheAppliedList() {
+        val f = fixture()
+
+        val outcome = apply(
+            f,
+            ClipConfigIngress.KEY_BUBBLE_ENABLED to "true",
+            ClipConfigIngress.KEY_CLIP_BASE_URL to "http://example.invalid:8139",
+        )
+
+        assertEquals(
+            "the applied list did not name bubble_enabled, or named it in a " +
+                "different position: an agent reads this line to find out " +
+                "whether its write landed",
+            "applied: bubble_enabled,clip_base_url",
+            outcome.message,
+        )
+        assertEquals(
+            "the door did not ask the owner to turn the bubble ON exactly once",
+            listOf(true),
+            f.bubble.asked,
+        )
+        assertTrue("the bubble was not left on", f.bubble.isOn())
+    }
+
+    /**
+     * 🔴 Every accepted spelling, **both ways round**, as a table.
+     *
+     * A single `"true"` case cannot see the mutant that matters most: Kotlin's
+     * `String.toBoolean()` maps every unrecognised string to `false`, so a door
+     * written with it would turn the bubble OFF for `ture` and report success.
+     * The table therefore pins the mapping, and the garbage half pins that an
+     * unreadable value is REFUSED rather than guessed at — with the owner never
+     * asked, which is the half a message-only assertion would miss.
+     */
+    @Test
+    fun everySpellingOfTheBubbleExtraIsReadTheRightWayRoundAndGarbageIsRefused() {
+        for (raw in ClipConfigIngress.BUBBLE_TRUE + setOf("TRUE", " true ", "On", "YES")) {
+            val f = fixture()
+            apply(f, ClipConfigIngress.KEY_BUBBLE_ENABLED to raw)
+            assertEquals("<$raw> was not read as ON", listOf(true), f.bubble.asked)
+        }
+        for (raw in ClipConfigIngress.BUBBLE_FALSE + setOf("FALSE", " off ", "No")) {
+            val f = fixture(bubble = FakeBubble(on = true))
+            apply(f, ClipConfigIngress.KEY_BUBBLE_ENABLED to raw)
+            assertEquals("<$raw> was not read as OFF", listOf(false), f.bubble.asked)
+        }
+        for (raw in listOf("ture", "", " ", "maybe", "2", "TRUE!", "enabled")) {
+            val f = fixture()
+            val outcome = apply(f, ClipConfigIngress.KEY_BUBBLE_ENABLED to raw)
+            assertEquals(
+                "<$raw> was not refused with the door's own reason. A value " +
+                    "this door cannot read must be refused, never guessed: " +
+                    "String.toBoolean() would silently turn the bubble OFF for " +
+                    "every one of these and report success.",
+                ClipConfigIngress.Outcome.Rejected(ClipConfigIngress.bubbleRejection(raw)),
+                outcome,
+            )
+            assertEquals(
+                "the door asked the owner to change the bubble on a value it " +
+                    "had already refused",
+                emptyList<Boolean>(),
+                f.bubble.asked,
+            )
+        }
+    }
+
+    /**
+     * 🔴 A refused bubble value leaves **everything** as it was, which is
+     * [ClipConfigIngress.Outcome.Rejected]'s documented promise.
+     *
+     * The URL and the token are requested in the same broadcast, so a door that
+     * validated the bubble at its write site instead of up front would have
+     * stored both before refusing — and would report "nothing was saved" having
+     * saved two things.
+     */
+    @Test
+    fun anUnreadableBubbleValueIsRefusedBeforeAnythingElseIsWritten() {
+        val f = fixture()
+        val before = f.clip.baseUrl
+
+        val outcome = apply(
+            f,
+            ClipConfigIngress.KEY_BUBBLE_ENABLED to "ture",
+            ClipConfigIngress.KEY_CLIP_BASE_URL to "http://example.invalid:8139",
+            ClipConfigIngress.KEY_CLIP_TOKEN to "a-token",
+        )
+
+        assertEquals(
+            ClipConfigIngress.Outcome.Rejected(ClipConfigIngress.bubbleRejection("ture")),
+            outcome,
+        )
+        assertEquals(
+            "a rejected request wrote the clip base URL anyway, so the " +
+                "\"nothing was saved\" promise is false",
+            before,
+            f.clip.baseUrl,
+        )
+        assertFalse(
+            "a rejected request stored the token anyway",
+            f.clip.tokens.hasCiphertext,
+        )
+    }
+
+    /**
+     * 🔴 Turning the bubble on without the overlay permission is refused, and
+     * the refusal is honest: nothing at all was written.
+     *
+     * This is the one failure the request cannot be validated against, because
+     * the permission is not in it — which is why the bubble is applied first.
+     * A URL in the same broadcast is the instrument: if the bubble write had
+     * been last, this would report `Rejected` with the URL already stored.
+     */
+    @Test
+    fun turningTheBubbleOnWithNoOverlayPermissionRefusesAndWritesNothing() {
+        val f = fixture(bubble = FakeBubble(overlayGranted = false))
+        val before = f.clip.baseUrl
+
+        val outcome = apply(
+            f,
+            ClipConfigIngress.KEY_BUBBLE_ENABLED to "true",
+            ClipConfigIngress.KEY_CLIP_BASE_URL to "http://example.invalid:8139",
+        )
+
+        assertEquals(
+            "rejected: ${ClipConfigIngress.BUBBLE_NO_OVERLAY}",
+            outcome.message,
+        )
+        assertEquals(
+            "the refusal reported that nothing was written, but the clip base " +
+                "URL in the same broadcast had already been stored",
+            before,
+            f.clip.baseUrl,
+        )
+        assertFalse("the bubble was recorded as on after a refusal", f.bubble.isOn())
+    }
+
+    /**
+     * An absent `bubble_enabled` extra means **leave it alone** — the same rule
+     * every other field on this door follows, and the reason the field is
+     * nullable rather than defaulted.
+     */
+    @Test
+    fun aRequestWithoutTheBubbleExtraNeverAsksTheOwnerAnything() {
+        val f = fixture(bubble = FakeBubble(on = true))
+
+        val outcome = apply(f, ClipConfigIngress.KEY_CLIP_TOKEN to "a-token")
+
+        assertEquals("applied: clip_token", outcome.message)
+        assertEquals(
+            "a request that said nothing about the bubble still reached the " +
+                "owner, so configuring the clipboard would move the bubble",
+            emptyList<Boolean>(),
+            f.bubble.asked,
+        )
+        assertTrue("the bubble was changed by a request that did not ask", f.bubble.isOn())
     }
 
     /** `TokenStoreTest`'s locator: search rather than hardcode, and refuse to guess. */

@@ -1,8 +1,14 @@
 package dev.zacx.dicta
 
 /**
- * Setting the shared clipboard's configuration **programmatically**: parse,
- * validate, apply.
+ * Setting the app's configuration **programmatically**: parse, validate, apply.
+ *
+ * 🔴 It began as the shared clipboard's door and the name still says so. It now
+ * also carries [KEY_BUBBLE_ENABLED] — the floating bubble — because the cost
+ * this file exists to remove is *driving pixels to set a value*, and that cost
+ * is identical for a toggle on the same settings screen. The alternative was a
+ * second door with its own parse shape and its own result strings, i.e. the
+ * open-coded-predicate failure this repository keeps paying for.
  *
  * ## 🔴 Why this exists, measured rather than supposed
  *
@@ -59,10 +65,23 @@ object ClipConfigIngress {
         val clipBaseUrl: String? = null,
         val clipToken: String? = null,
         val sttToken: String? = null,
+        /**
+         * The floating bubble, **as the caller spelled it** — see
+         * [parseBubbleEnabled].
+         *
+         * 🔴 Kept raw rather than parsed at [parse] time, which is exactly what
+         * [clipBaseUrl] does and for the same reason: [parse] has no way to
+         * report a refusal, so a value it could not understand would have to be
+         * either silently dropped or collapsed into `null` — "leave it alone" —
+         * and an ignored instruction is the failure this whole door exists to
+         * avoid. [apply] turns it into an [Outcome.Rejected] instead.
+         */
+        val bubbleEnabled: String? = null,
     ) {
         /** Whether this asks for anything at all. */
         val isEmpty: Boolean
-            get() = clipBaseUrl == null && clipToken == null && sttToken == null
+            get() = clipBaseUrl == null && clipToken == null && sttToken == null &&
+                bubbleEnabled == null
     }
 
     /** What the ingress did. Never carries a token. */
@@ -131,6 +150,59 @@ object ClipConfigIngress {
     const val KEY_STT_TOKEN: String = "stt_token"
 
     /**
+     * 🔴 Deliberately the SAME string as `BubbleEnabled`'s preference key, so
+     * the operator spells one name for one thing — the extra, the `DIAGNOSE`
+     * line and the preference all read `bubble_enabled`.
+     *
+     * 🔴 That makes this file the second place in `app/src/main` that spells
+     * the literal, which `BubbleEnabledWritersSeamTest.onlyTheOwnerTouchesTheRawPreferenceKey`
+     * notices on purpose — this file is **declared** there, with the reason
+     * that it names the key and cannot reach the store: `BubbleEnabled`'s
+     * `PREF_FILE` / `PREF_KEY` are `private`, nothing here opens
+     * `SharedPreferences` (pinned by that class's
+     * `theIngressNamesTheKeyWithoutBeingAbleToReachThePreferences`), and every
+     * write goes through [BubbleEnabled.Control].
+     */
+    const val KEY_BUBBLE_ENABLED: String = "bubble_enabled"
+
+    /**
+     * The spellings of [KEY_BUBBLE_ENABLED] that mean `true`, lower-cased.
+     *
+     * 🔴 An enumerated set and not `String.toBoolean()`, which maps **every**
+     * unrecognised string to `false` — so `--es bubble_enabled ture` would turn
+     * the bubble OFF and report success. An ingress that silently does the
+     * opposite of what it was told is worse than one that refuses.
+     */
+    val BUBBLE_TRUE: Set<String> = setOf("true", "1", "on", "yes")
+
+    /** [BUBBLE_TRUE]'s mirror. */
+    val BUBBLE_FALSE: Set<String> = setOf("false", "0", "off", "no")
+
+    /**
+     * [raw] as a boolean, or `null` when it is not one of the accepted
+     * spellings.
+     *
+     * Trimmed and case-insensitive because `am broadcast --es` hands over
+     * whatever the shell quoted. **Blank is not accepted** — for a token a
+     * blank means "clear it", which is a meaningful instruction; for a boolean
+     * there is no third state to clear to, so it can only be a quoting mistake.
+     */
+    fun parseBubbleEnabled(raw: String): Boolean? = when (raw.trim().lowercase()) {
+        in BUBBLE_TRUE -> true
+        in BUBBLE_FALSE -> false
+        else -> null
+    }
+
+    /** What [apply] says when [parseBubbleEnabled] could not read the value. */
+    fun bubbleRejection(raw: String): String =
+        "$KEY_BUBBLE_ENABLED must be one of " +
+            "${(BUBBLE_TRUE + BUBBLE_FALSE).joinToString(",")}; got <$raw>"
+
+    /** What [apply] says when the bubble cannot be turned on at all. */
+    const val BUBBLE_NO_OVERLAY: String =
+        "$KEY_BUBBLE_ENABLED needs the \"display over other apps\" permission"
+
+    /**
      * Builds a [Request] from string arguments, e.g. an intent's extras.
      *
      * 🔴 A **blank** value is not a null one. `null` means "leave it alone";
@@ -164,6 +236,7 @@ object ClipConfigIngress {
         clipBaseUrl = args(KEY_CLIP_BASE_URL),
         clipToken = args(KEY_CLIP_TOKEN),
         sttToken = args(KEY_STT_TOKEN),
+        bubbleEnabled = args(KEY_BUBBLE_ENABLED),
     )
 
     /**
@@ -173,17 +246,41 @@ object ClipConfigIngress {
      * reasons: validate first so a refusal can honestly claim nothing was
      * saved, then the URL, then the tokens — and a cipher failure on one token
      * must not roll back the other, since the two reach different services.
+     *
+     * 🔴 The bubble is applied **before** the URL and the tokens, and that
+     * position is argued rather than incidental. It is the one other write that
+     * can be *declined* at write time (the overlay permission is not knowable
+     * from the request), so it has to happen while [Outcome.Rejected]'s promise
+     * — "nothing at all was written" — is still true. Put last, a declined
+     * bubble would have to report `Rejected` after the URL had already been
+     * stored, which is the one thing that arm is documented not to do.
+     *
+     * @param bubble the owner of the bubble flag. 🔴 An interface and not a
+     *   `Context`: the rules here stay free of Android because **CI runs no
+     *   emulator**, which is this file's own founding constraint.
      */
     fun apply(
         request: Request,
         clip: ClipSettings,
         stt: SttSettings,
+        bubble: BubbleEnabled.Control,
     ): Outcome {
         if (request.isEmpty) return Outcome.NothingRequested
         request.clipBaseUrl?.let { url ->
             ClipEndpoints.rejectionFor(url)?.let { return Outcome.Rejected(it) }
         }
+        // 🔴 Parsed up here with the URL's validation and NOT at the write
+        // below, so an unreadable value is refused before anything is stored.
+        val wantsBubble = request.bubbleEnabled?.let { raw ->
+            parseBubbleEnabled(raw) ?: return Outcome.Rejected(bubbleRejection(raw))
+        }
         val applied = mutableListOf<String>()
+        if (wantsBubble != null) {
+            // 🔴 Still nothing written at this point, so this refusal keeps
+            // Outcome.Rejected's "nothing at all was written" promise.
+            if (!bubble.turn(wantsBubble)) return Outcome.Rejected(BUBBLE_NO_OVERLAY)
+            applied += KEY_BUBBLE_ENABLED
+        }
         request.clipBaseUrl?.let {
             clip.baseUrl = it
             applied += KEY_CLIP_BASE_URL

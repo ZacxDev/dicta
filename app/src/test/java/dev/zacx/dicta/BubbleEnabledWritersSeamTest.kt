@@ -42,9 +42,13 @@ import java.io.File
  * write:
  *
  *  * [onlyTheOwnerTouchesTheRawPreferenceKey] — the **string literal**
- *    `"bubble_enabled"` appears in one file. It fails if the set grows (a
- *    second file spelling the key out) or shrinks (the owner stopped being the
- *    owner). It does **not** cover the pref *file* name `"dicta"`: other files
+ *    `"bubble_enabled"` appears in a declared set of files. It fails if that
+ *    set grows (a new file spelling the key out) or shrinks (the owner stopped
+ *    being the owner). 🔴 It is **two** files, not one: [ClipConfigIngress]
+ *    names the same string as the `CONFIGURE` broadcast's extra, on purpose,
+ *    and [theIngressNamesTheKeyWithoutBeingAbleToReachThePreferences] is what
+ *    makes that safe rather than merely declared. It does **not** cover the
+ *    pref *file* name `"dicta"`: other files
  *    legitimately open that same file for unrelated keys, so [TOUCHES_RAW_KEY]
  *    matches the key only.
  *  * [onlyTheDeclaredSurfacesChangeWhetherTheBubbleIsOn] — the *mutators* are called from a
@@ -80,6 +84,28 @@ import java.io.File
  * structural check type-checks straight past `set(context, true)` where `false`
  * was meant. [theOwnerIsTheSingleSourceOfTruthAcrossSurfaces] is the
  * behavioural pair — one surface's write is the next surface's read.
+ *
+ * ## 🔴 DELETED: two guards on `BubbleEnabled.set`'s DURABILITY. Do not re-add.
+ *
+ * `set` writes with `commit()` rather than `apply()`, and **nothing here tests
+ * that**, deliberately. Two attempts were made and both were deleted:
+ *
+ *  1. a *behavioural* one — drive `set`, read `shared_prefs/dicta.xml` back off
+ *     disk — mutation-tested by putting `apply()` back. It **SURVIVED**:
+ *     Robolectric lands the XML synchronously under either spelling, so no test
+ *     that runs in CI can distinguish them.
+ *  2. a *structural* one, pinning the whole normalised `…commit()` statement.
+ *     It died of its own justification. Its message explained that `apply()`
+ *     could lose the write to a force-stop — and that mechanism was then
+ *     **measured on hardware and found false** (a settled `true` survives a
+ *     force-stop untouched). A guard whose stated reason is a retracted claim
+ *     is worse than no guard, because it reads as coverage for something that
+ *     does not happen.
+ *
+ * `commit()` stays on a narrower rationale, argued at [BubbleEnabled.set]: a
+ * lopsided cost/benefit, not an observed defect. If you want to pin it, pin the
+ * *rationale that is actually true* — and note that a mutation of `commit()` to
+ * `apply()` is, by design, a **surviving** mutant of this suite.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -103,7 +129,18 @@ class BubbleEnabledWritersSeamTest {
                 "the LITERAL only — reaching the same key through the owner's " +
                 "constants is closed by their visibility, which " +
                 "onlyTheOwnerCanNameThePreferenceFileAndKey pins.)",
-            listOf("BubbleEnabled.kt"),
+            listOf(
+                // The owner.
+                "BubbleEnabled.kt",
+                // 🔴 DECLARED, with its own reason: it names `bubble_enabled`
+                // as the CONFIGURE broadcast's extra — deliberately the same
+                // string, so the operator spells one name for one thing — and
+                // it cannot reach the preferences at all.
+                // theIngressNamesTheKeyWithoutBeingAbleToReachThePreferences
+                // is that claim, asserted rather than asserted-in-a-comment,
+                // and every write it makes goes through BubbleEnabled.Control.
+                "ClipConfigIngress.kt",
+            ).sorted(),
             files,
         )
     }
@@ -164,10 +201,18 @@ class BubbleEnabledWritersSeamTest {
                 "yours here deliberately, then write its behavioural test: " +
                 "this scan cannot tell whether you passed the right boolean.",
             listOf(
-                // Restores the bubble after a reboot: starts the service, and
-                // deliberately does NOT write the flag — the user's stored
-                // intent is unchanged by a reboot.
+                // Restores the bubble after a reboot OR an app upgrade: starts
+                // the service, and deliberately does NOT write the flag — the
+                // user's stored intent is unchanged by either. 🔴 It used to
+                // clear the flag on MY_PACKAGE_REPLACED; that write is the
+                // measured defect and is gone.
                 "BubbleBootReceiver.kt",
+                // 🔴 The debug-only CONFIGURE broadcast's `bubble_enabled`
+                // extra, through BubbleEnabled.control. Declared here because
+                // the scan was widened to app/src/debug in the same commit: a
+                // writer in a source set the ledger cannot see is exactly the
+                // hole this ledger exists to close.
+                "DebugClipConfigReceiver.kt",
                 // The notification's "Hide bubble" action: clears the flag
                 // while stopping itself.
                 "BubbleService.kt",
@@ -201,12 +246,13 @@ class BubbleEnabledWritersSeamTest {
                 fun d() { BubbleEnabled.set (ctx, on = true) }
                 fun e() { BubbleEnabled.startService(ctx, userAsked = false) }
                 fun f() { BubbleEnabled.foregroundPromotionRefused(this) }
+                fun g() = BubbleEnabled.control(ctx)
             }
         """.trimIndent()
         assertEquals(
             "the pattern must see a call however it is spelled or wrapped — a " +
                 "ktfmt reformat must not change the ledger",
-            6,
+            7,
             CHANGES_BUBBLE_STATE.findAll(normalise(calls)).count(),
         )
 
@@ -584,24 +630,108 @@ class BubbleEnabledWritersSeamTest {
         controller.pause().stop().destroy()
     }
 
-    private fun sourceFiles(): List<File> {
-        val dir = listOf(
-            File("app/src/main/java/dev/zacx/dicta"),
-            File("src/main/java/dev/zacx/dicta"),
-            File("../app/src/main/java/dev/zacx/dicta"),
-        ).firstOrNull { it.isDirectory }
+    /**
+     * 🔴 **`src/main` AND `src/debug`.** The scan was widened to the debug
+     * source set in the commit that gave the `CONFIGURE` broadcast a
+     * `bubble_enabled` extra — because a writer the ledger cannot see makes the
+     * ledger narrower than its own description, which is the defect this class
+     * keeps finding. `ClipSeamLedgerTest` widened for the same reason and in
+     * the same shape when the debug receiver learned to read the capture queue.
+     *
+     * The debug set is small and has exactly one file, so
+     * [theScanReachesBothSourceSets] pins that both directories were really
+     * read: a `firstOrNull` over candidate paths that silently found only one
+     * of them would report a comfortable, wrong ledger.
+     */
+    private fun sourceFiles(): List<File> = sourceDirs().flatMap { dir ->
+        dir.listFiles { f -> f.name.endsWith(".kt") }.orEmpty().toList()
+    }.also { files ->
         assertTrue(
-            "could not locate the source directory from ${File(".").absolutePath} " +
-                "— refusing to report a pass on files that were never read",
-            dir != null,
-        )
-        val files = dir!!.listFiles { f -> f.name.endsWith(".kt") }.orEmpty().toList()
-        assertTrue(
-            "the source directory held no Kotlin files, so both ledgers would " +
-                "be comparing an empty list against an empty list",
+            "the source directories held too few Kotlin files, so the ledgers " +
+                "would be comparing an empty list against an empty list",
             files.size > 10,
         )
-        return files
+    }
+
+    private fun sourceDirs(): List<File> = listOf("main", "debug").map { set ->
+        val dir = listOf(
+            File("app/src/$set/java/dev/zacx/dicta"),
+            File("src/$set/java/dev/zacx/dicta"),
+            File("../app/src/$set/java/dev/zacx/dicta"),
+        ).firstOrNull { it.isDirectory }
+        assertTrue(
+            "could not locate the src/$set source directory from " +
+                "${File(".").absolutePath} — refusing to report a pass on " +
+                "files that were never read",
+            dir != null,
+        )
+        dir!!
+    }
+
+    /**
+     * 🔴 The control for the widening above: both source sets really are in
+     * the scan.
+     *
+     * Without it, every ledger in this class would still pass if the debug
+     * directory had been missed — a `src/debug` writer would simply be absent
+     * from a list that is asserted to be complete, which is the quiet direction.
+     */
+    @Test
+    fun theScanReachesBothSourceSets() {
+        val names = sourceFiles().map { it.name }
+        assertTrue(
+            "the scan did not read app/src/main — BubbleEnabled.kt is missing " +
+                "from it, so every ledger here is about the wrong tree",
+            "BubbleEnabled.kt" in names,
+        )
+        assertTrue(
+            "the scan did not read app/src/debug — DebugClipConfigReceiver.kt " +
+                "is missing from it, so a declared writer in that source set " +
+                "would be invisible to the ledgers below",
+            "DebugClipConfigReceiver.kt" in names,
+        )
+    }
+
+    /**
+     * 🔴 [ClipConfigIngress] spells the raw key and that is **declared** in
+     * [onlyTheOwnerTouchesTheRawPreferenceKey]; this is the reason it is safe.
+     *
+     * It names `bubble_enabled` because that is the name of the broadcast
+     * extra, deliberately the same string so the operator spells one name. The
+     * claim being made is that it names the key and **cannot reach the store**:
+     * the owner's `PREF_FILE` / `PREF_KEY` are `private`
+     * ([onlyTheOwnerCanNameThePreferenceFileAndKey]), so the only way for that
+     * file to write the preference would be to open it itself — which this
+     * asserts it does not.
+     */
+    @Test
+    fun theIngressNamesTheKeyWithoutBeingAbleToReachThePreferences() {
+        val ingress = sourceFiles().single { it.name == "ClipConfigIngress.kt" }
+        val code = normalise(ingress.readText())
+
+        assertTrue(
+            "the fixture failed: ClipConfigIngress.kt no longer spells the raw " +
+                "key, so this test is about nothing — take it off the declared " +
+                "list in onlyTheOwnerTouchesTheRawPreferenceKey instead",
+            TOUCHES_RAW_KEY.containsMatchIn(code),
+        )
+        assertFalse(
+            "ClipConfigIngress.kt opens SharedPreferences. It is on the " +
+                "raw-key ledger's declared list on the strength of NOT doing " +
+                "that: it names the key as a broadcast extra and routes every " +
+                "write through BubbleEnabled.Control. A file that both spells " +
+                "the key and opens the store is a second writer the owner " +
+                "cannot see.",
+            Regex("""getSharedPreferences\s*\(""").containsMatchIn(code) ||
+                Regex("""SharedPreferences""").containsMatchIn(code),
+        )
+        // Positive control: the pattern can see such a call, so the absence
+        // above is not the absence of a working regex.
+        assertTrue(
+            Regex("""getSharedPreferences\s*\(""").containsMatchIn(
+                normalise("""val p = context.getSharedPreferences("dicta", 0)""")
+            ),
+        )
     }
 
     private companion object {
@@ -622,13 +752,20 @@ class BubbleEnabledWritersSeamTest {
          * A mutator the ledger cannot see makes the ledger narrower than its
          * own description, which is the defect this class keeps finding.
          *
+         * `control` is a member although it writes nothing itself: it hands out
+         * a [BubbleEnabled.Control], i.e. the ability to turn the bubble on and
+         * off, so a file that calls it is a writer by any reading that matters.
+         * A factory for a mutator that the mutator ledger could not see would
+         * be the same hole one indirection out.
+         *
          * `isOn` is deliberately excluded: a reader cannot put the flag out of
          * step with reality, and including it would make every file that merely
          * *consults* the bubble a member.
          */
         val CHANGES_BUBBLE_STATE = Regex(
             """BubbleEnabled\.""" +
-                """(set|turnOn|turnOff|startService|foregroundPromotionRefused)\s*\("""
+                """(set|turnOn|turnOff|startService|foregroundPromotionRefused|control)""" +
+                """\s*\("""
         )
 
         /** The literal preference key, as a Kotlin string. */

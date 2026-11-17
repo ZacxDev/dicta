@@ -36,50 +36,56 @@ jobs:
       # measured nothing is worse than no gate — so the count is asserted, not
       # inferred from the task's exit status.
       #
-      # BASELINE: 1013 against a suite of 1166 tests / 109 classes on
-      # `feat/agent-config-surface` — the agent-usable configuration and
-      # diagnostics surface (ClipFetch's four discriminated read outcomes, the
-      # ClipDiagnostics readout and its persisted last outcomes, the
-      # ClipConfigIngress door, the debug-only receiver, and the clipboard
-      # group's own Save), plus audit round 1's six fixes.
+      # BASELINE: 1022 against a suite of 1176 tests / 109 classes on
+      # `feat/bubble-enabled-persistence` — the bubble_enabled persistence fix
+      # (an app upgrade restores the bubble instead of clearing the user's
+      # stored intent) plus the bubble_enabled extra on the debug CONFIGURE
+      # door and its DIAGNOSE readout.
       #
-      # 1166 * 500 / 575 = 1013.91 -> 1013, which is 13.12% slack.
+      # 1176 * 500 / 575 = 1022.60 -> 1022, which is 13.10% slack.
       #
-      # 🔴 COMMIT COUNTED ON: the audit-round-1 fix commit of
-      # `feat/agent-config-surface`, i.e. the commit this comment is part of,
-      # whose parent is 042a669. Counted on that tree and nothing else — see
-      # the CORRECTION note below for why a date does not identify a tree while
-      # a branch is moving.
+      # 🔴 COMMIT COUNTED ON: the commit this comment is part of, on
+      # `feat/bubble-enabled-persistence`, whose parent is bb4356b. Counted on
+      # that tree and nothing else — see the CORRECTION note below for why a
+      # date does not identify a tree while a branch is moving.
       #
-      # 🔴 LEFT AT 1008 THIS GATE WOULD NOT HAVE GONE RED: 1008 against 1166 is
-      # 13.55% slack, well inside TestCountFloorTest's 20% ceiling. Raised here
+      # 🔴 LEFT AT 1013 THIS GATE WOULD NOT HAVE GONE RED: 1013 against 1176 is
+      # 13.86% slack, inside TestCountFloorTest's 20% ceiling. Raised here
       # rather than discovered later, which is this block's own rule — the
       # ceiling exists so drift fails a test eventually, not so the floor is
-      # only ever raised when it does. (A +6 net delta does not NEED a raise;
-      # it gets one because the convention is one derivation per commit that
-      # moves the count, and an unraised floor is how the 500-against-623 drift
-      # happened.)
+      # only ever raised when it does.
       #
-      # Accounted for PER CLASS against 1160 / 109, not asserted. This commit
+      # Accounted for PER CLASS against 1166 / 109, not asserted. This commit
       # only ADDS tests and no class appears or disappears:
-      #   +3 ClipDiagnosticsTest 18 -> 21  (hydration must not overwrite a
-      #      fresher in-process outcome; the newline/key-value contract; the
-      #      summary bound)
-      #   +2 ClipPickerFailureMessageTest 5 -> 7  (the throwing-read regression
-      #      and its negative control)
-      #   +1 ClipSeamLedgerTest 9 -> 10    (the widened diagnostics scan's own
-      #      positive control)
-      #   = +6 added, -0 removed = +6 tests and +0 classes.
-      #   1160 + 6 = 1166, and 109 + 0 = 109. BOTH SIDES CHECKED.
+      #   +5 ClipConfigIngressTest 11 -> 16  (the bubble_enabled happy path and
+      #      its applied-string; the spelling table both ways round with the
+      #      garbage half; refusal before any write; the overlay refusal; the
+      #      absent-extra case)
+      #   +2 BubbleEnabledWritersSeamTest 10 -> 12  (the widened src/debug scan
+      #      and its own control; the ingress-names-the-key-but-cannot-reach-
+      #      the-store guard. 🔴 A third, pinning commit()-not-apply(), was
+      #      WRITTEN AND THEN DELETED when the force-stop mechanism it cited
+      #      was measured false on hardware — so this row is +2, and
+      #      commit()->apply() is a deliberately SURVIVING mutant.)
+      #   +1 BootRestoreTest 6 -> 7         (the upgrade's own two guard
+      #      conditions; the regression test REPLACED the test that asserted
+      #      the defect, so the net is +1 and not +2)
+      #   +1 ClipDiagnosticsTest 21 -> 22   (the bubbleEnabled line comes from
+      #      the argument, both ways round)
+      #   +1 DebugClipConfigReceiverTest 5 -> 6  (the CONFIGURE -> owner ->
+      #      DIAGNOSE seam)
+      #   = +10 added, -0 removed = +10 tests and +0 classes.
+      #   1166 + 10 = 1176, and 109 + 0 = 109. BOTH SIDES CHECKED.
       #
-      # 🔴 THE INSTRUMENT REPRODUCED THE PREVIOUS ENTRY'S ASSERTED 1160 / 109
-      # EXACTLY on 042a669, which is what makes its 1166 here worth quoting,
-      # and it was cross-checked PER CLASS against the JUnit XML of the scoped
-      # run for all six classes this change touches or reads
-      # (ClipDiagnosticsTest 21, ClipOutboxHealthTest 20,
-      # ClipPickerFailureMessageTest 7, ClipSeamLedgerTest 10,
-      # DebugClipConfigReceiverTest 5, TestCountFloorTest 3) — identical both
-      # ways, no mismatch.
+      # 🔴 THE INSTRUMENT REPRODUCED THE PREVIOUS ENTRY'S ASSERTED 1166 / 109
+      # EXACTLY on bb4356b, which is what makes its 1176 here worth quoting,
+      # and the per-class rows above are the DIFF of that run against this
+      # tree's rather than a hand tally. Cross-checked PER CLASS against the
+      # JUnit XML of the scoped run for every class this change touches
+      # (BootRestoreTest 7, BubbleEnabledWritersSeamTest 12,
+      # ClipConfigIngressTest 16, ClipDiagnosticsTest 22,
+      # ClipSeamLedgerTest 10, DebugClipConfigReceiverTest 6,
+      # TestCountFloorTest 3) — identical both ways, no mismatch.
       #
       # ⚠ SourceText.kt is a file in the test source set carrying ZERO tests —
       # the hoisted strip pipeline (round 0's D5). It therefore moves the FILE
@@ -127,16 +133,6 @@ jobs:
       # whatever tree is checked out — which is the rule the CORRECTION note
       # below states about numbers that have gone out of scope.)
       #
-      # 🔴 COMMIT COUNTED ON: the commit that adds SnipUsageStore and its tests.
-      # This comment and the --min argument land in the SAME commit as the
-      # source here (unlike the previous entry), because the floor bump and the
-      # tests it measures were reviewed together; the number was read from a
-      # full local run before the commit was made, and CI re-reads it.
-      #
-      # 🔴 LEFT AT 757 THIS GATE WOULD NOT HAVE GONE RED: 757 against 901 is
-      # 16.0% slack, still inside TestCountFloorTest's 20% ceiling. Raised here
-      # rather than discovered later, same as the previous entry.
-      #
       # 🔴 PREVIOUS-ENTRY CHAIN TRIMMED TO THREE. Round 0 of #46's audit raised
       # that this block had grown an append-only chain of nine historical
       # derivations with no eviction rule, so it grew every time the suite did.
@@ -154,7 +150,7 @@ jobs:
       # 🔴 THE HEADROOM IS THE CONSTANT, NOT THE FLOOR — re-derive it, do not
       # pick a round number:
       #     floor = floor(current_total * 500 / 575)      # 0.86957, 13.04% slack
-      # 1166 * 500 / 575 = 1013.91 -> 1013, which is 13.12% slack.
+      # 1176 * 500 / 575 = 1022.60 -> 1022, which is 13.10% slack.
       #
       # 🔴 NAME THE TREE YOU COUNTED ON, not just the date. Past entries were
       # raised several-per-day, so a date does not identify a tree while a
@@ -165,12 +161,14 @@ jobs:
       # 🔴 THREE PREVIOUS ENTRIES, AND NO MORE — see the trim note at the top of
       # this block. Add yours, drop the oldest; `git log -p -- <this file>` has
       # the rest.
-      # (Previous entries: 1160 * 500 / 575 = 1008.69 -> 1008, 13.10% slack;
-      #  1159 * 500 / 575 = 1007.83 -> 1007, 13.11% slack;
-      #  1103 * 500 / 575 = 959.13 -> 959, 13.05% slack.)
-      # 1073 -> 933 was DROPPED as the oldest when this entry was added, which
-      # is the eviction rule this block states. The full history is in this
-      # file's own log.
+      # (Previous entries: 1166 * 500 / 575 = 1013.91 -> 1013, 13.12% slack;
+      #  1160 * 500 / 575 = 1008.69 -> 1008, 13.10% slack;
+      #  1159 * 500 / 575 = 1007.83 -> 1007, 13.11% slack.)
+      # 1103 -> 959 was DROPPED as the oldest when this entry was added, along
+      # with the detailed SnipUsageStore entry (901 -> 783) that the trim rule
+      # had already left behind above the previous-entries list. That is the
+      # eviction rule this block states. The full history is in this file's own
+      # log.
       #
       # 🔴 CORRECTION (2026-10-23). This block used to say the previous entry
       # "was left alone while the suite grew to 623, drifting the slack to 20%".
@@ -197,7 +195,7 @@ jobs:
       # one place.
       - name: Assert tests actually ran
         if: always()
-        run: python3 scripts/assert-tests-ran.py --min 1013
+        run: python3 scripts/assert-tests-ran.py --min 1022
 
       - name: Upload test reports
         if: always()
