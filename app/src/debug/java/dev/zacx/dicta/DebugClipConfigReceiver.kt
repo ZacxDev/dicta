@@ -34,6 +34,12 @@ import android.content.Intent
  *
  *  * it can **set** a clip token or base URL — a denial of service against
  *    the shared clipboard, and a way to point captures at a store it controls;
+ *  * it can **turn the floating bubble on or off** (`bubble_enabled`). Stated
+ *    rather than left to be discovered: it is a nuisance and a denial of
+ *    service, not an escalation — turning it on requires the overlay
+ *    permission the user has already granted this app and raises nothing the
+ *    user has not already seen, and the bubble takes no action on its own. It
+ *    grants no new read.
  *  * it **cannot read** the token. [CONFIGURE] never echoes what it was given,
  *    and [DIAGNOSE]'s readout carries `tokenDecrypts` as a boolean and no
  *    field that could hold a byte of the credential ([ClipDiagnostics] is
@@ -62,7 +68,32 @@ import android.content.Intent
  *   -a dev.zacx.dicta.debug.CONFIGURE \
  *   -n dev.zacx.dicta/.DebugClipConfigReceiver \
  *   --es clip_base_url 'http://10.42.0.10:8139' --es clip_token "$TOKEN"
+ *
+ * adb shell am broadcast -f 0x00000020 \
+ *   -a dev.zacx.dicta.debug.CONFIGURE \
+ *   -n dev.zacx.dicta/.DebugClipConfigReceiver \
+ *   --es bubble_enabled true
  * ```
+ *
+ * 🔴 `--es` and **not** `--ez`: every extra on this door is read with
+ * `getStringExtra`, so a genuinely-boolean extra would arrive as `null` and be
+ * silently ignored — "leave it alone". `bubble_enabled` therefore takes a
+ * string that [BubbleEnabled.parseSpelling] reads
+ * (`true`/`false`/`1`/`0`/`on`/`off`/`yes`/`no`), and anything else is refused
+ * rather than guessed at.
+ *
+ * 🔴 **`applied: …` means WRITTEN, not STILL TRUE — read it back with
+ * `DIAGNOSE`.** For the URL and the tokens there is no difference: nothing but
+ * another `CONFIGURE` changes them. `bubble_enabled` is the exception, and it
+ * is stated here rather than left to be discovered, because an agent that
+ * treats `applied: bubble_enabled` as "the bubble is on" will occasionally be
+ * wrong and will have no idea why. Turning the bubble on writes the flag and
+ * then asks Android for a foreground service; `startForegroundService` returns
+ * before that service exists, so this answer is sent while the start is still
+ * in flight, and a platform refusal afterwards clears the flag again (see
+ * [BubbleEnabled.foregroundPromotionRefused] for why clearing is right). So
+ * `applied:` is a receipt for the write, `DIAGNOSE`'s `bubbleEnabled` line is
+ * the current state, and the two can disagree. Write, then `DIAGNOSE`.
  *
  * The outcome comes back as the broadcast's **result data**, which
  * `am broadcast` prints — so nothing is logged. 🔴 `-f 0x00000020`
@@ -125,7 +156,9 @@ class DebugClipConfigReceiver : BroadcastReceiver() {
     private fun configure(context: Context, intent: Intent): String {
         val request = ClipConfigIngress.parse { key -> intent.getStringExtra(key) }
         val s = surfaces?.invoke(context) ?: production(context)
-        return ClipConfigIngress.apply(request, clip = s.clip, stt = s.stt).message
+        return ClipConfigIngress
+            .apply(request, clip = s.clip, stt = s.stt, bubble = s.bubble)
+            .message
     }
 
     /**
@@ -147,7 +180,8 @@ class DebugClipConfigReceiver : BroadcastReceiver() {
         // a failure would report `lastFlush: none` for a queue that has been
         // failing to drain for days. That `none` is the bug, not the answer.
         ClipDiagnostics.install(context)
-        return ClipDiagnostics.readout(s.clip, s.outbox).render()
+        val readout = ClipDiagnostics.readout(s.clip, s.outbox, s.bubble.isOn())
+        return readout.render()
     }
 
     /**
@@ -166,6 +200,14 @@ class DebugClipConfigReceiver : BroadcastReceiver() {
         val clip: ClipSettings,
         val stt: SttSettings,
         val outbox: ClipOutbox,
+        /**
+         * The bubble flag's owner. 🔴 A [BubbleEnabled.Control] rather than a
+         * `Context` for the same reason as the rest of this bundle:
+         * [BubbleEnabled.turnOn] calls `Settings.canDrawOverlays` and
+         * `startForegroundService`, so a test that could not substitute it
+         * would be asserting Robolectric's shadows instead of the door's rules.
+         */
+        val bubble: BubbleEnabled.Control,
     )
 
     /** Overridden by a test; `null` means the real settings and the real queue. */
@@ -185,6 +227,9 @@ class DebugClipConfigReceiver : BroadcastReceiver() {
         clip = ClipSettings.create(context),
         stt = SttSettings.create(context),
         outbox = ClipOutboxStore(context),
+        // 🔴 The ONLY mutator call this file makes, which is why it is on
+        // BubbleEnabledWritersSeamTest's ledger as a declared writer.
+        bubble = BubbleEnabled.control(context),
     )
 
     companion object {

@@ -13,12 +13,14 @@ recording.
 
 1. **Floating bubble** — an always-on-top mic button (`TYPE_APPLICATION_OVERLAY`)
    you can drag anywhere. Tap it from any app. `BubbleBootReceiver` asks for it
-   again after a reboot when you had it switched on — the one start it makes,
-   with no fallback, because the platform restrictions that could refuse it
-   exempt this path twice over (see the receiver's kdoc for the documented
-   rules, and for why the fallback that used to live there was deleted as
-   unreachable). The restore is device-unverified: a JVM test can pin the
-   receiver's decision table but not Android's permission for the start.
+   again after a reboot or an app upgrade when you had it switched on — the only
+   starts it makes, with no fallback, because `BOOT_COMPLETED` and
+   `MY_PACKAGE_REPLACED` are both on Android 12+'s foreground-service-start
+   exemption list, in the same documented bullet (see the receiver's kdoc for
+   the rules, for the correction to an earlier claim that the two differed, and
+   for why the fallback that used to live there was deleted as unreachable).
+   The restore is device-unverified: a JVM test can pin the receiver's decision
+   table but not Android's permission for the start.
 
 Two surfaces *switch that bubble on and off*; neither starts a recording:
 
@@ -39,8 +41,11 @@ Whether the bubble is on lives in exactly one place — `BubbleEnabled`, over th
 second was missing while this paragraph claimed the first was enough:
 
 - every **write** goes through `BubbleEnabled`, so the switch in the app, the
-  bubble notification's **Hide bubble** action, the tile and the boot
-  receiver cannot put different values in the preference;
+  bubble notification's **Hide bubble** action, the tile and the debug build's
+  `CONFIGURE` broadcast cannot put different values in the preference. (The
+  boot/upgrade receiver is on the same ledger because it starts the service, but
+  it deliberately writes nothing — a reboot or an install is not the user
+  changing their mind.)
 - everything the user is **shown** derives from `BubbleEnabled.isUp` (the flag
   *and* the overlay permission), never from the raw flag. The app's switch, the
   tile's painted state and the tile's *click direction* each used to compute
@@ -48,20 +53,35 @@ second was missing while this paragraph claimed the first was enough:
   the tile painted from one predicate and decided its click from another.
 
 The flag is stored **intent**, so it deliberately outlives the bubble across a
-reboot or a revoked permission. The two cases where intent and reality would
-otherwise come apart with the permission still granted are closed where they
-happen: `BubbleService` clears the flag when the foreground promotion of a start
-**the user asked for** is refused, and `BubbleBootReceiver` clears it on
-`MY_PACKAGE_REPLACED`, because an app update stops the service and Android does
-not restart one across a package replacement. Neither restores the bubble — they
-only stop the surfaces claiming one, so a single tap brings it back.
+reboot, an app upgrade or a revoked permission. `BubbleBootReceiver` restores the
+bubble on `BOOT_COMPLETED` **and** on `MY_PACKAGE_REPLACED` — an app update stops
+the service and Android does not restart one across a package replacement — and
+it writes the flag in neither case. The one remaining case where intent and
+reality can come apart with the permission still granted is closed where it
+happens: `BubbleService` clears the flag when the foreground promotion of a start
+**the user asked for** is refused.
 
-A refused *boot* restore is the deliberate exception: it keeps the flag. Clearing
-it there would mean the bubble does not return on that boot **or any later one**,
-which is exactly the thing the paragraph above says a reboot must not be able to
-do, so that one case leaves the flag set with no bubble until the next start.
-`BubbleEnabled` owns the distinction — `startService` records whether the user
-asked, and `foregroundPromotionRefused` is the only thing that reads it.
+> **Fixed:** `BubbleBootReceiver` used to *clear* the flag on
+> `MY_PACKAGE_REPLACED` instead of restoring the bubble, so `bubble_enabled`
+> flipped to `false` after every `adb install -r` and the bubble had to be
+> re-toggled by hand. The gap it was closing is real — the flag would otherwise
+> outlive the bubble and the switch would need two taps — but deleting the
+> user's stored intent is the wrong end to close it from.
+>
+> A second cause was suspected — `apply()` losing the write to a force-stop —
+> and **measured on hardware and not observed**, so nothing changed about how
+> the flag is written.
+
+A refused *restore* is the deliberate exception: it keeps the flag. That means a
+refused restore on **either** of the receiver's actions — a reboot or a package
+replacement — because the two are one rule and the mechanism never distinguished
+them: `startService` records whether the **user** asked, and the receiver answers
+"no" for both. (This sentence used to say "a refused *boot* restore", which read
+as narrower than the code.) Clearing the flag there would mean the bubble does
+not return on that boot or install **or any later one**, which is exactly the
+thing the paragraph above says a restart must not be able to do, so that one case
+leaves the flag set with no bubble until the next start. `BubbleEnabled` owns the
+distinction, and `foregroundPromotionRefused` is the only thing that reads it.
 
 > **Removed:** a **persistent trigger notification** with a Dictate action, and
 > a **"Try dictation now"** button on the setup screen. Both opened the overlay,
@@ -329,7 +349,7 @@ app/src/main/
     DictateActivity.kt    # the overlay: dictate → edit → copy / screenshot / share
     DictaTileService.kt   # Quick Settings tile: the bubble's on/off toggle
     BubbleEnabled.kt      # the one owner of "is the bubble enabled" (+ start/stop)
-    BubbleBootReceiver.kt # restores the bubble after a reboot
+    BubbleBootReceiver.kt # restores the bubble after a reboot or an app upgrade
     PackageReplacedReceiver.kt   # runs the upgrade cleanup on ACTION_MY_PACKAGE_REPLACED
     TriggerNotificationCleanup.kt # cancels the deleted trigger notification (id 3001) + its channel
     BubbleService.kt      # floating overlay bubble trigger

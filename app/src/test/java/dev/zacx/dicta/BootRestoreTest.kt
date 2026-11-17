@@ -9,7 +9,6 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
-import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows.shadowOf
@@ -26,8 +25,8 @@ import org.robolectric.shadows.ShadowSettings
  * actually *permits* the foreground start from a real `BOOT_COMPLETED`
  * broadcast is a device question and is **not** verified here: Robolectric's
  * `startForegroundService` records the call and never refuses. The documented
- * rules, and why they exempt this path twice over, are set out in the
- * receiver's kdoc.
+ * rules, and why they exempt **both** of the receiver's actions on identical
+ * terms, are set out in the receiver's kdoc.
  *
  * 🔴 Three tests were deleted from this class together with the receiver's
  * refusal fallback: two that injected a throw through the former
@@ -122,47 +121,116 @@ class BootRestoreTest {
     }
 
     /**
-     * 🔴 An app update must stop the flag claiming a bubble — and must **not**
-     * bring the bubble back.
+     * 🔴 **THE REGRESSION TEST.** An app upgrade must keep the user's stored
+     * intent **and** bring the bubble back.
      *
-     * Android does not restart a service across a package replacement, so after
-     * an update there is no bubble. While the flag survived that, every surface
-     * went on reading ON: `MainActivity`'s switch rendered checked, and because
-     * a `Switch` fires its listener only on a **change** the first tap did
-     * nothing and the user had to toggle OFF then ON. That is issue #14's
-     * complaint reached without any reboot.
+     * ## The measured defect
      *
-     * 🔴 **The `assertNull` here is the load-bearing half and it is a negative
-     * control on a decision, not a leftover.** Restoring the overlay as a side
-     * effect of installing a new version is deliberately not done; this action
-     * is a *correction* path, not a second restore path. Both halves are
-     * asserted together because a fix that started the service here would still
-     * make the flag honest and would pass a flag-only assertion.
+     * `bubble_enabled` in `shared_prefs/dicta.xml` flipped from `true` to
+     * `false` by itself after an `adb install -r`, repeatedly, on real
+     * hardware. The writer was this receiver: it had a separate
+     * `ACTION_MY_PACKAGE_REPLACED` branch that called
+     * `BubbleEnabled.set(context, false)` and started nothing. So every
+     * reinstall silently switched the floating bubble off and the operator had
+     * to reopen Settings and re-toggle it.
      *
-     * This test used to be `anUnrelatedBroadcastIsIgnored`, which asserted only
-     * the null. The name became false the moment the receiver started acting on
-     * this action — [anActionTheReceiverKnowsNothingAboutIsIgnored] is the
-     * genuinely-unrelated control that replaces it.
+     * ## Why the old behaviour looked defensible
+     *
+     * Its argument was real: Android does not restart a service across a
+     * package replacement, so the flag outlived the bubble, `MainActivity`'s
+     * switch rendered ON with nothing running, and a `Switch` fires its
+     * listener only on a **change** — so one tap did nothing (issue #14's
+     * shape). That gap exists. Clearing the flag closed it **from the wrong
+     * end**: it made the surfaces agree by destroying the one piece of state
+     * only the user may change. Restoring the bubble makes them agree and keeps
+     * it.
+     *
+     * The predecessor of this test, `aPackageReplacementClearsTheStaleFlagAndStartsNothing`,
+     * asserted the defect — a `false` flag and a null start — which is why a
+     * fully green suite never saw it.
+     *
+     * ## 🔴 Both halves, together
+     *
+     * A mutant that merely deleted the write would leave the upgrade with no
+     * bubble, no service and a flag claiming otherwise — and would pass a
+     * flag-only assertion. A mutant that started the service while still
+     * clearing the flag would pass a start-only one.
      */
     @Test
-    fun aPackageReplacementClearsTheStaleFlagAndStartsNothing() {
+    fun anAppUpgradeKeepsStoredIntentAndBringsTheBubbleBack() {
         ShadowSettings.setCanDrawOverlays(true)
         setFlag(true)
 
         boot(action = Intent.ACTION_MY_PACKAGE_REPLACED)
 
+        assertTrue(
+            "an app upgrade CLEARED bubble_enabled. That is the measured " +
+                "defect: `adb install -r` silently switched the operator's " +
+                "bubble off, and the only way back was to find the switch in " +
+                "Settings. The flag means \"the user wants the bubble\", never " +
+                "\"the service is currently alive\" — an install is not the " +
+                "user changing their mind.",
+            BubbleEnabled.isOn(app()),
+        )
+        val started = startedService()
+        assertNotNull(
+            "an app upgrade left the flag set and started nothing, so there is " +
+                "no bubble and every surface claims there is one. Android does " +
+                "not restart a service across a package replacement, so this " +
+                "receiver is the only thing that can put it back.",
+            started,
+        )
+        assertEquals(
+            "the upgrade started something other than BubbleService",
+            BubbleService::class.java.name,
+            started.component?.className,
+        )
+    }
+
+    /**
+     * The upgrade path obeys the same two conditions as the boot path.
+     *
+     * 🔴 Not redundant with the boot cases: the fix merged the two actions into
+     * one rule, and a mutant that merged them *badly* — restoring on
+     * `MY_PACKAGE_REPLACED` unconditionally, with the action check moved but
+     * the guards left behind the boot branch — would pass every other test
+     * here.
+     *
+     * 🔴 **CORRECTION.** This kdoc used to add that `canDrawOverlays` "carries
+     * extra weight on this path", being the Android 12+
+     * foreground-service-start exemption the action relies on "since unlike
+     * `BOOT_COMPLETED` the action itself is not one". That is **false**:
+     * `ACTION_MY_PACKAGE_REPLACED` is on the exemption list in the same
+     * documented bullet as `ACTION_BOOT_COMPLETED`, so the two paths are
+     * exempt on identical terms and `canDrawOverlays` carries exactly the
+     * weight it carries at boot — an overlay service with no overlay
+     * permission stops itself. What the code does is unchanged and correct;
+     * only the second reason that was claimed for it was wrong.
+     */
+    @Test
+    fun anAppUpgradeStartsNothingWhenTheUserHadItOffOrRevokedTheOverlay() {
+        ShadowSettings.setCanDrawOverlays(true)
+        setFlag(false)
+        boot(action = Intent.ACTION_MY_PACKAGE_REPLACED)
         assertNull(
-            "the receiver restored the bubble after an app update. That is a " +
-                "deliberate non-behaviour: re-raising an overlay as a side " +
-                "effect of an install is not something to ship. It must only " +
-                "clear the flag so ONE tap brings the bubble back.",
+            "an upgrade raised the bubble for a user who had switched it off",
             startedService(),
         )
-        assertFalse(
-            "an app update left bubble_enabled set with no service running. " +
-                "MainActivity's switch renders from this, a Switch fires only " +
-                "on a CHANGE, so the user's first tap does nothing and they " +
-                "have to toggle OFF then ON — issue #14 verbatim.",
+
+        ShadowSettings.setCanDrawOverlays(false)
+        setFlag(true)
+        boot(action = Intent.ACTION_MY_PACKAGE_REPLACED)
+        assertNull(
+            "an upgrade started an overlay service with no overlay permission. " +
+                "BubbleService stops itself immediately in that state, so the " +
+                "user gets a foreground notification that flickers and no " +
+                "bubble — exactly as on the boot path, which this action is " +
+                "handled identically to.",
+            startedService(),
+        )
+        assertTrue(
+            "a revoked permission is not the user changing their mind — the " +
+                "flag must survive an upgrade in that state too",
             BubbleEnabled.isOn(app()),
         )
     }
@@ -264,22 +332,11 @@ class BootRestoreTest {
         )
     }
 
-    /**
-     * Brings up the real [BubbleService] with its foreground promotion refused,
-     * through the `foregroundPromoter` seam — Robolectric's `startForeground`
-     * cannot be made to refuse. Deliberately does **not** reset
-     * [BubbleEnabled]: the origin recorded by whoever asked for the start is
-     * the input under test.
-     */
-    private fun refuseTheForegroundPromotion() {
-        val c = Robolectric.buildService(BubbleService::class.java)
-        c.get().foregroundPromoter = { false }
-        runCatching { c.create() }
-        runCatching { c.destroy() }
-        OverlayVisibility.clearForTest()
-        BubbleSessionBus.clearForTest()
-        MicrophoneOwner.clearForTest()
-    }
+    // 🔴 `refuseTheForegroundPromotion()` was a private helper here and now
+    // lives in `RefusedForegroundPromotion.kt`, because
+    // `DebugClipConfigReceiverTest` needs the identical fixture for the
+    // CONFIGURE door. Its kdoc there carries the reason it must not reset
+    // BubbleEnabled, and what it cannot establish for either caller.
 
     @Test
     fun anActionTheReceiverKnowsNothingAboutIsIgnored() {

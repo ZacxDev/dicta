@@ -1,8 +1,14 @@
 package dev.zacx.dicta
 
 /**
- * Setting the shared clipboard's configuration **programmatically**: parse,
- * validate, apply.
+ * Setting the app's configuration **programmatically**: parse, validate, apply.
+ *
+ * 🔴 It began as the shared clipboard's door and the name still says so. It now
+ * also carries [KEY_BUBBLE_ENABLED] — the floating bubble — because the cost
+ * this file exists to remove is *driving pixels to set a value*, and that cost
+ * is identical for a toggle on the same settings screen. The alternative was a
+ * second door with its own parse shape and its own result strings, i.e. the
+ * open-coded-predicate failure this repository keeps paying for.
  *
  * ## 🔴 Why this exists, measured rather than supposed
  *
@@ -39,13 +45,23 @@ package dev.zacx.dicta
  * on-disk preferences XML back and grepping it — rather than trusting that the
  * invariant transfers to a new entry point.
  *
- * ## 🔴 It validates through [ClipEndpoints.rejectionFor] and grows no second rule
+ * ## 🔴 It validates through the OWNER of each field and grows no second rule
  *
- * The settings screen rejects a base URL with that function; so does this. A
- * predicate open-coded at two sites is wrong at one of them, and here the
- * consequence is specific: the capture-loss defect of PR #49 was reached
- * through exactly this field, so a door that accepted what the screen refuses
- * would reopen it for anything driving the door.
+ * The settings screen rejects a base URL with [ClipEndpoints.rejectionFor]; so
+ * does this. A predicate open-coded at two sites is wrong at one of them, and
+ * here the consequence is specific: the capture-loss defect of PR #49 was
+ * reached through exactly this field, so a door that accepted what the screen
+ * refuses would reopen it for anything driving the door.
+ *
+ * 🔴 The bubble follows the same rule, and the first version of this door broke
+ * it: the accepted spellings, the parse and both refusal messages lived *here*.
+ * A door is not a policy surface — it knows the name of its own extra and
+ * nothing about what the value means — so they live on
+ * [BubbleEnabled.parseSpelling] / [BubbleEnabled.spellingRejection] /
+ * [BubbleEnabled.NO_OVERLAY_REJECTION], beside the flag they describe, exactly
+ * as the URL rule lives beside the URL. The spelling sets themselves are
+ * `private` to the owner so nothing — a test included — can read the
+ * vocabulary back out of the implementation.
  */
 object ClipConfigIngress {
 
@@ -59,10 +75,23 @@ object ClipConfigIngress {
         val clipBaseUrl: String? = null,
         val clipToken: String? = null,
         val sttToken: String? = null,
+        /**
+         * The floating bubble, **as the caller spelled it** — see
+         * [BubbleEnabled.parseSpelling].
+         *
+         * 🔴 Kept raw rather than parsed at [parse] time, which is exactly what
+         * [clipBaseUrl] does and for the same reason: [parse] has no way to
+         * report a refusal, so a value it could not understand would have to be
+         * either silently dropped or collapsed into `null` — "leave it alone" —
+         * and an ignored instruction is the failure this whole door exists to
+         * avoid. [apply] turns it into an [Outcome.Rejected] instead.
+         */
+        val bubbleEnabled: String? = null,
     ) {
         /** Whether this asks for anything at all. */
         val isEmpty: Boolean
-            get() = clipBaseUrl == null && clipToken == null && sttToken == null
+            get() = clipBaseUrl == null && clipToken == null && sttToken == null &&
+                bubbleEnabled == null
     }
 
     /** What the ingress did. Never carries a token. */
@@ -81,6 +110,34 @@ object ClipConfigIngress {
          * @param applied the names of the fields that were written — the
          *   KEYS, never the values. 🔴 `clipToken` appearing here says a token
          *   was stored and says nothing about what it was.
+         *
+         * 🔴 **`applied:` means WRITTEN, not STILL TRUE, and `DIAGNOSE` is the
+         * authority on the second.** For every field but one the two are the
+         * same thing, because nothing but another `CONFIGURE` can change what
+         * was stored. [KEY_BUBBLE_ENABLED] is the exception and the asymmetry
+         * is not a defect to route around:
+         *
+         *  * `bubble_enabled` is applied by asking [BubbleEnabled] to turn the
+         *    bubble on, which writes the flag and then asks the platform for a
+         *    foreground service. `startForegroundService` returns **before**
+         *    the service exists, so this value is returned while the start is
+         *    still in flight.
+         *  * If the platform then refuses to promote that service to the
+         *    foreground, [BubbleEnabled.foregroundPromotionRefused] clears the
+         *    flag — correctly, because a start the caller asked for that
+         *    produced no bubble must not leave every surface claiming one
+         *    (issue #14). So `applied: bubble_enabled` can be true at the
+         *    moment it is reported and false a moment later.
+         *  * The read-back is honest throughout: `DIAGNOSE`'s `bubbleEnabled`
+         *    line reports the flag as it is **now**. An agent that needs to
+         *    know the bubble is on reads `DIAGNOSE` after the fact; `applied:`
+         *    tells it the write was accepted, not that it survived.
+         *
+         * This is a property of the platform's asynchronous start and not of
+         * this door: a synchronous answer about a service that does not exist
+         * yet is not available to be returned. `DebugClipConfigReceiverTest`'s
+         * `aRefusedPromotionAfterCONFIGUREClearsTheFlagItReportedAsApplied`
+         * drives exactly that sequence through the broadcast.
          */
         data class Applied(val applied: List<String>) : Outcome {
             override val message: String get() = "applied: ${applied.joinToString(",")}"
@@ -131,6 +188,22 @@ object ClipConfigIngress {
     const val KEY_STT_TOKEN: String = "stt_token"
 
     /**
+     * 🔴 Deliberately the SAME string as `BubbleEnabled`'s preference key, so
+     * the operator spells one name for one thing — the extra, the `DIAGNOSE`
+     * line and the preference all read `bubble_enabled`.
+     *
+     * 🔴 That makes this file the second place in `app/src/main` that spells
+     * the literal, which `BubbleEnabledWritersSeamTest.onlyTheOwnerTouchesTheRawPreferenceKey`
+     * notices on purpose — this file is **declared** there, with the reason
+     * that it names the key and cannot reach the store: `BubbleEnabled`'s
+     * `PREF_FILE` / `PREF_KEY` are `private`, nothing here opens
+     * `SharedPreferences` (pinned by that class's
+     * `theIngressNamesTheKeyWithoutBeingAbleToReachThePreferences`), and every
+     * write goes through [BubbleEnabled.Control].
+     */
+    const val KEY_BUBBLE_ENABLED: String = "bubble_enabled"
+
+    /**
      * Builds a [Request] from string arguments, e.g. an intent's extras.
      *
      * 🔴 A **blank** value is not a null one. `null` means "leave it alone";
@@ -164,6 +237,7 @@ object ClipConfigIngress {
         clipBaseUrl = args(KEY_CLIP_BASE_URL),
         clipToken = args(KEY_CLIP_TOKEN),
         sttToken = args(KEY_STT_TOKEN),
+        bubbleEnabled = args(KEY_BUBBLE_ENABLED),
     )
 
     /**
@@ -173,17 +247,52 @@ object ClipConfigIngress {
      * reasons: validate first so a refusal can honestly claim nothing was
      * saved, then the URL, then the tokens — and a cipher failure on one token
      * must not roll back the other, since the two reach different services.
+     *
+     * 🔴 The bubble is applied **before** the URL and the tokens, and that
+     * position is argued rather than incidental. It is the one other write that
+     * can be *declined* at write time (the overlay permission is not knowable
+     * from the request), so it has to happen while [Outcome.Rejected]'s promise
+     * — "nothing at all was written" — is still true. Put last, a declined
+     * bubble would have to report `Rejected` after the URL had already been
+     * stored, which is the one thing that arm is documented not to do.
+     *
+     * 🔴 **What [Outcome.Applied] does and does not promise.** It names the
+     * fields that were WRITTEN. For `bubble_enabled` that is not the same as
+     * "and it is still on": the flag is written, the foreground service is
+     * asked for, and a platform refusal arriving after this function has
+     * returned clears it again. [Outcome.Applied] carries the argument; the
+     * short version is that `applied:` is a receipt and `DIAGNOSE` is the
+     * authority on the current state.
+     *
+     * @param bubble the owner of the bubble flag. 🔴 An interface and not a
+     *   `Context`: the rules here stay free of Android because **CI runs no
+     *   emulator**, which is this file's own founding constraint.
      */
     fun apply(
         request: Request,
         clip: ClipSettings,
         stt: SttSettings,
+        bubble: BubbleEnabled.Control,
     ): Outcome {
         if (request.isEmpty) return Outcome.NothingRequested
         request.clipBaseUrl?.let { url ->
             ClipEndpoints.rejectionFor(url)?.let { return Outcome.Rejected(it) }
         }
+        // 🔴 Parsed up here with the URL's validation and NOT at the write
+        // below, so an unreadable value is refused before anything is stored.
+        val wantsBubble = request.bubbleEnabled?.let { raw ->
+            BubbleEnabled.parseSpelling(raw)
+                ?: return Outcome.Rejected(BubbleEnabled.spellingRejection(raw))
+        }
         val applied = mutableListOf<String>()
+        if (wantsBubble != null) {
+            // 🔴 Still nothing written at this point, so this refusal keeps
+            // Outcome.Rejected's "nothing at all was written" promise.
+            if (!bubble.turn(wantsBubble)) {
+                return Outcome.Rejected(BubbleEnabled.NO_OVERLAY_REJECTION)
+            }
+            applied += KEY_BUBBLE_ENABLED
+        }
         request.clipBaseUrl?.let {
             clip.baseUrl = it
             applied += KEY_CLIP_BASE_URL

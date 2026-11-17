@@ -117,6 +117,19 @@ class ClipDiagnosticsTest {
         ctx.getSharedPreferences("diag_${prefsCounter++}", Context.MODE_PRIVATE)
             .also { it.edit().clear().commit() }
 
+    /**
+     * [ClipDiagnostics.readout] with the bubble reported OFF.
+     *
+     * 🔴 A fixture and not a default on the production signature: every test in
+     * this class is about the **clip** path, so they all want one fixed,
+     * uninteresting answer for the bubble — while a production default would
+     * let a real caller forget the argument and have the readout quietly claim
+     * the bubble is off. [theReadoutReportsTheBubbleFlagBothWaysRound] is the
+     * one test that varies it, and it calls the real function.
+     */
+    private fun readoutOf(settings: ClipSettings, outbox: ClipOutbox?) =
+        ClipDiagnostics.readout(settings, outbox, bubbleEnabled = false)
+
     private fun settings(
         cipher: SecretCipher = ReversingCipher(),
         p: SharedPreferences = prefs(),
@@ -146,7 +159,7 @@ class ClipDiagnosticsTest {
         ClipDiagnostics.recordFetch(ClipFetch.Status(401))
         ClipDiagnostics.recordFlush(ClipFlusher.Report(kept = 3, unreachable = true))
 
-        val readout = ClipDiagnostics.readout(settings, FakeOutbox(3))
+        val readout = readoutOf(settings, FakeOutbox(3))
         val rendered = readout.render()
 
         assertFalse(
@@ -220,7 +233,7 @@ class ClipDiagnosticsTest {
             .tokens.putToken(fixtureToken)
         val broken = settings(cipher = WriteOnlyCipher(), p = p)
 
-        val rendered = ClipDiagnostics.readout(broken, null).render()
+        val rendered = readoutOf(broken, null).render()
         assertTrue(rendered, rendered.contains("tokenCiphertextStored: true"))
         assertTrue(rendered, rendered.contains("tokenDecrypts: false"))
         assertTrue(rendered, rendered.contains("clipConfigured: false"))
@@ -228,7 +241,7 @@ class ClipDiagnosticsTest {
 
     @Test
     fun aFreshInstallIsDistinguishableFromABrokenKeystore() {
-        val rendered = ClipDiagnostics.readout(settings(), null).render()
+        val rendered = readoutOf(settings(), null).render()
         assertTrue(rendered, rendered.contains("tokenCiphertextStored: false"))
         assertTrue(rendered, rendered.contains("tokenDecrypts: false"))
     }
@@ -247,7 +260,7 @@ class ClipDiagnosticsTest {
             ClipFetch.Transport("ECONNREFUSED"),
         ).map {
             ClipDiagnostics.recordFetch(it)
-            ClipDiagnostics.readout(settings, null).render()
+            readoutOf(settings, null).render()
                 .lines().first { line -> line.startsWith("lastFetch:") }
         }
         assertEquals(
@@ -268,7 +281,7 @@ class ClipDiagnosticsTest {
         // "nothing has been attempted in this process"; with one, "nothing has
         // ever been recorded", which is the stronger and more useful claim and
         // is why persistence was added. See the persistence tests below.
-        val rendered = ClipDiagnostics.readout(settings(), null).render()
+        val rendered = readoutOf(settings(), null).render()
         assertTrue(rendered, rendered.contains("lastFetch: none"))
         assertTrue(rendered, rendered.contains("lastFlush: none"))
         assertNull(ClipDiagnostics.lastFetch())
@@ -287,7 +300,7 @@ class ClipDiagnosticsTest {
         ClipOutboxHealth.record(
             ClipFlusher.Report(stored = 2, dropped = 1, kept = 4, unreachable = true)
         )
-        val rendered = ClipDiagnostics.readout(settings(), null).render()
+        val rendered = readoutOf(settings(), null).render()
         assertTrue(
             rendered,
             rendered.contains(
@@ -307,7 +320,7 @@ class ClipDiagnosticsTest {
         // exists. What this one asserts is that the flush line carries the
         // REASON the drain stopped, not merely that it did.
         ClipOutboxHealth.record(ClipFlusher.Report(failure = "the queue file is unreadable"))
-        val rendered = ClipDiagnostics.readout(settings(), null).render()
+        val rendered = readoutOf(settings(), null).render()
         assertTrue(
             rendered,
             rendered.contains("cannotDrain=true why=the queue file is unreadable"),
@@ -320,7 +333,7 @@ class ClipDiagnosticsTest {
         // outbox was the only copy. "dropped" reads like a tidy-up; the fact
         // is that text the user was told had been taken no longer exists.
         ClipDiagnostics.recordFlush(ClipFlusher.Report(dropped = 2))
-        val rendered = ClipDiagnostics.readout(settings(), null).render()
+        val rendered = readoutOf(settings(), null).render()
         assertTrue(rendered, rendered.contains("destroyed=2"))
         assertFalse(rendered, rendered.contains("dropped="))
     }
@@ -332,15 +345,15 @@ class ClipDiagnosticsTest {
         // 🔴 Zero would report the opposite of an unreadable queue: "nothing is
         // waiting" against "I cannot tell what is waiting". The empty result
         // is the observable the most causes share.
-        val readout = ClipDiagnostics.readout(settings(), FakeOutbox(0, throws = true))
+        val readout = readoutOf(settings(), FakeOutbox(0, throws = true))
         assertNull(readout.queueDepth)
         assertTrue(readout.render().contains("queueDepth: unreadable"))
 
         // Positive control: the same code path reports a real depth, so the
         // `unreadable` above is about the throw and not about the plumbing.
-        assertEquals(3, ClipDiagnostics.readout(settings(), FakeOutbox(3)).queueDepth)
+        assertEquals(3, readoutOf(settings(), FakeOutbox(3)).queueDepth)
         assertTrue(
-            ClipDiagnostics.readout(settings(), FakeOutbox(3)).render()
+            readoutOf(settings(), FakeOutbox(3)).render()
                 .contains("queueDepth: 3")
         )
     }
@@ -353,7 +366,7 @@ class ClipDiagnosticsTest {
         // the operator would have two answers about one field.
         val settings = settings()
         settings.baseUrl = "http://10.42.0.10:8139/v1/clips"
-        val readout = ClipDiagnostics.readout(settings, null)
+        val readout = readoutOf(settings, null)
         assertEquals(
             ClipEndpoints.rejectionFor("http://10.42.0.10:8139/v1/clips"),
             readout.baseUrlRejection,
@@ -362,7 +375,7 @@ class ClipDiagnosticsTest {
 
         settings.baseUrl = "http://10.42.0.10:8139"
         assertTrue(
-            ClipDiagnostics.readout(settings, null).render()
+            readoutOf(settings, null).render()
                 .contains("clipBaseUrlRejection: none")
         )
     }
@@ -407,7 +420,7 @@ class ClipDiagnosticsTest {
         assertNull("a restart that kept state in memory is not a restart", ClipDiagnostics.lastFlush())
 
         ClipDiagnostics.install(store)
-        val rendered = ClipDiagnostics.readout(settings(), null).render()
+        val rendered = readoutOf(settings(), null).render()
         assertTrue(
             "the last flush did not survive the restart:\n$rendered",
             rendered.contains(
@@ -426,7 +439,7 @@ class ClipDiagnosticsTest {
         // the same JVM. It also pins the fail-closed decode — a store holding
         // junk is `none`, never a half-read outcome.
         ClipDiagnostics.install(MapStore())
-        var rendered = ClipDiagnostics.readout(settings(), null).render()
+        var rendered = readoutOf(settings(), null).render()
         assertTrue(rendered, rendered.contains("lastFlush: none"))
         assertTrue(rendered, rendered.contains("lastFlushAtMs: none"))
 
@@ -435,7 +448,7 @@ class ClipDiagnosticsTest {
         ClipDiagnostics.install(
             MapStore(mutableMapOf(ClipDiagnostics.KEY_LAST_FETCH to "not-a-timestamp|rows:3"))
         )
-        rendered = ClipDiagnostics.readout(settings(), null).render()
+        rendered = readoutOf(settings(), null).render()
         assertTrue(
             "an unparseable stored outcome was reported as a real one:\n$rendered",
             rendered.contains("lastFetch: none"),
@@ -491,7 +504,7 @@ class ClipDiagnosticsTest {
             ClipFlusher.Report(stored = 1, dropped = 1, kept = 2, failure = "ETIMEDOUT")
         )
         ClipDiagnostics.recordFetch(ClipFetch.Transport("Connection refused"))
-        ClipDiagnostics.readout(settings, FakeOutbox(2))
+        readoutOf(settings, FakeOutbox(2))
 
         val persisted = store.map.values.joinToString("\n")
         for (n in listOf(4, 8, 16)) {
@@ -634,7 +647,7 @@ class ClipDiagnosticsTest {
             ClipFetch.Transport("Connection reset\nby peer")
         )
 
-        val rendered = ClipDiagnostics.readout(settings(), null).render()
+        val rendered = readoutOf(settings(), null).render()
         // The contract, asserted as the contract: EVERY line is `key: value`
         // with a key this readout declares. A broken summary shows up as a line
         // whose key is a fragment of an exception message.
@@ -653,13 +666,14 @@ class ClipDiagnosticsTest {
                 "lastFlushAtMs",
                 "lastFetch",
                 "lastFetchAtMs",
+                "bubbleEnabled",
             ),
             keys,
         )
         assertEquals(
             "the readout grew or lost a line, so the key list above is not " +
                 "the whole of it:\n$rendered",
-            11,
+            12,
             rendered.lines().size,
         )
         // The reason is still THERE — flattened, not discarded. A sanitiser
@@ -741,8 +755,41 @@ class ClipDiagnosticsTest {
             lastFlushAtMs: 1763000000000
             lastFetch: rows:0
             lastFetchAtMs: 1763000000000
+            bubbleEnabled: false
             """.trimIndent(),
-            ClipDiagnostics.readout(settings, FakeOutbox(2)).render(),
+            readoutOf(settings, FakeOutbox(2)).render(),
+        )
+    }
+
+    /**
+     * 🔴 The bubble line must come from the ARGUMENT, both ways round.
+     *
+     * The whole-string pin above fixes it at `false`, so a mutant that
+     * hard-coded `bubbleEnabled: false` into [ClipDiagnostics.Readout.render]
+     * — or dropped the parameter on the floor — would pass it and every other
+     * test in this class, because they all pass `false` through the fixture.
+     * This is the control that makes the line mean anything: a value the
+     * constant cannot equal, watched to move the output.
+     */
+    @Test
+    fun theReadoutReportsTheBubbleFlagBothWaysRound() {
+        val s = settings()
+        assertTrue(
+            "the readout did not report the bubble as ON although it was told " +
+                "the flag is set, so the DIAGNOSE line is not derived from the " +
+                "flag at all and an agent reading it back cannot tell whether " +
+                "its own CONFIGURE write landed",
+            ClipDiagnostics.readout(s, null, bubbleEnabled = true).render()
+                .lines().contains("bubbleEnabled: true"),
+        )
+        assertTrue(
+            "the readout did not report the bubble as OFF when told so",
+            ClipDiagnostics.readout(s, null, bubbleEnabled = false).render()
+                .lines().contains("bubbleEnabled: false"),
+        )
+        assertTrue(
+            "Readout.bubbleEnabled is not the value it was constructed with",
+            ClipDiagnostics.readout(s, null, bubbleEnabled = true).bubbleEnabled,
         )
     }
 }

@@ -197,6 +197,19 @@ object ClipDiagnostics {
         val lastFlush: Outcome?,
         /** The last fetch, on the same terms as [lastFlush]. */
         val lastFetch: Outcome?,
+        /**
+         * [BubbleEnabled.isOn] — the user's **stored intent** for the floating
+         * bubble, which is the value `CONFIGURE`'s `bubble_enabled` extra sets.
+         *
+         * 🔴 Stored intent and NOT `BubbleEnabled.isUp`, which is the opposite
+         * of the rule for anything the user is *shown*. A caller driving this
+         * door has just written the flag and needs to read back the same thing
+         * it wrote; folding the overlay permission in here would report `false`
+         * for a correctly-stored `true` and send an agent off to debug a write
+         * that worked. The permission is a separate fact and is not claimed by
+         * this field.
+         */
+        val bubbleEnabled: Boolean,
     ) {
 
         /**
@@ -222,7 +235,11 @@ object ClipDiagnostics {
             appendLine("lastFlush: ${lastFlush?.summary ?: NONE}")
             appendLine("lastFlushAtMs: ${lastFlush?.atMs?.toString() ?: NONE}")
             appendLine("lastFetch: ${lastFetch?.summary ?: NONE}")
-            append("lastFetchAtMs: ${lastFetch?.atMs?.toString() ?: NONE}")
+            appendLine("lastFetchAtMs: ${lastFetch?.atMs?.toString() ?: NONE}")
+            // Last, after the clip block, because it is a different subsystem —
+            // and appended rather than inserted so a reader that already parses
+            // the lines above keeps working.
+            append("bubbleEnabled: $bubbleEnabled")
         }
     }
 
@@ -459,8 +476,17 @@ object ClipDiagnostics {
      *   a capture would be a diagnostic nobody could afford to run. A throw
      *   from the read is `queueDepth = null`, which is [UNREADABLE] and is not
      *   zero.
+     * @param bubbleEnabled [BubbleEnabled.isOn], passed in rather than read
+     *   here for the same reason as everything else on this signature. 🔴 **No
+     *   default**, deliberately: a `false` default would make every caller that
+     *   forgot it — and every test written against it — assert that the bubble
+     *   is off, which is the fail-silent direction.
      */
-    fun readout(settings: ClipSettings, outbox: ClipOutbox?): Readout = Readout(
+    fun readout(
+        settings: ClipSettings,
+        outbox: ClipOutbox?,
+        bubbleEnabled: Boolean,
+    ): Readout = Readout(
         configured = settings.isConfigured,
         tokenCiphertextStored = settings.tokens.hasCiphertext,
         tokenDecrypts = settings.tokens.hasToken,
@@ -470,6 +496,7 @@ object ClipDiagnostics {
         health = ClipOutboxHealth.state(),
         lastFlush = flush.get(),
         lastFetch = fetch.get(),
+        bubbleEnabled = bubbleEnabled,
     )
 
     /** Test seam only. */
