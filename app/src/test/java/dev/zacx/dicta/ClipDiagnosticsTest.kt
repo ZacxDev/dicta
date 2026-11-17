@@ -447,9 +447,17 @@ class ClipDiagnosticsTest {
         // 🔴 The distinction the picker's sentence depends on, asserted rather
         // than left as a comment. `lastFetch()` is the PERSISTED reason, which
         // survives; `lastFetchOutcome()` is the TYPE, which cannot be rebuilt
-        // from a string and is not claimed to be. The picker always fetches
-        // before it renders, so it never reads the typed one cold — if that
-        // ever changes, this is the test that should be failing.
+        // from a string and is not claimed to be.
+        //
+        // 🔴 CORRECTED (audit round 1, finding 3). This comment used to add
+        // "the picker always fetches before it renders, so it never reads the
+        // typed one cold — if that ever changes, this is the test that should
+        // be failing". It was FALSE and this was not the test that failed: the
+        // picker's read can THROW, recording nothing while the shell still
+        // renders, so the typed outcome was read cold-ish — holding the
+        // PREVIOUS open's value. `ClipDiagnostics.beginFetch` is the fix and
+        // `ClipPickerFailureMessageTest.aThrowingReadDoesNotInheritThePreviousOpensSentence`
+        // is the test that pins it.
         val store = MapStore()
         ClipDiagnostics.install(store)
         ClipDiagnostics.recordFetch(ClipFetch.Malformed)
@@ -558,6 +566,152 @@ class ClipDiagnosticsTest {
         // In memory regardless, so the readout is exactly as good as it was
         // before anything was persisted at all.
         assertEquals("malformed", ClipDiagnostics.lastFetch()?.summary)
+    }
+
+    @Test
+    fun hydrationDOESNOTOverwriteAnOutcomeAlreadyRecordedInThisProcess() {
+        // 🔴 Audit round 1's finding 6. `install` was an unsynchronized
+        // check-then-assign reachable from three threads — BubbleService.onCreate
+        // (main), the picker's worker, and the debug receiver's DIAGNOSE — so a
+        // record landing between the check and the assign was replaced by the
+        // older value sitting on disk, contrary to install's own kdoc. This is
+        // the single-threaded half of that claim: the ORDER alone must be
+        // enough, with no timing involved.
+        val store = MapStore(
+            mutableMapOf(
+                ClipDiagnostics.KEY_LAST_FETCH to "${AT_MS - 90_000}|http:503",
+                ClipDiagnostics.KEY_LAST_FLUSH to "${AT_MS - 90_000}|stale",
+            )
+        )
+        ClipDiagnostics.recordFetch(ClipFetch.Status(401))
+        ClipDiagnostics.recordFlush(ClipFlusher.Report(stored = 7))
+
+        ClipDiagnostics.install(store)
+
+        assertEquals(
+            "hydration replaced an outcome recorded in THIS process with an " +
+                "older one from disk. install's kdoc promises the opposite, " +
+                "and the fresher outcome is the one a diagnosis needs.",
+            "http:401",
+            ClipDiagnostics.lastFetch()?.summary,
+        )
+        assertEquals(AT_MS, ClipDiagnostics.lastFetch()?.atMs)
+        assertTrue(
+            "the flush outcome was replaced by the stored one",
+            ClipDiagnostics.lastFlush()?.summary?.contains("stored=7") == true,
+        )
+
+        // 🔴 POSITIVE CONTROL: the very same store DOES hydrate when nothing
+        // has been recorded, so the two assertions above are about the
+        // compare-and-set and not about a store that was never read.
+        ClipDiagnostics.clearForTest()
+        ClipDiagnostics.clock = { AT_MS }
+        ClipDiagnostics.install(store)
+        assertEquals("http:503", ClipDiagnostics.lastFetch()?.summary)
+    }
+
+    // --- the persisted summary is ONE BOUNDED LINE ---------------------------
+
+    @Test
+    fun aSummaryWithANewlineInItCannotBreakTheKeyValueContract() {
+        // 🔴 Audit round 1's finding 5. `render()` promises an agent one
+        // `key: value` per line and the whole-string pin below uses SINGLE-LINE
+        // fixtures only — so neither could see this. Both summaries are built
+        // from an exception `message`: ClipFlusher.Report.failure is one
+        // directly, and ClipFetch.Transport's detail is one. A wrapped
+        // IOException's message routinely carries a newline, and the line after
+        // it parses as a key that does not exist.
+        //
+        // 🔴 The fixture is a realistic message, not a bare "\n": a nested
+        // cause on its own line is what the platform actually produces.
+        ClipOutboxHealth.record(
+            ClipFlusher.Report(
+                failure = "java.io.IOException: unexpected end of stream\n\tat " +
+                    "okio.RealBufferedSource.read\r\nCaused by: ETIMEDOUT"
+            )
+        )
+        ClipDiagnostics.recordFetch(
+            ClipFetch.Transport("Connection reset\nby peer")
+        )
+
+        val rendered = ClipDiagnostics.readout(settings(), null).render()
+        // The contract, asserted as the contract: EVERY line is `key: value`
+        // with a key this readout declares. A broken summary shows up as a line
+        // whose key is a fragment of an exception message.
+        val keys = rendered.lines().map { it.substringBefore(": ") }
+        assertEquals(
+            "a summary broke the one-fact-per-line contract. Rendered:\n$rendered",
+            listOf(
+                "clipConfigured",
+                "tokenCiphertextStored",
+                "tokenDecrypts",
+                "clipBaseUrl",
+                "clipBaseUrlRejection",
+                "queueDepth",
+                "outboxHealth",
+                "lastFlush",
+                "lastFlushAtMs",
+                "lastFetch",
+                "lastFetchAtMs",
+            ),
+            keys,
+        )
+        assertEquals(
+            "the readout grew or lost a line, so the key list above is not " +
+                "the whole of it:\n$rendered",
+            11,
+            rendered.lines().size,
+        )
+        // The reason is still THERE — flattened, not discarded. A sanitiser
+        // that dropped the detail would have passed everything above while
+        // removing the only thing the line is for.
+        assertTrue(rendered, rendered.contains("ETIMEDOUT"))
+        assertTrue(rendered, rendered.contains("lastFetch: io:Connection reset by peer"))
+
+        // 🔴 NEGATIVE CONTROL for the instrument: the same line-splitting
+        // check, fed an UNSANITISED summary, must fail. Without this, the clean
+        // result above is indistinguishable from a check that cannot see a
+        // newline at all.
+        val poisoned = "lastFetch: io:Connection reset\nby peer"
+        assertEquals(2, poisoned.lines().size)
+        assertEquals("by peer", poisoned.lines()[1].substringBefore(": "))
+    }
+
+    @Test
+    fun anOverLongSummaryIsBoundedAndSaysThatItWasCut() {
+        // 🔴 The other half of finding 5, and it is not cosmetic: the summary is
+        // PERSISTED, so an unbounded one is an unbounded write to the app's
+        // preferences file driven by whatever string a failing server returned.
+        val store = MapStore()
+        ClipDiagnostics.install(store)
+        ClipDiagnostics.recordFetch(ClipFetch.Transport("x".repeat(5_000)))
+
+        val summary = ClipDiagnostics.lastFetch()?.summary ?: ""
+        assertEquals(
+            "the summary was not bounded: ${summary.length} characters",
+            ClipDiagnostics.MAX_SUMMARY_CHARS,
+            summary.length,
+        )
+        assertTrue(
+            "a truncated summary does not say it was cut, so a reader cannot " +
+                "tell a bounded reason from a complete one: <$summary>",
+            summary.endsWith(ClipDiagnostics.TRUNCATED),
+        )
+        // What is persisted is bounded too — that is the write this bounds.
+        val persisted = store.map[ClipDiagnostics.KEY_LAST_FETCH] ?: ""
+        assertTrue(
+            "the persisted form is ${persisted.length} characters",
+            persisted.length <= ClipDiagnostics.MAX_SUMMARY_CHARS + 32,
+        )
+
+        // 🔴 POSITIVE CONTROL, two directions. (a) An ORDINARY summary is
+        // untouched, so the bound cannot be firing on everything — a sanitiser
+        // that truncated normal output would satisfy the assertions above while
+        // discarding every reason this surface exists to report. (b) The input
+        // really was longer than the bound.
+        ClipDiagnostics.recordFetch(ClipFetch.Transport("ECONNREFUSED"))
+        assertEquals("io:ECONNREFUSED", ClipDiagnostics.lastFetch()?.summary)
+        assertTrue(5_000 > ClipDiagnostics.MAX_SUMMARY_CHARS)
     }
 
     // --- the whole rendered string ------------------------------------------

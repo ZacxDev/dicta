@@ -13,6 +13,7 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -200,6 +201,85 @@ class ClipPickerFailureMessageTest {
     // route a mutation proved reachable (a String-valued field such as the base
     // URL), and `DebugClipConfigReceiverTest` covers what actually leaves the
     // app through the exported component.
+
+    /**
+     * A source whose read THROWS — the keystore-invalidated handset.
+     *
+     * 🔴 Not a hypothetical. `KeystoreCipher.decrypt` catches only
+     * `AEADBadTagException` and `GeneralSecurityException`, while
+     * `KeyStore.load` raises `IOException` and the keystore daemon raises
+     * `ProviderException` (`SecretCipher.kt:90-96`), so a real `fetch()` on the
+     * production path can propagate either — which is why this fake throws a
+     * `ProviderException` rather than something invented.
+     */
+    private class ThrowingSource : SharedClipSource {
+        override fun rows(): List<Clip>? = throw java.security.ProviderException("keystore died")
+        override fun fetch(): ClipFetch = throw java.security.ProviderException("keystore died")
+        override fun delete(id: Long): Boolean = false
+    }
+
+    private fun emptyTextForAThrowingRead(): String {
+        val controller = Robolectric.buildActivity(ClipPickerActivity::class.java)
+        controller.get().flush = {}
+        controller.get().remote = ThrowingSource()
+        controller.get().loadExecutor = Executor { it.run() }
+        controller.setup()
+        return controller.get()
+            .findViewById<TextView>(R.id.picker_empty)
+            .text
+            .toString()
+    }
+
+    @Test
+    fun aThrowingReadDoesNotInheritThePreviousOpensSentence() {
+        // 🔴 THE REGRESSION, audit round 1's finding 3, and it is this PR's own
+        // failure class one step sideways: the screen stating something it does
+        // not know. `emptyUnreadableText` reads the PROCESS-GLOBAL typed
+        // outcome, and a read that throws records none — so the second open
+        // below rendered "the store answered and refused the token (401)" for
+        // an open that never reached a socket, which sends the reader to rotate
+        // a token over a dead keystore.
+        //
+        // 🔴 Two opens IN ONE TEST on purpose: one open cannot see this at all.
+        // The stale value is what makes it wrong, so the fixture has to be the
+        // SEQUENCE. (ClipDiagnostics is a process singleton; @Before clears it,
+        // so the first open below is what loads the 401.)
+        val first = emptyTextFor(status = 401, body = """{"error":"unauthorized"}""")
+        assertEquals(ctx.getString(R.string.clip_empty_unauthorized, 401), first)
+
+        val second = emptyTextForAThrowingRead()
+        assertNotEquals(
+            "a read that THREW rendered the previous open's 401 sentence. " +
+                "That sentence says the store answered — i.e. that the mesh is " +
+                "fine and the token is refused — about an open that made no " +
+                "request at all.",
+            first,
+            second,
+        )
+        // 🔴 And the positive claim, not only the absence: a read that
+        // classified nothing renders the generic unreadable sentence, which is
+        // what `null` means on this screen.
+        assertEquals(offMesh(), second)
+        assertNull(
+            "the typed outcome survived a read that classified nothing, which " +
+                "is the stale state this fix removes",
+            ClipDiagnostics.lastFetchOutcome(),
+        )
+    }
+
+    @Test
+    fun aClassifiedReadStillWordsItselfAfterAnEarlierOpen() {
+        // 🔴 NEGATIVE CONTROL for the test above. Clearing the typed outcome
+        // before every read must not cost the sentence that DOES apply — a fix
+        // that blanked the outcome and never repopulated it would pass the
+        // regression above while making all four messages generic again, which
+        // is the original defect restored.
+        emptyTextFor(throwOnConnect = IOException("ECONNREFUSED"))
+        assertEquals(
+            ctx.getString(R.string.clip_empty_unauthorized, 401),
+            emptyTextFor(status = 401, body = ""),
+        )
+    }
 
     // --- the states that are NOT failures ------------------------------------
 

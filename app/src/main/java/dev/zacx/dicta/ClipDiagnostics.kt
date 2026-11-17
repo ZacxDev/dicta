@@ -2,6 +2,7 @@ package dev.zacx.dicta
 
 import android.content.Context
 import android.content.SharedPreferences
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * One machine-readable answer to *"why is the shared clipboard not working"*.
@@ -84,7 +85,11 @@ object ClipDiagnostics {
      *
      * @param summary the already-rendered line — `ClipFetch.reason`, or the
      *   flush counters. Secret-free by construction, asserted by
-     *   `ClipDiagnosticsTest`.
+     *   `ClipDiagnosticsTest`. 🔴 **One line, and bounded** — see [sanitise]:
+     *   it is normalised on the way in rather than trusted, because
+     *   `ClipFetch.reason` and [ClipFlusher.Report.failure] are both built from
+     *   an exception `message` and nothing upstream promises that is a single
+     *   short line.
      * @param atMs wall clock at the moment it was recorded. 🔴 Reported as raw
      *   epoch milliseconds: an agent parses this, and a formatted local time
      *   would make the readout depend on the device's locale and zone.
@@ -135,8 +140,21 @@ object ClipDiagnostics {
          * most valuable in exactly the case where the process is about to
          * stop — a crash, a force-stop, the system killing a background
          * service — and `apply()` is allowed to lose a write that has not
-         * reached disk. This happens once a minute at most, off the main
-         * thread, and holds a few dozen bytes.
+         * reached disk. This happens once a minute at most, on the thread that
+         * drained the queue, and holds a few dozen bytes.
+         *
+         * 🔴 **CORRECTED (audit round 1, finding 2): "off the main thread" is
+         * a claim about the WRITER and says nothing about the thread this
+         * BLOCKS.** This kdoc used to defend `commit()` with that sentence
+         * alone. The writer is indeed a worker — but [ClipOutboxHealth.record]
+         * forwarded here from **inside its own monitor**, and
+         * [ClipOutboxHealth.state] takes that same monitor on the MAIN thread
+         * (`BubbleService`'s window build, and the debug receiver's
+         * `DIAGNOSE`). So a blocking disk write on a worker could stall the
+         * main thread behind it, which is not a cost `commit()` is entitled to
+         * impose. `commit()` stays — the reason above is the right one — and
+         * the forward now happens OUTSIDE that monitor, which is where the fix
+         * belongs: see `ClipOutboxHealth.record`.
          */
         override fun write(key: String, value: String) {
             prefs.edit().putString(key, value).commit()
@@ -214,17 +232,36 @@ object ClipDiagnostics {
     /** 🔴 A queue that could not be READ. Deliberately not `0`. */
     const val UNREADABLE: String = "unreadable"
 
+    /**
+     * How much of a summary is kept. See [sanitise].
+     *
+     * 🔴 200 and not 20: every summary this code builds is well under it
+     * (`stored=… destroyed=… kept=… cannotDrain=… why=…` with a realistic
+     * failure string is about 80), so the bound exists for the pathological
+     * case and must not truncate the ordinary one. A bound that fires in normal
+     * operation would be a diagnostic quietly discarding the reason it exists
+     * to report.
+     */
+    const val MAX_SUMMARY_CHARS: Int = 200
+
+    /** What a truncated summary ends with, so a reader can see it was cut. */
+    const val TRUNCATED: String = "…"
+
     /** Preference key holding the last flush [Outcome]. */
     const val KEY_LAST_FLUSH: String = "clip_diag_last_flush"
 
     /** Preference key holding the last fetch [Outcome]. */
     const val KEY_LAST_FETCH: String = "clip_diag_last_fetch"
 
-    @Volatile
-    private var flush: Outcome? = null
+    /**
+     * 🔴 An [AtomicReference] and not a `@Volatile var`, so [install]'s
+     * "hydrate only if nothing is recorded yet" is one indivisible step. See
+     * [install] for the race this closes (audit round 1, finding 6).
+     */
+    private val flush = AtomicReference<Outcome?>(null)
 
-    @Volatile
-    private var fetch: Outcome? = null
+    /** [flush]'s reason exactly. */
+    private val fetch = AtomicReference<Outcome?>(null)
 
     /**
      * The last fetch as its TYPE, for the sentence on screen.
@@ -233,8 +270,24 @@ object ClipDiagnostics {
      * needs a reason that survives a restart, while
      * [ClipPickerActivity.emptyUnreadableText] needs to branch on *which*
      * failure it was, which a reason string cannot be turned back into. This
-     * one is process-lifetime by nature — the picker always fetches before it
-     * renders, so it is never read without having just been written.
+     * one is process-lifetime by nature, and it is never hydrated from disk.
+     *
+     * 🔴 **CORRECTED (audit round 1, finding 3).** This kdoc used to say *"the
+     * picker always fetches before it renders, so it is never read without
+     * having just been written"*, and that was FALSE in the one case the
+     * sentence on screen matters most. The picker's read can **throw** —
+     * `KeystoreCipher.decrypt` catches only `AEADBadTagException` and
+     * `GeneralSecurityException`, while `KeyStore.load` raises `IOException`
+     * and the keystore daemon raises `ProviderException` (see [SecretCipher])
+     * — and `FloatingPickerActivity.load` turns a throw into
+     * `loaded = false` **without** any outcome having been recorded. So this
+     * field still held the PREVIOUS open's outcome: a 401 followed by a
+     * throwing read rendered *"the store answered and refused the token"* for
+     * an open that made no request at all.
+     *
+     * [beginFetch] is the fix, and it is why this field is cleared rather than
+     * merely overwritten: a read that classified nothing must report nothing,
+     * because an outcome from an earlier open is not evidence about this one.
      */
     @Volatile
     private var fetchOutcome: ClipFetch? = null
@@ -257,13 +310,25 @@ object ClipDiagnostics {
      * process: an in-memory outcome is newer than anything on disk by
      * construction, and the first thing a reader does after installing is
      * usually to record a fresh one.
+     *
+     * 🔴 **And that is now ATOMIC rather than merely intended (audit round 1,
+     * finding 6).** This was an unsynchronized check-then-assign — `if (flush
+     * == null) flush = …` — and it is reachable from three threads:
+     * `BubbleService.onCreate` (main), `ClipPickerActivity.readRows` (the
+     * picker's worker) and the debug receiver's `DIAGNOSE` (main, in a process
+     * the service is also starting). A record landing between the check and the
+     * assign was overwritten by the older disk value, which is exactly what the
+     * paragraph above promises cannot happen. `compareAndSet(null, …)` makes
+     * the promise the mechanism.
      */
     fun install(context: Context) = install(PrefsStore(SttSettings.prefs(context)))
 
     internal fun install(store: Store) {
         this.store = store
-        if (flush == null) flush = Outcome.decode(store.read(KEY_LAST_FLUSH))
-        if (fetch == null) fetch = Outcome.decode(store.read(KEY_LAST_FETCH))
+        // 🔴 compareAndSet and NOT set: the decode is allowed to lose the race
+        // against a concurrent record, and must. Only `null` may be replaced.
+        Outcome.decode(store.read(KEY_LAST_FLUSH))?.let { flush.compareAndSet(null, it) }
+        Outcome.decode(store.read(KEY_LAST_FETCH))?.let { fetch.compareAndSet(null, it) }
     }
 
     /**
@@ -278,17 +343,39 @@ object ClipDiagnostics {
      * sites is the install one named in the class kdoc.)
      */
     fun recordFlush(report: ClipFlusher.Report) {
-        record(KEY_LAST_FLUSH, flushSummary(report)) { flush = it }
+        record(KEY_LAST_FLUSH, flushSummary(report)) { flush.set(it) }
     }
 
     /** Retains [outcome] as the last fetch. See [ClipPickerActivity.readRows]. */
     fun recordFetch(outcome: ClipFetch) {
         fetchOutcome = outcome
-        record(KEY_LAST_FETCH, outcome.reason) { fetch = it }
+        record(KEY_LAST_FETCH, outcome.reason) { fetch.set(it) }
+    }
+
+    /**
+     * Forgets the TYPED last-fetch outcome, so the next sentence on screen
+     * describes the read that is about to happen.
+     *
+     * 🔴 **Audit round 1's finding 3, at its source.** Called by
+     * [ClipPickerActivity.readRows] before it reads, because that read can
+     * throw before classifying anything — and a [fetchOutcome] left over from
+     * an earlier open then words THIS open: a 401 followed by a throwing read
+     * rendered *"the store answered, so you are on the mesh"* for an open that
+     * never reached the socket. An absence is the only honest answer there, and
+     * `null` is the branch [ClipPickerActivity.emptyUnreadableText] already has
+     * for it.
+     *
+     * ⚠ Deliberately does NOT touch [fetch] or the persisted value. That one is
+     * *"the last fetch that was ever classified"*, which is a different and
+     * still-true claim — the readout says when it happened, so it cannot be
+     * mistaken for this open.
+     */
+    fun beginFetch() {
+        fetchOutcome = null
     }
 
     private inline fun record(key: String, summary: String, assign: (Outcome) -> Unit) {
-        val outcome = Outcome(summary, clock())
+        val outcome = Outcome(sanitise(summary), clock())
         assign(outcome)
         // 🔴 A store that throws must not take the capture path down with it.
         // A diagnostic is worth less than a flush, and a full disk or a
@@ -311,15 +398,46 @@ object ClipDiagnostics {
      * gets persisted. Only counters, booleans and [ClipFlusher.Report.failure]
      * reach it — there is no clip text in a `Report`.
      */
+    /**
+     * One line, at most [MAX_SUMMARY_CHARS] of it.
+     *
+     * 🔴 **Audit round 1's finding 5.** [Readout.render] promises an agent a
+     * `key: value` line format and `ClipDiagnosticsTest` pins the whole
+     * rendered string — but the summary reaching it was whatever an exception
+     * `message` happened to be. A `message` carrying a newline (a wrapped
+     * `IOException`, a stack-trace-shaped detail, a server body echoed into a
+     * failure string) split `lastFlush:` into two lines, and the second one
+     * parses as a key that does not exist. [Outcome.encode] has the same
+     * problem one layer down: a newline in the persisted value survives the
+     * restart and breaks the readout of a LATER process.
+     *
+     * 🔴 Bounded as well as flattened, and the bound is not hygiene: the
+     * summary is persisted, so an unbounded one is an unbounded write to the
+     * app's preferences file driven by a remote error string.
+     *
+     * ⚠ Tabs and carriage returns as well as `\n` — a guard on the one
+     * character that was noticed is walkable by the next one. The existing
+     * summaries are single-line and single-spaced, so this is the identity on
+     * every one of them, which is what keeps the whole-string pins green.
+     */
+    private fun sanitise(summary: String): String {
+        val flat = summary.replace(Regex("[\\r\\n\\t]+"), " ").trim()
+        return if (flat.length <= MAX_SUMMARY_CHARS) {
+            flat
+        } else {
+            flat.take(MAX_SUMMARY_CHARS - TRUNCATED.length) + TRUNCATED
+        }
+    }
+
     private fun flushSummary(r: ClipFlusher.Report): String {
         val why = r.failure ?: if (r.unreachable) "unreachable" else NONE
         return "stored=${r.stored} destroyed=${r.dropped} kept=${r.kept} " +
             "cannotDrain=${r.cannotDrain} why=$why"
     }
 
-    fun lastFlush(): Outcome? = flush
+    fun lastFlush(): Outcome? = flush.get()
 
-    fun lastFetch(): Outcome? = fetch
+    fun lastFetch(): Outcome? = fetch.get()
 
     /** The last fetch's type, for the picker's sentence. See [fetchOutcome]. */
     fun lastFetchOutcome(): ClipFetch? = fetchOutcome
@@ -350,14 +468,14 @@ object ClipDiagnostics {
         baseUrlRejection = ClipEndpoints.rejectionFor(settings.baseUrl),
         queueDepth = outbox?.let { runCatching { it.pending().size }.getOrNull() },
         health = ClipOutboxHealth.state(),
-        lastFlush = flush,
-        lastFetch = fetch,
+        lastFlush = flush.get(),
+        lastFetch = fetch.get(),
     )
 
     /** Test seam only. */
     fun clearForTest() {
-        flush = null
-        fetch = null
+        flush.set(null)
+        fetch.set(null)
         fetchOutcome = null
         store = null
         clock = { System.currentTimeMillis() }

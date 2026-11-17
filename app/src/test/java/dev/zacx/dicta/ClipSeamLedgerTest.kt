@@ -218,14 +218,29 @@ class ClipSeamLedgerTest {
      * installing re-opens the hole one file sideways. SHRINK: a site that
      * stopped installing is a process whose diagnostics quietly went back to
      * being process-lifetime.
+     *
+     * 🔴 **WIDENED (audit round 1, finding 4): this guard was NARROWER THAN ITS
+     * OWN NAME.** It says *"records or READS"* and scanned for
+     * `ClipDiagnostics.record` and `readout(` only — so the three public
+     * readers, [ClipDiagnostics.lastFlush], [ClipDiagnostics.lastFetch] and
+     * [ClipDiagnostics.lastFetchOutcome], were uncovered. A file reading
+     * `lastFlush()` without installing is precisely the defect in the paragraph
+     * above (it reports `none` for an outcome sitting on disk), and the guard
+     * read as coverage for it while providing none. [READERS] is now the whole
+     * public surface, enumerated so the next function added to it is a visible
+     * decision.
+     *
+     * ⚠ `beginFetch` is deliberately NOT in [READERS]: it neither records nor
+     * reads an outcome, it forgets the typed one, and that needs no store — so
+     * requiring an install for it would be a rule wider than its own sentence,
+     * which is the fault this correction is about.
      */
     @Test
     fun everySiteThatRecordsOrREADSDiagnosticsINSTALLSTheStore() {
         val touching = sourceFiles()
             .filter { file ->
                 val src = normalise(file.readText())
-                src.contains("ClipDiagnostics.record") ||
-                    src.contains("ClipDiagnostics.readout(")
+                READERS.any { src.contains(it) }
             }
             .map { it.name }
             .sorted()
@@ -293,6 +308,56 @@ class ClipSeamLedgerTest {
      * computed from one Report.
      */
     private val diagnosticsForwarders = listOf("ClipOutboxHealth.kt")
+
+    /**
+     * Every way to record or READ a diagnostics outcome, as needles over the
+     * normalised source — the whole of [ClipDiagnostics]' public outcome
+     * surface, writers and readers alike.
+     *
+     * 🔴 `ClipDiagnostics.record` without a trailing `(` on purpose: it covers
+     * `recordFlush` and `recordFetch` both, and a third `record…` function
+     * would be covered the moment it is written rather than the moment someone
+     * remembers to add it here. The readers are spelled with their `(` because
+     * `lastFetch(` must not also match `lastFetchOutcome(`'s kdoc references.
+     */
+    private val READERS = listOf(
+        "ClipDiagnostics.record",
+        "ClipDiagnostics.readout(",
+        "ClipDiagnostics.lastFlush(",
+        "ClipDiagnostics.lastFetch(",
+        "ClipDiagnostics.lastFetchOutcome(",
+    )
+
+    @Test
+    fun theWidenedDiagnosticsScanCanSeeEACHWayOfReadingAnOutcome() {
+        // 🔴 POSITIVE CONTROL for the widening itself, which is a different
+        // claim from the ledger passing. A needle with a typo in it — or one
+        // that stopped matching after a rename — contributes nothing and the
+        // ledger still reads clean, which is exactly how the narrow version of
+        // this guard looked correct for three readers it could not see.
+        for (needle in READERS) {
+            assertTrue(
+                "the needle `$needle` does not match a call site written with " +
+                    "it, so it contributes nothing to the ledger above",
+                normalise("fun f() { val x = $needle 1) }").contains(needle),
+            )
+        }
+        // 🔴 And the READER needles have a real hit in the tree, so widening to
+        // them is observable rather than decorative. If no file reads an
+        // outcome any more, this control is what should be failing — not the
+        // ledger, which would still be green.
+        val readerNeedles = READERS.filter { it.contains(".last") }
+        val hits = sourceFiles().count { file ->
+            val src = normalise(file.readText())
+            readerNeedles.any { src.contains(it) }
+        }
+        assertTrue(
+            "no file in the shipped source reads an outcome through " +
+                "lastFlush()/lastFetch()/lastFetchOutcome(), so the three " +
+                "needles added for them cannot change this ledger's answer",
+            hits > 0,
+        )
+    }
 
     @Test
     fun theTwoLedgersDoNotSILENTLYAgreeByBeingEmpty() {

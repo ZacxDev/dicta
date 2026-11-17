@@ -163,6 +163,15 @@ class ClipPickerActivity : FloatingPickerActivity<Clip>() {
         // recorded BEFORE it is reduced to a nullable list, so
         // [emptyUnreadableText] and [ClipDiagnostics] read the same
         // classification rather than two guesses at it.
+        // 🔴 BEFORE the read, and before `defaultRemote()` — which unwraps the
+        // token and can therefore throw on a keystore the system has
+        // invalidated. Audit round 1's finding 3: this read can fail WITHOUT
+        // producing an outcome, and the typed outcome is process-global, so
+        // without this the sentence on screen is the PREVIOUS open's. A 401
+        // then a throwing read rendered "the store answered and refused the
+        // token" for an open that never reached the socket, which is the exact
+        // failure class this whole change exists to remove.
+        ClipDiagnostics.beginFetch()
         val outcome = (remote ?: defaultRemote()).fetch()
         ClipDiagnostics.recordFetch(outcome)
         return (outcome as? ClipFetch.Rows)?.rows
@@ -194,6 +203,24 @@ class ClipPickerActivity : FloatingPickerActivity<Clip>() {
      * The off-mesh wording is now reached **only** by [ClipFetch.Transport] —
      * the one outcome it is true of — and by `null`, which on this screen means
      * the fetch threw before classifying anything.
+     *
+     * 🔴 **CORRECTED (audit round 1, finding 3): "about the fetch that just
+     * happened" was not something this code enforced.** The claim rested on
+     * [readRows] always recording before `render()` ran — and a read that
+     * THROWS records nothing, while `FloatingPickerActivity.load` still sets
+     * `loaded = false` and renders. The outcome is process-global, so the
+     * throwing open inherited the previous one's sentence: open with a 401,
+     * then open again with a read that throws, and this said *"the store
+     * answered and refused the token"* about an open that made no request. The
+     * throw is reachable — `KeystoreCipher.decrypt` catches only
+     * `AEADBadTagException` and `GeneralSecurityException`, while
+     * `KeyStore.load` raises `IOException` and the keystore daemon raises
+     * `ProviderException` ([SecretCipher]).
+     *
+     * [readRows] now calls [ClipDiagnostics.beginFetch] before it reads, so a
+     * read that classifies nothing lands on the `null` branch above — the
+     * generic unreadable sentence, which claims no more than is known. Pinned
+     * by `ClipPickerFailureMessageTest.aThrowingReadDoesNotInheritThePreviousOpensSentence`.
      */
     override fun emptyUnreadableText(): String =
         when (val outcome = ClipDiagnostics.lastFetchOutcome()) {
