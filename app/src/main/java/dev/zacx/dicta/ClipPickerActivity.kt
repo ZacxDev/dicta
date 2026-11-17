@@ -141,6 +141,11 @@ class ClipPickerActivity : FloatingPickerActivity<Clip>() {
         // latch clears — and clearing it BEFORE the drain means a flush in
         // this same open that destroys another capture re-raises it, rather
         // than being wiped by the acknowledgement that preceded it.
+        // 🔴 Before the flush and before the fetch, because BOTH record an
+        // outcome and a recorded outcome that is not persisted is the Q2
+        // defect: the first DIAGNOSE after a force-stop reported `none`.
+        // Idempotent; see [ClipDiagnostics.install].
+        ClipDiagnostics.install(this)
         ClipOutboxHealth.acknowledgeDestroyed()
         runCatching { (flush ?: ::defaultFlush).invoke() }
             .onFailure {
@@ -152,8 +157,82 @@ class ClipPickerActivity : FloatingPickerActivity<Clip>() {
                     ClipFlusher.Report(failure = it.message ?: it.javaClass.simpleName)
                 )
             }
-        return (remote ?: defaultRemote()).rows()
+        // 🔴 `fetch()`, not `rows()`. `rows()` is the lossy view — a 401, a
+        // body that did not parse and a dead socket were one `null`, and this
+        // screen rendered all three as "usually being off-mesh". The outcome is
+        // recorded BEFORE it is reduced to a nullable list, so
+        // [emptyUnreadableText] and [ClipDiagnostics] read the same
+        // classification rather than two guesses at it.
+        // 🔴 BEFORE the read, and before `defaultRemote()` — which unwraps the
+        // token and can therefore throw on a keystore the system has
+        // invalidated. Audit round 1's finding 3: this read can fail WITHOUT
+        // producing an outcome, and the typed outcome is process-global, so
+        // without this the sentence on screen is the PREVIOUS open's. A 401
+        // then a throwing read rendered "the store answered and refused the
+        // token" for an open that never reached the socket, which is the exact
+        // failure class this whole change exists to remove.
+        ClipDiagnostics.beginFetch()
+        val outcome = (remote ?: defaultRemote()).fetch()
+        ClipDiagnostics.recordFetch(outcome)
+        return (outcome as? ClipFetch.Rows)?.rows
     }
+
+    /**
+     * The unreadable-state sentence, **specific to why the read failed**.
+     *
+     * ## 🔴 The defect this closes, which misled a human and an agent alike
+     *
+     * This screen said one thing for four different failures:
+     * *"Dicta could not reach the shared clipboard. It is mesh-only, so this is
+     * usually being off-mesh"*. A **401 read as off-mesh** — the store
+     * reachable, answering, and refusing the token — so the only surface that
+     * reports on this feature stated the opposite of what was wrong. The
+     * collapse happened in [ClipHttp] and is fixed there ([ClipFetch]); this is
+     * where the distinction becomes words.
+     *
+     * 🔴 Read off [ClipDiagnostics.lastFetchOutcome] rather than from a field
+     * of this activity, so the sentence on screen and the machine-readable
+     * readout cannot disagree about one fetch. [readRows] records before
+     * returning, and `render()` runs after it on the main thread.
+     *
+     * ⚠ The TYPED outcome, not the persisted one, and that distinction arrived
+     * with persistence (Q2): a reason string cannot be turned back into the
+     * branch that produced it, and this sentence is about the fetch that just
+     * happened rather than about the last one that ever happened.
+     *
+     * The off-mesh wording is now reached **only** by [ClipFetch.Transport] —
+     * the one outcome it is true of — and by `null`, which on this screen means
+     * the fetch threw before classifying anything.
+     *
+     * 🔴 **CORRECTED (audit round 1, finding 3): "about the fetch that just
+     * happened" was not something this code enforced.** The claim rested on
+     * [readRows] always recording before `render()` ran — and a read that
+     * THROWS records nothing, while `FloatingPickerActivity.load` still sets
+     * `loaded = false` and renders. The outcome is process-global, so the
+     * throwing open inherited the previous one's sentence: open with a 401,
+     * then open again with a read that throws, and this said *"the store
+     * answered and refused the token"* about an open that made no request. The
+     * throw is reachable — `KeystoreCipher.decrypt` catches only
+     * `AEADBadTagException` and `GeneralSecurityException`, while
+     * `KeyStore.load` raises `IOException` and the keystore daemon raises
+     * `ProviderException` ([SecretCipher]).
+     *
+     * [readRows] now calls [ClipDiagnostics.beginFetch] before it reads, so a
+     * read that classifies nothing lands on the `null` branch above — the
+     * generic unreadable sentence, which claims no more than is known. Pinned
+     * by `ClipPickerFailureMessageTest.aThrowingReadDoesNotInheritThePreviousOpensSentence`.
+     */
+    override fun emptyUnreadableText(): String =
+        when (val outcome = ClipDiagnostics.lastFetchOutcome()) {
+            is ClipFetch.Status ->
+                if (outcome.isAuthFault) {
+                    getString(R.string.clip_empty_unauthorized, outcome.status)
+                } else {
+                    getString(R.string.clip_empty_http, outcome.status)
+                }
+            is ClipFetch.Malformed -> getString(R.string.clip_empty_malformed)
+            else -> getString(emptyUnreadableRes)
+        }
 
     /**
      * [query] filtered, with **no reordering whatsoever**.

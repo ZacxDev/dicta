@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  🔴 THE DEBUG-ONLY MANIFEST, AND THE ONLY PLACE THE CONFIG/DIAGNOSTICS
+  SURFACE IS DECLARED.
+
+  This repository is PUBLIC and the component below writes a real credential.
+  Declaring it here rather than in src/main means a RELEASE build contains no
+  such component at all — not a component behind a `BuildConfig.DEBUG` check,
+  which would still be an addressable entry point in every shipped APK whose
+  safety rested on one `if`. There is nothing to gate and nothing to get wrong.
+
+  Operator decision, taken before the code was written. There was no
+  src/debug/ source set in this project before this file; this establishes the
+  pattern, and `DebugConfigSurfaceManifestTest` is the guard that keeps the
+  declaration out of src/main. That guard is mutation-tested — the declaration
+  was moved into src/main/AndroidManifest.xml and the guard was watched to fail
+  with its own message, then moved back.
+
+  🔴 exported="true" is REQUIRED and is not an oversight: `adb shell am
+  broadcast` cannot reach an unexported receiver, and reaching it from adb is
+  the entire purpose. The residual exposure on a debug build — another app can
+  SET a token, and cannot READ one — is stated in full in
+  DebugClipConfigReceiver's kdoc. A signature-level android:permission was
+  considered and rejected there: the shell uid holds no app signature
+  permission, so it would close the only door this opens.
+
+  The <intent-filter> actions are namespaced under `dev.zacx.dicta.debug.` so
+  they cannot collide with a system action or with another app's.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <application>
+        <receiver
+            android:name=".DebugClipConfigReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="dev.zacx.dicta.debug.CONFIGURE" />
+                <action android:name="dev.zacx.dicta.debug.DIAGNOSE" />
+            </intent-filter>
+        </receiver>
+    </application>
+</manifest>

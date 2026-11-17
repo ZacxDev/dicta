@@ -29,11 +29,14 @@ import java.io.File
  * lives in [CaptureActivityTest]: a structural check type-checks straight past
  * a wrong argument.
  *
- * 🔴 **Non-recursive, deliberately.** The scan lists `app/src/main/java/dev/
- * zacx/dicta` with `listFiles`, so a file in a NEW SUBDIRECTORY would be
- * invisible to it and the ledger would read clean. Every source file in this
- * app is flat, and this scan is one of the reasons it must stay that way.
- * [theScanActuallyReadsTheTree] is the positive control on that.
+ * 🔴 **Two source sets, and non-recursive within each.** The scan lists
+ * `app/src/main/java/dev/zacx/dicta` **and** `app/src/debug/java/dev/zacx/
+ * dicta` with `listFiles` and unions them, so a file in a NEW SUBDIRECTORY of
+ * either would be invisible to it and the ledger would read clean. Every source
+ * file in this app is flat, and this scan is one of the reasons it must stay
+ * that way. [theScanActuallyReadsTheTree] is the positive control, and it names
+ * a file from each source set so a debug listing that came back empty cannot
+ * pass silently. [sourceDirs] fails closed if either directory is missing.
  */
 class ClipSeamLedgerTest {
 
@@ -76,6 +79,15 @@ class ClipSeamLedgerTest {
         "BubbleService.kt",
         "CaptureActivity.kt",
         "ClipPickerActivity.kt",
+        // 🔴 A READER and never a writer: the debug diagnostics surface calls
+        // `pending()` to report the queue depth and never `append` or
+        // `remove`. It is ledgered anyway — the scan was widened to src/debug
+        // in the same change for exactly this reason, because a participant
+        // the ledger cannot see is the hole, whatever it does once it is
+        // there. `ClipDiagnostics` itself is deliberately NOT here: it is
+        // handed a `ClipOutbox` rather than constructing one, which is what
+        // keeps it Android-free and unit-testable.
+        "DebugClipConfigReceiver.kt",
     )
 
     @Test
@@ -187,6 +199,163 @@ class ClipSeamLedgerTest {
             "the consumption rule was applied to no file at all",
             2,
             callSites.size,
+        )
+    }
+
+    /**
+     * Every file that records or reads a diagnostics outcome, which must be
+     * every file that installs the store.
+     *
+     * 🔴 THE SEAM PERSISTENCE CREATED. `ClipDiagnostics` holds its outcomes in
+     * memory and writes them through to a [ClipDiagnostics.Store] that someone
+     * has to install; a recorder that never installs one loses its outcome on
+     * the next force-stop, and a READER that never installs one reports `none`
+     * for outcomes that are sitting on disk. Both are silent, and both are the
+     * exact defect round 0's Q2 was answered to close — so the relationship is
+     * pinned rather than the component.
+     *
+     * Both directions. GROWTH: a fourth surface that records or reads without
+     * installing re-opens the hole one file sideways. SHRINK: a site that
+     * stopped installing is a process whose diagnostics quietly went back to
+     * being process-lifetime.
+     *
+     * 🔴 **WIDENED (audit round 1, finding 4): this guard was NARROWER THAN ITS
+     * OWN NAME.** It says *"records or READS"* and scanned for
+     * `ClipDiagnostics.record` and `readout(` only — so the three public
+     * readers, [ClipDiagnostics.lastFlush], [ClipDiagnostics.lastFetch] and
+     * [ClipDiagnostics.lastFetchOutcome], were uncovered. A file reading
+     * `lastFlush()` without installing is precisely the defect in the paragraph
+     * above (it reports `none` for an outcome sitting on disk), and the guard
+     * read as coverage for it while providing none. [READERS] is now the whole
+     * public surface, enumerated so the next function added to it is a visible
+     * decision.
+     *
+     * ⚠ `beginFetch` is deliberately NOT in [READERS]: it neither records nor
+     * reads an outcome, it forgets the typed one, and that needs no store — so
+     * requiring an install for it would be a rule wider than its own sentence,
+     * which is the fault this correction is about.
+     */
+    @Test
+    fun everySiteThatRecordsOrREADSDiagnosticsINSTALLSTheStore() {
+        val touching = sourceFiles()
+            .filter { file ->
+                val src = normalise(file.readText())
+                READERS.any { src.contains(it) }
+            }
+            .map { it.name }
+            .sorted()
+        assertEquals(
+            "🔴 the set of files that record or read a ClipDiagnostics " +
+                "outcome changed. An ENTRY POINT must call " +
+                "ClipDiagnostics.install first — see that object's kdoc for " +
+                "the defect (a cold DIAGNOSE reporting `none` for a queue " +
+                "that has been failing for days). If the new file is a " +
+                "forwarder reached only from an entry point, say so by " +
+                "putting it in the forwarder list and explaining why it has " +
+                "no Context of its own. Update this ledger deliberately.",
+            (diagnosticsEntryPoints + diagnosticsForwarders).sorted(),
+            touching,
+        )
+
+        for (name in diagnosticsEntryPoints) {
+            val src = normalise(sourceFiles().first { it.name == name }.readText())
+            assertTrue(
+                "🔴 $name records or reads a diagnostics outcome and never " +
+                    "calls ClipDiagnostics.install. Without a store, an " +
+                    "outcome is held for this process only — which is what " +
+                    "the operator rejected: the first DIAGNOSE after a " +
+                    "force-stop then says `none` in exactly the situation the " +
+                    "readout exists to explain.",
+                src.contains("ClipDiagnostics.install("),
+            )
+        }
+
+        // 🔴 POSITIVE CONTROL for the LOOP, not for the scan: an entry-point
+        // ledger that came back empty would skip every iteration and pass
+        // while nothing installed anything.
+        assertEquals(
+            "the install rule was applied to no file at all",
+            2,
+            diagnosticsEntryPoints.size,
+        )
+    }
+
+    /**
+     * The surfaces that record or read a diagnostics outcome **and own a
+     * `Context`**, so each must install the store itself.
+     *
+     * 🔴 `BubbleService.kt` installs one too and is deliberately NOT here: it
+     * flushes through `ClipOutboxHealth` rather than recording directly, so the
+     * scan does not see it. The rule is that every entry point installs, not
+     * that every installer is an entry point — an extra install is harmless and
+     * a missing one is the defect.
+     */
+    private val diagnosticsEntryPoints = listOf(
+        "ClipPickerActivity.kt",
+        "DebugClipConfigReceiver.kt",
+    )
+
+    /**
+     * Files that record an outcome but are reached only from an entry point
+     * that has already installed the store.
+     *
+     * 🔴 Enumerated rather than filtered out of the scan, so a second file
+     * cannot join this exemption silently: the set comparison above fails on
+     * GROWTH here just as it does on the entry points. `ClipOutboxHealth` is
+     * on it because it has no `Context` to install with and acquiring one would
+     * make the health counter depend on the diagnostics store — the forwarding
+     * itself is what keeps the readout's last flush and the bubble's verdict
+     * computed from one Report.
+     */
+    private val diagnosticsForwarders = listOf("ClipOutboxHealth.kt")
+
+    /**
+     * Every way to record or READ a diagnostics outcome, as needles over the
+     * normalised source — the whole of [ClipDiagnostics]' public outcome
+     * surface, writers and readers alike.
+     *
+     * 🔴 `ClipDiagnostics.record` without a trailing `(` on purpose: it covers
+     * `recordFlush` and `recordFetch` both, and a third `record…` function
+     * would be covered the moment it is written rather than the moment someone
+     * remembers to add it here. The readers are spelled with their `(` because
+     * `lastFetch(` must not also match `lastFetchOutcome(`'s kdoc references.
+     */
+    private val READERS = listOf(
+        "ClipDiagnostics.record",
+        "ClipDiagnostics.readout(",
+        "ClipDiagnostics.lastFlush(",
+        "ClipDiagnostics.lastFetch(",
+        "ClipDiagnostics.lastFetchOutcome(",
+    )
+
+    @Test
+    fun theWidenedDiagnosticsScanCanSeeEACHWayOfReadingAnOutcome() {
+        // 🔴 POSITIVE CONTROL for the widening itself, which is a different
+        // claim from the ledger passing. A needle with a typo in it — or one
+        // that stopped matching after a rename — contributes nothing and the
+        // ledger still reads clean, which is exactly how the narrow version of
+        // this guard looked correct for three readers it could not see.
+        for (needle in READERS) {
+            assertTrue(
+                "the needle `$needle` does not match a call site written with " +
+                    "it, so it contributes nothing to the ledger above",
+                normalise("fun f() { val x = $needle 1) }").contains(needle),
+            )
+        }
+        // 🔴 And the READER needles have a real hit in the tree, so widening to
+        // them is observable rather than decorative. If no file reads an
+        // outcome any more, this control is what should be failing — not the
+        // ledger, which would still be green.
+        val readerNeedles = READERS.filter { it.contains(".last") }
+        val hits = sourceFiles().count { file ->
+            val src = normalise(file.readText())
+            readerNeedles.any { src.contains(it) }
+        }
+        assertTrue(
+            "no file in the shipped source reads an outcome through " +
+                "lastFlush()/lastFetch()/lastFetchOutcome(), so the three " +
+                "needles added for them cannot change this ledger's answer",
+            hits > 0,
         )
     }
 
@@ -311,8 +480,11 @@ class ClipSeamLedgerTest {
         // is the whole point, since the value must not be in this file either.
         // A 64-character hex run is what the service's tokens look like; the
         // fixtures in ClipHttpTest and ClipEndpointsTest are deliberately
-        // random strings of that shape, so this scan covers `main` only and
-        // says so.
+        // random strings of that shape, so this scan covers the SHIPPED source
+        // sets — `main` and `debug` — and not `src/test`. Widening it to
+        // `debug` matters here more than anywhere: the config surface that
+        // takes a token lives there, and an example token pasted into its
+        // usage block is the obvious way one would get published.
         val hex = Regex("""\b[0-9a-f]{40,}\b""")
         for (file in sourceFiles()) {
             val hit = hex.find(file.readText())
@@ -360,6 +532,10 @@ class ClipSeamLedgerTest {
             "CaptureActivity.kt",
             "ClipPickerActivity.kt",
             "BubbleService.kt",
+            // 🔴 From the DEBUG source set, which the scan was widened to
+            // cover. Without this entry the widening could silently stop
+            // working — a zero-file debug listing satisfies every ledger here.
+            "DebugClipConfigReceiver.kt",
         )) {
             assertTrue(
                 "🔴 $expected is not in the scanned listing. The listing is " +
@@ -377,48 +553,57 @@ class ClipSeamLedgerTest {
         sourceFiles().firstOrNull { it.name == "CaptureActivity.kt" }
             ?: error("CaptureActivity.kt was not found in the scanned listing")
 
+    /**
+     * Every Kotlin source the ledgers are claims about.
+     *
+     * 🔴 **`src/debug` IS SCANNED, and widening it here was part of the change
+     * that added that source set.** The scan used to list `src/main` only,
+     * which made a debug-only file that opens the capture queue or builds a
+     * clip-store client **structurally invisible** to every ledger in this
+     * file — the hole they exist to close, reachable by putting the new reader
+     * one directory sideways rather than one directory down. A debug build is
+     * the build the operator actually runs on the handset, so "it is only in
+     * debug" is not a reason the queue's writers may go uncounted.
+     * [theScanActuallyReadsTheTree] names a file from each source set.
+     */
     private fun sourceFiles(): List<File> =
-        sourceDir().listFiles { f -> f.name.endsWith(".kt") }.orEmpty().toList()
+        sourceDirs().flatMap {
+            it.listFiles { f -> f.name.endsWith(".kt") }.orEmpty().toList()
+        }
 
-    private fun sourceDir(): File {
-        val dir = listOf(
-            File("app/src/main/java/dev/zacx/dicta"),
-            File("src/main/java/dev/zacx/dicta"),
-            File("../app/src/main/java/dev/zacx/dicta"),
-        ).firstOrNull { it.isDirectory }
+    private fun sourceDirs(): List<File> {
+        val dirs = listOf(
+            listOf(
+                File("app/src/main/java/dev/zacx/dicta"),
+                File("src/main/java/dev/zacx/dicta"),
+                File("../app/src/main/java/dev/zacx/dicta"),
+            ),
+            listOf(
+                File("app/src/debug/java/dev/zacx/dicta"),
+                File("src/debug/java/dev/zacx/dicta"),
+                File("../app/src/debug/java/dev/zacx/dicta"),
+            ),
+        ).map { candidates -> candidates.firstOrNull { it.isDirectory } }
         assertTrue(
-            "could not locate the source directory from " +
+            "could not locate the main AND debug source directories from " +
                 "${File(".").absolutePath} — refusing to report a pass on " +
-                "files that were never read",
-            dir != null,
+                "files that were never read. A missing src/debug is not an " +
+                "empty one: the config surface lives there.",
+            dirs.all { it != null },
         )
-        return dir!!
+        return dirs.map { it!! }
     }
 
     /**
-     * Raw strings out, then ordinary string literals out, then comments out,
-     * then all whitespace collapsed.
+     * Code only — [SourceText.normalise].
      *
-     * 🔴 LITERALS BEFORE COMMENTS, which is [SttReachabilityLedgerTest]'s and
-     * [TestCountFloorTest]'s order. The other way round, a string containing
-     * `//` — and this tree has several — has its own closing quote eaten by the
-     * line-comment regex, after which the literal regex pairs that orphaned
-     * quote with the next one it finds and silently deletes real code between
-     * them. That deletion is what makes a ledger read clean.
-     *
-     * 🔴 A THIRD COPY of this pipeline, and that is a cost rather than a
-     * choice: the two existing owners both keep it in a PRIVATE companion, so
-     * it cannot be called from here. Consolidating all three into one shared
-     * test helper is the right fix and is a change to two files this one does
-     * not touch — recorded here rather than done, because widening those
-     * companions' visibility inside this change would put an unreviewed edit
-     * into the two guards this feature is relying on staying green.
+     * 🔴 **HOISTED (round 0's D5).** This was a THIRD copy of the
+     * strip-literals-then-comments pipeline, and the comment here used to
+     * record the triplication as a cost and decline to fix it. That is the
+     * moment the rule says to stop and consolidate: a predicate open-coded at
+     * N sites is typically wrong at N−1 of them, and the two ledger copies
+     * were already the same rule spelled two different ways. The order, and
+     * why it is load-bearing, now lives in one place with the code.
      */
-    private fun normalise(src: String): String = src
-        .replace(Regex("\"\"\".*?\"\"\"", RegexOption.DOT_MATCHES_ALL), "\"\"")
-        .replace(Regex("\"(?:\\\\.|[^\"\\\\\n])*\""), "\"\"")
-        .replace(Regex("/\\*.*?\\*/", RegexOption.DOT_MATCHES_ALL), " ")
-        .replace(Regex("//.*"), " ")
-        .replace(Regex("\\s+"), " ")
-        .trim()
+    private fun normalise(src: String): String = SourceText.normalise(src)
 }

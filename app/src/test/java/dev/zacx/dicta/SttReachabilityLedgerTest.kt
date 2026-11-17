@@ -274,31 +274,19 @@ class SttReachabilityLedgerTest {
         }
 
         /**
-         * Raw strings out, then ordinary string literals out, then comments
-         * out, then all whitespace collapsed to single spaces.
+         * Code only — [SourceText.normalise] owns the pipeline, and the reason
+         * its ORDER is load-bearing.
          *
-         * 🔴 Literals **before** comments, which is [TestCountFloorTest]'s
-         * order. The other way round, a string containing `//` — and this tree
-         * has several — has its own closing quote eaten by the line-comment
-         * regex, after which the literal regex pairs that orphaned quote with
-         * the next one it finds and silently deletes real code between them.
-         * That is not reasoning: it is the case in
-         * [everyPatternHasBothControls]'s `normalise()` assertion, which was
-         * first written comments-first, watched to produce the wrong answer,
-         * and then reordered. Raw strings go first because they can contain
-         * comment delimiters.
-         *
-         * Whitespace is collapsed last so the patterns can be written with
-         * single `\s*` tolerance and a pure `ktfmt` reformat cannot move any
-         * count — the spurious red this project has already had once from a
-         * line-based scan.
+         * 🔴 **HOISTED (round 0's D5).** The body used to be spelled out here,
+         * and `ClipSeamLedgerTest` and `TestCountFloorTest` each carried their
+         * own copy — the two ledger copies being the same rule written two
+         * ways. The measured case the order comes from, in
+         * [everyPatternHasBothControls]'s `normalise()` assertion (written
+         * comments-first, watched to produce the wrong answer, then
+         * reordered), is recorded in [SourceText] with the code it is about.
+         * This one-line wrapper is kept so the hoist does not have to touch
+         * every use site in this file.
          */
-        fun normalise(src: String): String = src
-            .replace(Regex("\"\"\".*?\"\"\"", RegexOption.DOT_MATCHES_ALL), "\"\"")
-            .replace(Regex("\"(?:\\\\.|[^\"\\\\\\n])*\""), "\"\"")
-            .replace(Regex("/\\*.*?\\*/", RegexOption.DOT_MATCHES_ALL), " ")
-            .replace(Regex("//.*"), " ")
-            .replace(Regex("\\s+"), " ")
-            .trim()
+        fun normalise(src: String): String = SourceText.normalise(src)
     }
 }

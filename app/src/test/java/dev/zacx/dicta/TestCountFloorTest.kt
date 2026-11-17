@@ -322,13 +322,26 @@ class TestCountFloorTest {
          * terminates that instead of the kdoc, which breaks the parse of
          * everything below it. Measured, while writing this comment.)
          */
+        /*
+         * 🔴 HOISTED (round 0's D5): the two strip functions this composes
+         * used to be spelled out in this companion, while two ledger tests
+         * carried their own copies of the same rule. They are now
+         * [SourceText], which owns the order and the measured reason for it.
+         *
+         * 🔴 ONE semantic change came with the hoist, and it was RE-VALIDATED
+         * rather than assumed: the shared `withoutComments` replaces a comment
+         * with a SPACE where this copy replaced it with an empty string. The
+         * count is identical on this tree — re-measured per class against the
+         * JUnit XML after the change, the same validation the original
+         * instrument got — and the space is the safer of the two, because an
+         * empty replacement can juxtapose text into an `@Test` nobody wrote,
+         * which is exactly this file's own failure mode. The composition order
+         * (literals, then comments) is UNCHANGED.
+         */
         fun countTests(src: String): Int = Regex("""@Test\b""")
-            .findAll(withoutComments(withoutStringLiterals(src)))
+            .findAll(SourceText.withoutComments(SourceText.withoutLiterals(src)))
             .count()
 
-        fun withoutStringLiterals(src: String): String = src
-            .replace(Regex("\"\"\".*?\"\"\"", RegexOption.DOT_MATCHES_ALL), "\"\"")
-            .replace(Regex("\"(?:\\\\.|[^\"\\\\\\n])*\""), "\"\"")
 
         /**
          * The `--min` argument of the assert-tests-ran step. Comments are
@@ -348,9 +361,6 @@ class TestCountFloorTest {
             return m!!.groupValues[1].toInt()
         }
 
-        fun withoutComments(src: String): String = src
-            .replace(Regex("/\\*.*?\\*/", RegexOption.DOT_MATCHES_ALL), "")
-            .replace(Regex("//.*"), "")
 
         fun withoutYamlComments(yml: String): String =
             yml.lineSequence().joinToString("\n") { it.replace(Regex("#.*"), "") }

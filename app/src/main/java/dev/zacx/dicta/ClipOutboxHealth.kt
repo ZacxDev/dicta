@@ -198,9 +198,35 @@ object ClipOutboxHealth {
      *
      * Call this from **every** site that drains the outbox, with the Report
      * that drain produced. Broadcasts only on a change of verdict.
+     *
+     * 🔴 **NOT `@Synchronized`, and the forward below is why (audit round 1,
+     * finding 2).** It was, and the diagnostics forward sat inside the monitor
+     * — across `ClipDiagnostics.PrefsStore.write`, which is a **blocking**
+     * `SharedPreferences.commit()`. [state] takes the same monitor and runs on
+     * the MAIN thread (`BubbleService`'s window build, and the debug receiver's
+     * `DIAGNOSE`), so the main thread could block on a worker's disk write.
+     * `commit()` is correct for its own stated reason and stays; what was wrong
+     * was holding the monitor across it. The fold that actually needs the
+     * monitor is [fold], and it touches no IO.
      */
-    @Synchronized
     fun record(report: ClipFlusher.Report) {
+        // 🔴 Forwarded rather than recorded at the call sites, so the readout's
+        // "last flush" and this object's verdict are computed from the SAME
+        // Report and cannot disagree. Every drain site already reports here —
+        // `ClipSeamLedgerTest.everySiteThatDrainsTheOutboxCONSUMESItsReport`
+        // is what keeps that true — so this adds no site to that ledger.
+        //
+        // 🔴 OUTSIDE the monitor, deliberately. This persists, and a reader on
+        // the main thread must not queue behind it. Ordering is unaffected: the
+        // readout's `lastFlush` and the verdict come from this one Report
+        // either way, which is the property the forward exists for — it is the
+        // same Report object, not a second read of shared state.
+        ClipDiagnostics.recordFlush(report)
+        fold(report)
+    }
+
+    @Synchronized
+    private fun fold(report: ClipFlusher.Report) {
         val was = stateUnsynchronized()
         // 🔴 FIRST, and unconditionally: a destroyed capture is the fact that
         // outranks everything else this Report carries.

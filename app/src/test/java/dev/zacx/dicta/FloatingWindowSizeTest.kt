@@ -199,6 +199,7 @@ class FloatingWindowSizeTest {
             override fun rows(): List<Clip> = listOf(
                 Clip(1L, "a clip from another machine", "laptop", 1_700_000_000_000L)
             )
+            override fun fetch(): ClipFetch = ClipFetch.Rows(rows())
             override fun delete(id: Long): Boolean = false
         }
         controller.get().loadExecutor = java.util.concurrent.Executor { it.run() }

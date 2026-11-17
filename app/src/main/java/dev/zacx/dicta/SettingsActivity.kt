@@ -4,6 +4,7 @@ import android.app.Activity
 import android.app.AlertDialog
 import android.content.Intent
 import android.os.Bundle
+import android.view.inputmethod.EditorInfo
 import android.widget.ArrayAdapter
 import android.widget.Button
 import android.widget.CheckBox
@@ -128,6 +129,24 @@ class SettingsActivity : Activity() {
         renderClipTokenState()
 
         findViewById<Button>(R.id.stt_save).setOnClickListener { save() }
+        // 🔴 THE SAME save(), from a button beside the clipboard fields. See
+        // the layout comment on @id/clip_save: the only Save used to live
+        // hundreds of lines above these fields, and a token typed here and
+        // abandoned — Back, a focus change, the IME eating the scroll — was
+        // silently discarded while the hint still said "paste the token".
+        // Calling save() rather than saveClip() is deliberate: one "Save" must
+        // mean one save, which is the rule [saveClip] already records.
+        findViewById<Button>(R.id.clip_save).setOnClickListener { save() }
+        // Commit-on-done, through the same path. The keyboard's Done key is
+        // the one affordance that needs no scrolling at all.
+        clipTokenField.setOnEditorActionListener { _, actionId, _ ->
+            if (actionId == EditorInfo.IME_ACTION_DONE) {
+                save()
+                true
+            } else {
+                false
+            }
+        }
         findViewById<Button>(R.id.clip_clear_token)
             .setOnClickListener { clearClipToken() }
         findViewById<Button>(R.id.stt_clear_token).setOnClickListener { clearToken() }
