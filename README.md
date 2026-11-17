@@ -330,11 +330,6 @@ fails on dependency resolution in an offline shell — that is the environment,
 not a defect. Count results from `app/build/test-results/**/*.xml`, not from
 Gradle's exit code.
 
-No Gradle/network at all? `scripts/build-offline.sh` builds the same APK
-directly with `aapt2` + `kotlinc` + `d8` + `apksigner`. Output:
-`build-offline/dicta-debug.apk`. Note that it builds `app/src/main` only — it
-does **not** run the unit tests.
-
 Install with `adb install -r app-debug.apk`, open the app once to grant
 permissions, switch the floating bubble on and (optionally) add the Quick
 Settings tile, then tap the bubble from anywhere.
