@@ -36,7 +36,19 @@ jobs:
       # measured nothing is worse than no gate — so the count is asserted, not
       # inferred from the task's exit status.
       #
-      # BASELINE: 1024 against a suite of 1178 tests / 109 classes on
+      # BASELINE: 1046 against a suite of 1204 tests / 111 classes on
+      # `feat/history-export-import` — history export / import to one archive
+      # file. 1204 * 500 / 575 = 1046.96 -> 1046, which is 13.12% slack.
+      # Accounted PER CLASS against origin/main 569ce90 (1180 / 109 by the
+      # same line count over both trees; CI's TOTAL is the cross-check):
+      #   +20 HistoryArchiveTest (new class)
+      #   +4  SettingsHistoryTransferTest (new class)
+      #   = +24 tests, +2 classes. 1180 + 24 = 1204, 109 + 2 = 111.
+      #   SettingsThemingTest's two re-derived counts moved no test.
+      # 🔴 COMMIT COUNTED ON: the commit this comment is part of, on
+      # `feat/history-export-import`, whose base is 569ce90.
+      #
+      # PREVIOUS BASELINE: 1024 against a suite of 1178 tests / 109 classes on
       # `feat/bubble-enabled-persistence` — the bubble_enabled persistence fix
       # (an app upgrade restores the bubble instead of clearing the user's
       # stored intent) plus the bubble_enabled extra on the debug CONFIGURE
@@ -212,7 +224,7 @@ jobs:
       # one place.
       - name: Assert tests actually ran
         if: always()
-        run: python3 scripts/assert-tests-ran.py --min 1024
+        run: python3 scripts/assert-tests-ran.py --min 1046
 
       - name: Upload test reports
         if: always()
