@@ -36,7 +36,15 @@ jobs:
       # measured nothing is worse than no gate — so the count is asserted, not
       # inferred from the task's exit status.
       #
-      # BASELINE: 1045 against a suite of 1202 tests / 111 classes on
+      # BASELINE: 1049 against a suite of 1207 tests / 111 classes on
+      # `feat/history-export-import`, audit round 1's fixes: 1207 * 500 / 575
+      # = 1049.56 -> 1049, 13.09% slack. +5 HistoryArchiveTest 20 -> 25 (the
+      # export no longer holds the store lock while streaming; a file deleted
+      # mid-export; an id that is a path; Delete all removes import staging; a
+      # partial move-in copy is rolled back). 1202 + 5 = 1207, +0 classes.
+      # Expected-from-delta; CI's TOTAL on this commit is the check.
+      #
+      # PREVIOUS: 1045 against a suite of 1202 tests / 111 classes on
       # `feat/history-export-import` — history export / import to one archive
       # file. 1202 * 500 / 575 = 1045.22 -> 1045, which is 13.06% slack.
       # The 1202 / 111 is CI's own TOTAL line (assert-tests-ran.py) for
@@ -228,7 +236,7 @@ jobs:
       # one place.
       - name: Assert tests actually ran
         if: always()
-        run: python3 scripts/assert-tests-ran.py --min 1045
+        run: python3 scripts/assert-tests-ran.py --min 1049
 
       - name: Upload test reports
         if: always()

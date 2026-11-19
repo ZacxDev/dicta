@@ -112,8 +112,9 @@ object HistoryArchive {
     )
 
     /**
-     * Writes [sources] as an archive to [out], newest first. [out] is not
-     * closed — the caller owns it.
+     * Writes [sources] as an archive to [out], newest first, and returns how
+     * many items it wrote — fewer than [sources] when an audio file has gone
+     * by the time it is opened. [out] is not closed — the caller owns it.
      *
      * The manifest is written LAST, so each file is hashed while it is copied
      * and read only once. A reader therefore cannot verify anything until it
@@ -125,7 +126,7 @@ object HistoryArchive {
      * cannot come from the store, but this is the last point at which a bad
      * one is cheap to report.
      */
-    fun write(sources: List<Source>, out: OutputStream, createdAtMs: Long) {
+    fun write(sources: List<Source>, out: OutputStream, createdAtMs: Long): Int {
         val ids = HashSet<String>()
         for (s in sources) {
             require(ID.matches(s.item.id)) { "id is not archive-safe: ${s.item.id}" }
@@ -134,12 +135,22 @@ object HistoryArchive {
         val zip = ZipOutputStream(out)
         val files = JSONArray()
         val items = JSONArray()
+        var written = 0
         for (s in sources) {
             val path = AUDIO_PREFIX + audioName(s.item.id, s.item.audioFile)
+            // Opened BEFORE the entry is started: the caller lists items under
+            // the store lock but streams outside it, so a file can be deleted
+            // in between. Such an item is skipped whole — no entry, no row —
+            // and once open, a later delete cannot tear the read.
+            val stream = try {
+                s.audio.inputStream()
+            } catch (_: java.io.FileNotFoundException) {
+                continue
+            }
             val digest = MessageDigest.getInstance("SHA-256")
             zip.putNextEntry(ZipEntry(path))
             var bytes = 0L
-            s.audio.inputStream().use { input ->
+            stream.use { input ->
                 val buf = ByteArray(BUFFER)
                 while (true) {
                     val n = input.read(buf)
@@ -163,6 +174,7 @@ object HistoryArchive {
                     .put("fromRemote", s.item.fromRemote)
                     .put("audioSeconds", s.item.audioSeconds),
             )
+            written++
         }
         val itemsBytes = JSONObject().put("items", items).toString().toByteArray(Charsets.UTF_8)
         zip.putNextEntry(ZipEntry(ITEMS))
@@ -174,13 +186,14 @@ object HistoryArchive {
             .put("format", FORMAT)
             .put("formatVersion", FORMAT_VERSION)
             .put("createdAtMs", createdAtMs)
-            .put("itemCount", sources.size)
+            .put("itemCount", written)
             .put("files", files)
         zip.putNextEntry(ZipEntry(MANIFEST))
         zip.write(manifest.toString().toByteArray(Charsets.UTF_8))
         zip.closeEntry()
         zip.finish()
         out.flush()
+        return written
     }
 
     /**

@@ -312,6 +312,145 @@ class HistoryArchiveTest {
         assertEquals(1, all(target).size)
     }
 
+    // --- the export lock, staging cleanup, partial copies --------------------
+
+    /**
+     * An output stream whose first write parks until [release] — i.e. an
+     * export stuck mid-stream behind a slow document provider.
+     */
+    private class ParkedStream : java.io.OutputStream() {
+        val entered = java.util.concurrent.CountDownLatch(1)
+        val release = java.util.concurrent.CountDownLatch(1)
+        val bytes = ByteArrayOutputStream()
+        override fun write(b: Int) = write(byteArrayOf(b.toByte()), 0, 1)
+        override fun write(b: ByteArray, off: Int, len: Int) {
+            entered.countDown()
+            release.await(20, java.util.concurrent.TimeUnit.SECONDS)
+            bytes.write(b, off, len)
+        }
+    }
+
+    private fun exportInBackground(s: DictationHistoryStore, out: ParkedStream): Pair<Thread, IntArray> {
+        val count = intArrayOf(-1)
+        val t = Thread { count[0] = s.exportArchive(out) }.apply { start() }
+        assertTrue("the export never started writing", out.entered.await(10, java.util.concurrent.TimeUnit.SECONDS))
+        return t to count
+    }
+
+    @Test
+    fun aDictationCanBeFiledWhileAnExportIsStreaming() {
+        val s = seeded("source")
+        val out = ParkedStream()
+        val (exporter, _) = exportInBackground(s, out)
+        try {
+            val adder = Thread {
+                s.add(recording("ogg", 25), "filed during the export", fromRemote = false, audioSeconds = 1.0)
+            }.apply { start() }
+            adder.join(3_000)
+            assertFalse(
+                "add() was blocked behind an export in progress — the export holds the store lock while streaming",
+                adder.isAlive,
+            )
+        } finally {
+            out.release.countDown()
+            exporter.join(10_000)
+        }
+        assertEquals(4, all(s).size)
+    }
+
+    @Test
+    fun aFileDeletedMidExportIsSkippedAndTheArchiveStaysConsistent() {
+        val s = seeded("source")
+        val items = all(s)
+        val out = ParkedStream()
+        val (exporter, count) = exportInBackground(s, out)
+        // The newest item's stream is already open; the OLDEST is not yet.
+        s.audioFor(items.last().id)!!.delete()
+        out.release.countDown()
+        exporter.join(10_000)
+
+        assertEquals(2, count[0])
+        val target = store("target")
+        assertEquals(2, target.verifyArchive(ByteArrayInputStream(out.bytes.toByteArray())))
+        assertEquals(2, manifest(entries(out.bytes.toByteArray())).getInt("itemCount"))
+    }
+
+    @Test
+    fun anIdThatIsAPathIsRefusedAndWritesNothingOutsideHistory() {
+        // The audit's probe: an id that is itself a path, with an audio path
+        // built from it and VALID hashes. Without the id check the audio-path
+        // check accepts it (the path starts with the id), and the import
+        // wrote a file two directories above the history directory.
+        val e = entries(exportBytes(seeded("source")))
+        val items = JSONObject(String(e.getValue(HistoryArchive.ITEMS))).getJSONArray("items")
+        val oldPath = items.getJSONObject(1).getString("audio")
+        val probeId = "../../escaped-probe"
+        val probePath = "audio/$probeId.ogg"
+        e[probePath] = e.remove(oldPath)!!
+        val m = manifest(e)
+        val files = m.getJSONArray("files")
+        for (i in 0 until files.length()) {
+            if (files.getJSONObject(i).getString("path") == oldPath) files.getJSONObject(i).put("path", probePath)
+        }
+        e[HistoryArchive.MANIFEST] = m.toString().toByteArray()
+        editItems(e) { it.getJSONArray("items").getJSONObject(1).put("id", probeId).put("audio", probePath) }
+
+        // Deep enough that ../../ lands INSIDE the temp folder, where it can be seen.
+        val target = DictationHistoryStore(File(temp.root, "deep/er/history"), { clock })
+        target.add(recording("ogg", 40), "already here", fromRemote = false, audioSeconds = 1.0)
+        val before = snapshot(target.dir)
+        fun escaped() = temp.root.walkTopDown().filter { it.name.startsWith("escaped-probe") }.toList()
+        assertEquals(emptyList<File>(), escaped())
+        try {
+            target.importArchive(ByteArrayInputStream(reseal(e)))
+            fail("an archive whose id is a path was imported")
+        } catch (r: HistoryArchive.Rejected) {
+            assertEquals(r.message, HistoryArchive.Reason.INVALID_METADATA, r.reason)
+            assertTrue("refused by the wrong guard: ${r.message}", r.message!!.contains("id is not valid"))
+        } finally {
+            assertEquals("the import wrote outside the history directory", emptyList<File>(), escaped())
+        }
+        assertEquals(before, snapshot(target.dir))
+    }
+
+    @Test
+    fun deleteAllHistoryAlsoDeletesLeftoverImportStaging() {
+        val s = seeded("source")
+        // What a process death mid-import leaves: staged voice audio.
+        val leftover = File(stagingDir(s), "e0").apply { parentFile!!.mkdirs(); writeBytes(byteArrayOf(4, 5, 6)) }
+        assertTrue(leftover.isFile)
+
+        s.clearAll()
+
+        assertFalse("Delete all history left staged audio behind", stagingDir(s).exists())
+        assertEquals(0, s.usage().itemCount)
+    }
+
+    @Test
+    fun aMoveInCopyThatFailsPartWayIsRolledBack() {
+        val archive = exportBytes(seeded("source"))
+        var moves = 0
+        val target = DictationHistoryStore(File(temp.root, "target"), { clock }, HistoryRetention.Bounds.DEFAULT) { src, dst ->
+            // The rename-fallback copy, failing after writing a prefix — on
+            // the SECOND file, so one complete move-in must be rolled back too.
+            if (++moves == 2) {
+                dst.writeBytes(src.readBytes().copyOf(1))
+                throw java.io.IOException("disk full part-way through the copy")
+            }
+            src.copyTo(dst)
+        }
+        target.add(recording("ogg", 40), "already here", fromRemote = false, audioSeconds = 1.0)
+        val before = snapshot(target.dir)
+
+        try {
+            target.importArchive(ByteArrayInputStream(archive))
+            fail("an import whose copy failed reported success")
+        } catch (_: java.io.IOException) {
+        }
+
+        assertEquals("a failed copy left a partial or moved-in file behind", before, snapshot(target.dir))
+    }
+
     // --- rejection: nothing written ----------------------------------------
 
     @Test

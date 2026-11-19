@@ -156,6 +156,14 @@ class DictationHistoryStore internal constructor(
      * at all, and every test here would still be green.
      */
     internal val bounds: HistoryRetention.Bounds = HistoryRetention.Bounds.DEFAULT,
+    /**
+     * Moves one verified, staged audio file into [dir] during
+     * [importArchive]: a rename, falling back to a copy. Injected only so a
+     * test can make that copy fail part-way; production never overrides it.
+     */
+    internal val moveIn: (staged: File, destination: File) -> Unit = { staged, destination ->
+        if (!staged.renameTo(destination)) staged.copyTo(destination)
+    },
 ) {
 
     /**
@@ -410,6 +418,10 @@ class DictationHistoryStore internal constructor(
      */
     fun clearAll() = synchronized(LOCK) {
         dir.listFiles()?.forEach { it.delete() }
+        // 🔴 And the import staging directory: a process death mid-import or
+        // mid-verify leaves staged VOICE AUDIO there, and a "delete all
+        // history" that misses it does not do what its label says.
+        stagingDir().deleteRecursively()
         Unit
     }
 
@@ -426,20 +438,27 @@ class DictationHistoryStore internal constructor(
 
     /**
      * Writes every item whose audio is present to [out] as a history archive,
-     * newest first, and returns how many. [out] is not closed.
+     * newest first, and returns how many were WRITTEN. [out] is not closed.
      *
-     * Under the lock for the whole write, so retention cannot delete a file
-     * between the item being listed and its audio being read. The cost is that
-     * a dictation finishing mid-export waits for it to file its history entry;
-     * nothing is lost, it is late. It does NOT sweep or rewrite the index —
-     * an export is a read.
+     * 🔴 Only the item list is read under the lock; the audio is streamed
+     * outside it. Holding the lock for the whole write blocked every other
+     * store call for as long as the document provider took — including a
+     * finishing dictation's [add], which runs before its remote transcription
+     * starts, so the user-visible transcript arrived late.
+     *
+     * The price is that retention (or [clearAll]) can delete a listed file
+     * mid-export. [HistoryArchive.write] skips such an item — no entry, no
+     * row, not counted — so the archive stays self-consistent and the count
+     * returned is what a reader of it will find. It does NOT sweep or rewrite
+     * the index — an export is a read.
      */
-    fun exportArchive(out: OutputStream): Int = synchronized(LOCK) {
-        val items = sortedNewestFirst(load()).mapNotNull { item ->
-            File(dir, item.audioFile).takeIf { it.isFile }?.let { HistoryArchive.Source(item, it) }
+    fun exportArchive(out: OutputStream): Int {
+        val items = synchronized(LOCK) {
+            sortedNewestFirst(load()).mapNotNull { item ->
+                File(dir, item.audioFile).takeIf { it.isFile }?.let { HistoryArchive.Source(item, it) }
+            }
         }
-        HistoryArchive.write(items, out, now())
-        items.size
+        return HistoryArchive.write(items, out, now())
     }
 
     /**
@@ -512,10 +531,10 @@ class DictationHistoryStore internal constructor(
                         }
                         continue
                     }
-                    if (!v.staged.renameTo(destination)) {
-                        v.staged.copyTo(destination)
-                    }
+                    // Registered BEFORE the move: a copy that fails part-way
+                    // leaves a partial file, and the rollback must see it.
                     movedIn += destination
+                    moveIn(v.staged, destination)
                     if (destination.length() != v.item.audioBytes) {
                         throw java.io.IOException("${v.item.audioFile} changed size while moving in")
                     }
@@ -541,8 +560,10 @@ class DictationHistoryStore internal constructor(
      * delete — one staging directory. The leading delete clears what a killed
      * import left behind.
      */
+    private fun stagingDir(): File = File(dir.absoluteFile.parentFile, dir.name + STAGING_SUFFIX)
+
     private fun <T> withStaging(block: (File) -> T): T = synchronized(STAGING_LOCK) {
-        val staging = File(dir.absoluteFile.parentFile, dir.name + STAGING_SUFFIX)
+        val staging = stagingDir()
         staging.deleteRecursively()
         try {
             block(staging)
