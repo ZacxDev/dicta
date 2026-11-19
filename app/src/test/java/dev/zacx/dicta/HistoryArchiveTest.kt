@@ -160,7 +160,7 @@ class HistoryArchiveTest {
      * Imports [archive] into a target that already holds one item and asserts
      * it is refused for [reason] with the target byte-for-byte unchanged.
      */
-    private fun assertRefused(archive: ByteArray, reason: HistoryArchive.Reason) {
+    private fun assertRefused(archive: ByteArray, reason: HistoryArchive.Reason, detail: String? = null) {
         val target = store("target-${++serial}")
         target.add(recording("ogg", 40), "already here", fromRemote = false, audioSeconds = 1.0)
         val before = snapshot(target.dir)
@@ -169,6 +169,9 @@ class HistoryArchiveTest {
             fail("an archive that should be refused for $reason was imported")
         } catch (r: HistoryArchive.Rejected) {
             assertEquals(r.message, reason, r.reason)
+            // Several metadata guards share INVALID_METADATA, so the reason
+            // alone cannot tell which one fired; the detail can.
+            if (detail != null) assertTrue("refused by the wrong guard: ${r.message}", r.message!!.contains(detail))
         }
         assertEquals("a refused import changed the history directory", before, snapshot(target.dir))
         assertFalse("staging was left behind", stagingDir(target).exists())
@@ -404,12 +407,28 @@ class HistoryArchiveTest {
 
     @Test
     fun aDuplicateItemIdIsRefusedEvenWithValidChecksums() {
+        // 🔴 The duplicate's AUDIO is renamed to match its new id too. The
+        // first draft changed only the id, so the audio-path check refused the
+        // archive first with the same reason — and a mutant that deleted the
+        // duplicate-id guard SURVIVED. Items 0 and 1 have different
+        // extensions (.ogg / .m4a), so the renamed path stays unique.
         val e = entries(exportBytes(seeded("source")))
-        editItems(e) {
-            val items = it.getJSONArray("items")
-            items.getJSONObject(1).put("id", items.getJSONObject(0).getString("id"))
+        val items = JSONObject(String(e.getValue(HistoryArchive.ITEMS))).getJSONArray("items")
+        val keepId = items.getJSONObject(0).getString("id")
+        val oldPath = items.getJSONObject(1).getString("audio")
+        val newPath = "audio/$keepId." + oldPath.substringAfterLast('.')
+        assertTrue(newPath != items.getJSONObject(0).getString("audio"))
+        e[newPath] = e.remove(oldPath)!!
+        val m = manifest(e)
+        val files = m.getJSONArray("files")
+        for (i in 0 until files.length()) {
+            if (files.getJSONObject(i).getString("path") == oldPath) files.getJSONObject(i).put("path", newPath)
         }
-        assertRefused(reseal(e), HistoryArchive.Reason.INVALID_METADATA)
+        e[HistoryArchive.MANIFEST] = m.toString().toByteArray()
+        editItems(e) {
+            it.getJSONArray("items").getJSONObject(1).put("id", keepId).put("audio", newPath)
+        }
+        assertRefused(reseal(e), HistoryArchive.Reason.INVALID_METADATA, detail = "appears twice")
     }
 
     @Test
@@ -431,14 +450,14 @@ class HistoryArchiveTest {
                 if (items.getJSONObject(i).getString("audio") == path) items.getJSONObject(i).put("audio", hostile)
             }
         }
-        assertRefused(reseal(e), HistoryArchive.Reason.INVALID_METADATA)
+        assertRefused(reseal(e), HistoryArchive.Reason.INVALID_METADATA, detail = "is not audio/<id>")
     }
 
     @Test
     fun audioBytesThatDisagreeWithTheManifestAreRefused() {
         val e = entries(exportBytes(seeded("source")))
         editItems(e) { it.getJSONArray("items").getJSONObject(0).put("audioBytes", 1_234_567) }
-        assertRefused(reseal(e), HistoryArchive.Reason.INVALID_METADATA)
+        assertRefused(reseal(e), HistoryArchive.Reason.INVALID_METADATA, detail = "audioBytes disagrees")
     }
 
     @Test
