@@ -41,6 +41,7 @@ class SettingsActivity : Activity() {
     private lateinit var remoteToggle: CheckBox
     private lateinit var languageSpinner: Spinner
     private lateinit var historyUsage: TextView
+    private lateinit var historyTransfer: TextView
     private lateinit var snippetsState: TextView
 
     /**
@@ -114,6 +115,7 @@ class SettingsActivity : Activity() {
         remoteToggle = findViewById(R.id.stt_remote_enabled)
         languageSpinner = findViewById(R.id.stt_language)
         historyUsage = findViewById(R.id.stt_history_usage)
+        historyTransfer = findViewById(R.id.stt_history_transfer_state)
         snippetsState = findViewById(R.id.stt_snippets_state)
         history = DictationHistoryStore(this)
         if (snippets == null) snippets = SnipStore(this)
@@ -154,6 +156,8 @@ class SettingsActivity : Activity() {
         findViewById<Button>(R.id.stt_clear_history).setOnClickListener { clearHistory() }
         findViewById<Button>(R.id.stt_import_snippets)
             .setOnClickListener { importSnippets() }
+        findViewById<Button>(R.id.stt_export_history).setOnClickListener { exportHistory() }
+        findViewById<Button>(R.id.stt_import_history).setOnClickListener { importHistory() }
 
         refreshHistoryUsage()
         refreshSnippetsState()
@@ -521,6 +525,112 @@ class SettingsActivity : Activity() {
         }
     }
 
+    // --- history export / import --------------------------------------------
+
+    /**
+     * Starts the document creator for a history archive.
+     *
+     * Same shape as [importSnippets] and for the same reasons: an in-app SAF
+     * intent (no permission, no exported surface) and a hand-rolled
+     * `startActivityForResult` (no androidx).
+     */
+    private fun exportHistory() {
+        val stamp = java.text.SimpleDateFormat("yyyyMMdd-HHmm", Locale.US)
+            .format(java.util.Date(System.currentTimeMillis()))
+        val picker = Intent(Intent.ACTION_CREATE_DOCUMENT)
+            .addCategory(Intent.CATEGORY_OPENABLE)
+            .setType(HistoryArchive.MIME)
+            .putExtra(Intent.EXTRA_TITLE, "dicta-history-$stamp.zip")
+        if (!runCatching { startActivityForResult(picker, REQUEST_EXPORT_HISTORY) }.isSuccess) {
+            historyTransfer.text = getString(R.string.stt_history_no_picker)
+        }
+    }
+
+    /** Starts the document picker for a history archive. The CONTENT is what is validated. */
+    private fun importHistory() {
+        val picker = Intent(Intent.ACTION_OPEN_DOCUMENT)
+            .addCategory(Intent.CATEGORY_OPENABLE)
+            .setType(HistoryArchive.MIME)
+            .putExtra(Intent.EXTRA_MIME_TYPES, HISTORY_MIME_TYPES)
+        if (!runCatching { startActivityForResult(picker, REQUEST_IMPORT_HISTORY) }.isSuccess) {
+            historyTransfer.text = getString(R.string.stt_history_no_picker)
+        }
+    }
+
+    /**
+     * Runs the chosen export or import on [worker] and reports the outcome.
+     *
+     * 🔴 An export is READ BACK from the document it was written to and fully
+     * verified ([DictationHistoryStore.verifyArchive]) before it is reported as
+     * done. "The write did not throw" says nothing about what a document
+     * provider actually stored, and this file is what a user will delete their
+     * old app on the strength of.
+     */
+    private fun onHistoryDocument(requestCode: Int, resultCode: Int, data: Intent?) {
+        if (resultCode != RESULT_OK) return
+        val uri = data?.data ?: run {
+            historyTransfer.text = getString(
+                R.string.stt_history_import_unreadable,
+                getString(R.string.stt_history_no_file),
+            )
+            return
+        }
+        historyTransfer.text = getString(R.string.stt_history_transfer_working)
+        worker.execute {
+            val text = if (requestCode == REQUEST_EXPORT_HISTORY) {
+                runCatching {
+                    val written = contentResolver.openOutputStream(uri, "w")
+                        ?.use { history.exportArchive(it) }
+                        ?: throw IOException("the provider returned no stream")
+                    val readBack = contentResolver.openInputStream(uri)
+                        ?.use { history.verifyArchive(it) }
+                        ?: throw IOException("the provider returned no stream")
+                    written to readBack
+                }.fold(
+                    onSuccess = { (written, readBack) ->
+                        if (written == readBack) {
+                            getString(R.string.stt_history_export_done, written)
+                        } else {
+                            getString(R.string.stt_history_export_mismatch, written, readBack)
+                        }
+                    },
+                    onFailure = {
+                        // A half-written archive left where the user put it
+                        // would be refused by any importer, but it LOOKS like
+                        // an export. Best effort: not every provider deletes.
+                        runCatching {
+                            android.provider.DocumentsContract.deleteDocument(contentResolver, uri)
+                        }
+                        getString(R.string.stt_history_export_failed, describe(it))
+                    },
+                )
+            } else {
+                runCatching {
+                    contentResolver.openInputStream(uri)?.use { history.importArchive(it) }
+                        ?: throw IOException("the provider returned no stream")
+                }.fold(
+                    onSuccess = {
+                        getString(R.string.stt_history_import_done, it.imported, it.skipped, it.rejected)
+                    },
+                    onFailure = {
+                        if (it is HistoryArchive.Rejected) {
+                            getString(R.string.stt_history_import_rejected, it.message)
+                        } else {
+                            getString(R.string.stt_history_import_unreadable, it.javaClass.simpleName)
+                        }
+                    },
+                )
+            }
+            val usage = runCatching { history.usage() }.getOrNull()
+            runOnUiThread {
+                historyTransfer.text = text
+                renderUsage(usage)
+            }
+        }
+    }
+
+    private fun describe(t: Throwable): String = t.message ?: t.javaClass.simpleName
+
     // --- snippets (issue #38) -----------------------------------------------
 
     /**
@@ -580,7 +690,14 @@ class SettingsActivity : Activity() {
      */
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode != REQUEST_IMPORT_SNIPPETS) return
+        when (requestCode) {
+            REQUEST_EXPORT_HISTORY, REQUEST_IMPORT_HISTORY -> {
+                onHistoryDocument(requestCode, resultCode, data)
+                return
+            }
+            REQUEST_IMPORT_SNIPPETS -> Unit
+            else -> return
+        }
         // A cancelled picker is not a failure and must not report one: the
         // state line keeps saying whatever is actually stored.
         if (resultCode != RESULT_OK) return
@@ -733,11 +850,22 @@ class SettingsActivity : Activity() {
          * `startActivityForResult` request code for the snippets import.
          *
          * Hand-rolled rather than `ActivityResultContracts` — see
-         * [importSnippets] for why androidx is not an option here. It is the
-         * only request code this activity uses, and [onActivityResult] branches
-         * on it rather than assuming so.
+         * [importSnippets] for why androidx is not an option here. One of
+         * three request codes this activity uses (the history archive's two
+         * are below), and [onActivityResult] branches on each.
          */
         const val REQUEST_IMPORT_SNIPPETS = 1001
+
+        /** Request codes for the history archive's create / open document intents. */
+        const val REQUEST_EXPORT_HISTORY = 1002
+        const val REQUEST_IMPORT_HISTORY = 1003
+
+        /** As [IMPORT_MIME_TYPES]: a provider may serve a .zip under any of these. */
+        val HISTORY_MIME_TYPES = arrayOf(
+            HistoryArchive.MIME,
+            "application/x-zip-compressed",
+            "application/octet-stream",
+        )
 
         /** The type a `snippets.json` ought to be served as. */
         const val IMPORT_MIME = "application/json"

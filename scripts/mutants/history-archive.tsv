@@ -1,0 +1,22 @@
+# Mutant batch for history export / import (HistoryArchive + the store's
+# exportArchive / importArchive).
+#
+#   scripts/mutate.sh batch scripts/mutants/history-archive.tsv
+#
+# Tab-separated: NAME <TAB> FILE <TAB> FROM <TAB> TO [<TAB> TEST_FILTER]
+# DEFINITIONS ONLY, NEVER RESULTS — verdicts live in the PR, stamped with the
+# commit they were measured on (scripts/MUTATION-TESTING.md).
+m-arc01-size-only-no-sha	app/src/main/java/dev/zacx/dicta/HistoryArchive.kt	if (got.bytes != want.bytes || got.sha256 != want.sha256) {	if (got.bytes != want.bytes) {	dev.zacx.dicta.HistoryArchiveTest
+m-arc02-any-version-accepted	app/src/main/java/dev/zacx/dicta/HistoryArchive.kt	if (version !is Int || version != FORMAT_VERSION) {	if (version !is Int) {	dev.zacx.dicta.HistoryArchiveTest
+m-arc03-any-format-accepted	app/src/main/java/dev/zacx/dicta/HistoryArchive.kt	if (format != FORMAT) throw	if (format == "") throw	dev.zacx.dicta.HistoryArchiveTest
+m-arc04-missing-file-ignored	app/src/main/java/dev/zacx/dicta/HistoryArchive.kt	val got = entries[path] ?: throw Rejected(Reason.MISSING_FILE, "$path is listed but not in the archive")	val got = entries[path] ?: continue	dev.zacx.dicta.HistoryArchiveTest
+m-arc05-unlisted-file-ignored	app/src/main/java/dev/zacx/dicta/HistoryArchive.kt	if (path != MANIFEST && path !in listed) {	if (false) {	dev.zacx.dicta.HistoryArchiveTest
+m-arc06-eof-treated-as-end	app/src/main/java/dev/zacx/dicta/HistoryArchive.kt	throw Rejected(Reason.MALFORMED, "the archive ends part-way through an entry")	return entries	dev.zacx.dicta.HistoryArchiveTest
+m-arc07-duplicate-id-allowed	app/src/main/java/dev/zacx/dicta/HistoryArchive.kt	if (!ids.add(id)) throw Rejected	if (!ids.add(id) && false) throw Rejected	dev.zacx.dicta.HistoryArchiveTest
+m-arc08-audio-path-unchecked	app/src/main/java/dev/zacx/dicta/HistoryArchive.kt	if (!nameOk) throw Rejected	if (false) throw Rejected	dev.zacx.dicta.HistoryArchiveTest
+m-arc09-audio-bytes-unchecked	app/src/main/java/dev/zacx/dicta/HistoryArchive.kt	if (audioBytes != listedAudio.bytes) {	if (false) {	dev.zacx.dicta.HistoryArchiveTest
+m-arc10-duplicates-not-skipped	app/src/main/java/dev/zacx/dicta/DictationHistoryStore.kt	if (v.item.id in known) {	if (false) {	dev.zacx.dicta.HistoryArchiveTest
+m-arc11-orphan-adopted-whatever-its-bytes	app/src/main/java/dev/zacx/dicta/DictationHistoryStore.kt	HistoryArchive.sha256(destination) == v.sha256	true	dev.zacx.dicta.HistoryArchiveTest
+m-arc12-failed-commit-keeps-audio	app/src/main/java/dev/zacx/dicta/DictationHistoryStore.kt	movedIn.forEach { it.delete() }	Unit	dev.zacx.dicta.HistoryArchiveTest
+m-arc13-export-includes-missing-audio	app/src/main/java/dev/zacx/dicta/DictationHistoryStore.kt	File(dir, item.audioFile).takeIf { it.isFile }?.let { HistoryArchive.Source(item, it) }	HistoryArchive.Source(item, File(dir, item.audioFile))	dev.zacx.dicta.HistoryArchiveTest
+m-arc14-read-back-skipped	app/src/main/java/dev/zacx/dicta/SettingsActivity.kt	?.use { history.verifyArchive(it) }	?.use { -1 }	dev.zacx.dicta.SettingsHistoryTransferTest

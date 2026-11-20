@@ -114,6 +114,11 @@ class SettingsThemingTest {
         // own voice. The ledger GREW deliberately, which is exactly what its
         // failure message asks a new control to do.
         "stt_import_snippets" to "@drawable/outline_button_bg",
+        // History export / import. Outline, not destructive: an export reads,
+        // and an import never overwrites or deletes an item. The ledger GREW
+        // deliberately.
+        "stt_export_history" to "@drawable/outline_button_bg",
+        "stt_import_history" to "@drawable/outline_button_bg",
         // The shared clipboard's own group. Its URL and token fields are
         // @id/stt_url and @id/stt_token's elements attribute for attribute,
         // and its clear button is @id/stt_clear_token's — the two controls
@@ -327,11 +332,13 @@ class SettingsThemingTest {
         // outlined buttons — when the clipboard group had no Save of its own.)
         // clip_clear_token is still excluded with the other destructive
         // controls because its label is deliberately the error colour.
+        // 🔴 RE-DERIVED at 11 by the history export and import buttons, both
+        // outlined, non-destructive, text-bearing — they join the count.
         assertEquals(
-            "expected to examine the checkbox, all FOUR fields and all FOUR " +
-                "outlined buttons (STT Save, Test, Import snippets, clipboard " +
-                "Save); examined $examined",
-            9,
+            "expected to examine the checkbox, all FOUR fields and all SIX " +
+                "outlined buttons (STT Save, Test, Export history, Import " +
+                "history, Import snippets, clipboard Save); examined $examined",
+            11,
             examined.size
         )
     }
@@ -572,10 +579,12 @@ class SettingsThemingTest {
         // Clear token, Delete all history, the import, and the shared
         // clipboard's own Save and clear button. (It was SIX when the
         // clipboard group had only the clear button.)
+        // 🔴 NINE since history export and import (@id/stt_export_history,
+        // @id/stt_import_history), re-derived the same way.
         assertEquals(
-            "the screen no longer has the seven buttons this guard was written " +
+            "the screen no longer has the nine buttons this guard was written " +
                 "for; re-derive it rather than loosening it",
-            7,
+            9,
             buttons.size
         )
         for (button in buttons) {

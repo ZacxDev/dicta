@@ -5,6 +5,8 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
+import java.io.InputStream
+import java.io.OutputStream
 
 /**
  * Where dictation history lives: one directory holding the audio files plus a
@@ -154,6 +156,14 @@ class DictationHistoryStore internal constructor(
      * at all, and every test here would still be green.
      */
     internal val bounds: HistoryRetention.Bounds = HistoryRetention.Bounds.DEFAULT,
+    /**
+     * Moves one verified, staged audio file into [dir] during
+     * [importArchive]: a rename, falling back to a copy. Injected only so a
+     * test can make that copy fail part-way; production never overrides it.
+     */
+    internal val moveIn: (staged: File, destination: File) -> Unit = { staged, destination ->
+        if (!staged.renameTo(destination)) staged.copyTo(destination)
+    },
 ) {
 
     /**
@@ -408,6 +418,10 @@ class DictationHistoryStore internal constructor(
      */
     fun clearAll() = synchronized(LOCK) {
         dir.listFiles()?.forEach { it.delete() }
+        // 🔴 And the import staging directory: a process death mid-import or
+        // mid-verify leaves staged VOICE AUDIO there, and a "delete all
+        // history" that misses it does not do what its label says.
+        stagingDir().deleteRecursively()
         Unit
     }
 
@@ -415,6 +429,147 @@ class DictationHistoryStore internal constructor(
     fun usage(): Usage = synchronized(LOCK) {
         val items = visible()
         Usage(items.size, items.sumOf { it.audioBytes })
+    }
+
+    // --- export / import (docs/history-archive-format.md) -------------------
+
+    /** What [importArchive] did. Every item in the archive lands in exactly one count. */
+    data class ImportResult(val imported: Int, val skipped: Int, val rejected: Int)
+
+    /**
+     * Writes every item whose audio is present to [out] as a history archive,
+     * newest first, and returns how many were WRITTEN. [out] is not closed.
+     *
+     * 🔴 Only the item list is read under the lock; the audio is streamed
+     * outside it. Holding the lock for the whole write blocked every other
+     * store call for as long as the document provider took — including a
+     * finishing dictation's [add], which runs before its remote transcription
+     * starts, so the user-visible transcript arrived late.
+     *
+     * The price is that retention (or [clearAll]) can delete a listed file
+     * mid-export. [HistoryArchive.write] skips such an item — no entry, no
+     * row, not counted — so the archive stays self-consistent and the count
+     * returned is what a reader of it will find. It does NOT sweep or rewrite
+     * the index — an export is a read.
+     */
+    fun exportArchive(out: OutputStream): Int {
+        val items = synchronized(LOCK) {
+            sortedNewestFirst(load()).mapNotNull { item ->
+                File(dir, item.audioFile).takeIf { it.isFile }?.let { HistoryArchive.Source(item, it) }
+            }
+        }
+        return HistoryArchive.write(items, out, now())
+    }
+
+    /**
+     * Reads and fully verifies an archive without importing it, returning its
+     * item count. Throws exactly as [importArchive] would. Used to read an
+     * export back from the document it was written to.
+     */
+    fun verifyArchive(input: InputStream): Int = withStaging { staging ->
+        HistoryArchive.read(input, staging).size
+    }
+
+    /**
+     * Imports an archive, merging by item id.
+     *
+     * ## 🔴 Verify everything, then commit
+     *
+     * The whole archive is staged and verified — manifest, version, every
+     * file's SHA-256 and size, every item's metadata — by [HistoryArchive.read]
+     * BEFORE the lock is taken and before anything in [dir] is touched. A
+     * rejected archive therefore throws [HistoryArchive.Rejected] having
+     * written nothing to history. Staging is a SIBLING of [dir], never inside
+     * it, so the one directory this class's kdoc describes keeps holding only
+     * audio and the index.
+     *
+     * ## Merge rules
+     *
+     *  * An id already in the index (with or without its audio) is **skipped**
+     *    — never overwritten. A dead row keeps its id; the import does not
+     *    resurrect it.
+     *  * A new id whose audio file name is already taken by an UNINDEXED file
+     *    (an orphan — e.g. this same import, killed between moving audio in and
+     *    writing the index) is **adopted** when that file's SHA-256 is the
+     *    archive's, and **rejected** when it is not. The file is never
+     *    replaced.
+     *  * Everything else is **imported**: audio renamed in from staging, then
+     *    ONE index write adding every new row. The index write is the commit
+     *    point; a throw before it deletes the audio this call moved in.
+     *
+     * 🔴 Retention is NOT applied here, so an import never deletes an existing
+     * item. It applies, as it always has, at the next [add] — so imported items
+     * past [HistoryRetention.MAX_AGE_MS], or beyond the count/byte bounds, are
+     * evicted then. Documented in the format doc for the same reason.
+     */
+    fun importArchive(input: InputStream): ImportResult = withStaging { staging ->
+        val verified = HistoryArchive.read(input, staging)
+        synchronized(LOCK) {
+            dir.mkdirs()
+            val existing = load()
+            val known = existing.mapTo(HashSet()) { it.id }
+            val indexedFiles = existing.mapTo(HashSet()) { it.audioFile }
+            val added = ArrayList<Item>()
+            val movedIn = ArrayList<File>()
+            var skipped = 0
+            var rejected = 0
+            try {
+                for (v in verified) {
+                    if (v.item.id in known) {
+                        skipped++
+                        continue
+                    }
+                    val destination = File(dir, v.item.audioFile)
+                    if (destination.exists() || v.item.audioFile in indexedFiles) {
+                        if (v.item.audioFile !in indexedFiles && destination.isFile &&
+                            HistoryArchive.sha256(destination) == v.sha256
+                        ) {
+                            added += v.item
+                            known += v.item.id
+                        } else {
+                            rejected++
+                        }
+                        continue
+                    }
+                    // Registered BEFORE the move: a copy that fails part-way
+                    // leaves a partial file, and the rollback must see it.
+                    movedIn += destination
+                    moveIn(v.staged, destination)
+                    if (destination.length() != v.item.audioBytes) {
+                        throw java.io.IOException("${v.item.audioFile} changed size while moving in")
+                    }
+                    added += v.item
+                    known += v.item.id
+                }
+                if (added.isNotEmpty()) writeIndex(existing + added)
+            } catch (t: Throwable) {
+                movedIn.forEach { it.delete() }
+                throw t
+            }
+            ImportResult(imported = added.size, skipped = skipped, rejected = rejected)
+        }
+    }
+
+    /**
+     * Runs [block] with a fresh, empty staging directory and always deletes it.
+     *
+     * Serialised on its own process-wide monitor, NOT [LOCK]: staging an
+     * archive read from a cloud provider can take a long time and must not
+     * hold up a dictation filing its entry, but two imports (a rotation
+     * recreates Settings, and with it a second worker) must not share — and
+     * delete — one staging directory. The leading delete clears what a killed
+     * import left behind.
+     */
+    private fun stagingDir(): File = File(dir.absoluteFile.parentFile, dir.name + STAGING_SUFFIX)
+
+    private fun <T> withStaging(block: (File) -> T): T = synchronized(STAGING_LOCK) {
+        val staging = stagingDir()
+        staging.deleteRecursively()
+        try {
+            block(staging)
+        } finally {
+            staging.deleteRecursively()
+        }
     }
 
     // --- internals ----------------------------------------------------------
@@ -672,6 +827,9 @@ class DictationHistoryStore internal constructor(
          */
         private val LOCK = Any()
 
+        /** Serialises archive staging — see [withStaging]. Never taken inside [LOCK]. */
+        private val STAGING_LOCK = Any()
+
         /** The directory name under `noBackupFilesDir`. */
         const val DIR = "history"
 
@@ -679,6 +837,13 @@ class DictationHistoryStore internal constructor(
         const val INDEX = "index.json"
 
         private const val TMP_SUFFIX = ".tmp"
+
+        /**
+         * `history-import-staging`, beside [DIR] under `noBackupFilesDir` —
+         * same filesystem, so staged audio moves in by rename, and same
+         * backup exclusion. Never inside [DIR]; see [importArchive].
+         */
+        private const val STAGING_SUFFIX = "-import-staging"
         private const val KEY_ITEMS = "items"
         private const val KEY_VERSION = "version"
         private const val VERSION = 1

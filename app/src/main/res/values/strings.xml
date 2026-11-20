@@ -351,6 +351,21 @@
     <string name="stt_clear_history_confirm_any">Delete every saved recording and its transcript from this phone? This cannot be undone.</string>
     <string name="stt_clear_history_confirm_delete">Delete</string>
     <string name="stt_clear_history_confirm_keep">Keep</string>
+    <!-- History export / import (docs/history-archive-format.md). -->
+    <string name="stt_export_history">Export history to a file</string>
+    <string name="stt_export_history_desc">Export history. Every saved recording and its transcript is written to one archive file you choose.</string>
+    <string name="stt_import_history">Import history from a file</string>
+    <string name="stt_import_history_desc">Import history from an archive file. Dictations already on this phone are kept and never overwritten.</string>
+    <string name="stt_history_transfer_working">Working…</string>
+    <!-- Export, written AND read back from the chosen file: %1$d is the item count. -->
+    <string name="stt_history_export_done">Exported %1$d dictations and read the file back: all verified.</string>
+    <string name="stt_history_export_mismatch">Exported %1$d dictations, but the file read back holds %2$d. Do not rely on it; export again.</string>
+    <string name="stt_history_export_failed">Export failed: %1$s. Nothing on this phone was changed.</string>
+    <string name="stt_history_import_done">Imported %1$d · already here, skipped %2$d · rejected %3$d</string>
+    <string name="stt_history_import_rejected">That archive was refused (%1$s) and nothing was imported.</string>
+    <string name="stt_history_import_unreadable">That file could not be read: %1$s. Nothing was imported. Try again.</string>
+    <string name="stt_history_no_picker">No file picker is available on this device.</string>
+    <string name="stt_history_no_file">the picker returned no file</string>
     <!-- Issue #7. "Follow device language" is the first entry and the default;
          the rest are built from SttLanguage.DISPLAY_NAMES. -->
     <string name="stt_language_label">Dictation language</string>

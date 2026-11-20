@@ -390,7 +390,47 @@
                 android:text="@string/stt_history_usage_pending"
                 android:textSize="15sp"
                 android:textColor="@color/dicta_on_surface" />
+
+            <!-- The result of the last export or import: counts, or the named
+                 reason an archive was refused. Empty until one has run. -->
+            <TextView
+                android:id="@+id/stt_history_transfer_state"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:textSize="15sp"
+                android:textColor="@color/dicta_on_surface" />
         </LinearLayout>
+
+        <!-- Export / import of the whole history as one archive file
+             (docs/history-archive-format.md). In-app ACTION_CREATE_DOCUMENT /
+             ACTION_OPEN_DOCUMENT through the Storage Access Framework: no
+             permission, and no exported surface — the same choice as
+             @id/stt_import_snippets. Outline styling: neither destroys
+             anything (an import never overwrites or deletes an item). -->
+        <Button
+            android:id="@+id/stt_export_history"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:layout_marginTop="8dp"
+            android:background="@drawable/outline_button_bg"
+            android:stateListAnimator="@null"
+            android:textAllCaps="false"
+            android:textColor="@color/dicta_on_surface"
+            android:contentDescription="@string/stt_export_history_desc"
+            android:text="@string/stt_export_history" />
+
+        <Button
+            android:id="@+id/stt_import_history"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:layout_marginTop="8dp"
+            android:background="@drawable/outline_button_bg"
+            android:stateListAnimator="@null"
+            android:textAllCaps="false"
+            android:textColor="@color/dicta_on_surface"
+            android:contentDescription="@string/stt_import_history_desc"
+            android:text="@string/stt_import_history" />
 
         <!--
           The second destructive action, built exactly like @id/stt_clear_token
